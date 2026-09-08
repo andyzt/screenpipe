@@ -60,6 +60,7 @@ mod coding_workspace;
 mod commands;
 mod data_sync;
 mod db_recovery_notifications;
+mod deepseek;
 mod db_relaunch;
 mod db_self_heal;
 mod deep_link;
@@ -454,6 +455,16 @@ macro_rules! define_specta_builder {
 
 #[tokio::main]
 async fn main() {
+    // Baked DeepSeek credential (SCREENPIPE_DEEPSEEK_API_KEY at compile time):
+    // export it as DEEPSEEK_API_KEY unless the user already set one, so the pi
+    // sidecar's `$DEEPSEEK_API_KEY` reference, the spawned engine, and pipes
+    // all resolve it without persisting the key anywhere on disk.
+    if std::env::var("DEEPSEEK_API_KEY").map(|v| v.trim().is_empty()).unwrap_or(true) {
+        if let Some(key) = deepseek::BAKED_DEEPSEEK_API_KEY {
+            std::env::set_var("DEEPSEEK_API_KEY", key);
+        }
+    }
+
     // Handle private ACP subprocess modes before Tauri initializes. The
     // protocol host lives in core; desktop contributes only schedule projection.
     if let Some(exit_code) = screenpipe_core::agents::acp::run_hidden_mode(Arc::new(

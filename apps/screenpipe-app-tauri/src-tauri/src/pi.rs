@@ -2197,6 +2197,9 @@ fn model_supports_reasoning(provider: &str, model: &str) -> bool {
                 || model.starts_with("o4")
         }
         "anthropic-byok" => model.starts_with("claude-"),
+        // DeepSeek V4 exposes thinking through a non-OpenAI `thinking` field that
+        // pi's openai-completions driver does not send, so keep reasoning off.
+        "deepseek" => false,
         "ollama" => {
             model.contains("thinking")
                 || model.starts_with("qwen3")
@@ -2281,6 +2284,7 @@ async fn build_models_json_with_api_url(
             "native-ollama" => "ollama",
             "anthropic" => "anthropic-byok",
             "custom" => "custom",
+            "deepseek" => "deepseek",
             _ => "", // screenpipe-cloud already added above
         };
 
@@ -2293,6 +2297,8 @@ async fn build_models_json_with_api_url(
                 "https://api.anthropic.com".to_string()
             } else if config.provider == "openai" && config.url.is_empty() {
                 "https://api.openai.com/v1".to_string()
+            } else if config.provider == "deepseek" && config.url.is_empty() {
+                crate::deepseek::DEEPSEEK_API_URL.to_string()
             } else {
                 config.url.clone()
             };
@@ -2312,6 +2318,7 @@ async fn build_models_json_with_api_url(
                     "openai-chatgpt" => "$OPENAI_CHATGPT_TOKEN".to_string(),
                     "anthropic" => "$ANTHROPIC_API_KEY".to_string(),
                     "custom" => "$CUSTOM_API_KEY".to_string(),
+                    "deepseek" => "$DEEPSEEK_API_KEY".to_string(),
                     _ => "".to_string(),
                 };
 
@@ -2756,6 +2763,7 @@ fn pi_registry_provider(provider: &str, url: &str) -> Result<&'static str, Strin
         "openai-chatgpt" => "openai-chatgpt",
         "native-ollama" => "ollama",
         "anthropic" => "anthropic-byok",
+        "deepseek" => "deepseek",
         // "custom" requires a valid URL; fall back to screenpipe cloud if missing
         "custom" if !url.is_empty() => "custom",
         "acp" => return Err(ACP_PRESET_WITHOUT_BACKEND.to_string()),
@@ -3609,10 +3617,16 @@ pub async fn pi_start_inner(
                     "custom" => {
                         cmd.env("CUSTOM_API_KEY", api_key);
                     }
+                    "deepseek" => {
+                        cmd.env("DEEPSEEK_API_KEY", api_key);
+                    }
                     _ => {}
                 }
             }
         }
+        // An empty preset key still works when the app process carries
+        // DEEPSEEK_API_KEY: pi resolves `$DEEPSEEK_API_KEY` from its inherited
+        // environment, so nothing needs to be set here.
     }
 
     // Backstop: if local_api_context_from_app couldn't resolve a key earlier

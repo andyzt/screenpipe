@@ -1373,6 +1373,11 @@ impl PiExecutor {
                         provider_url.unwrap_or("https://api.anthropic.com"),
                         "$ANTHROPIC_API_KEY",
                     ),
+                    "deepseek" => (
+                        "deepseek",
+                        provider_url.unwrap_or("https://api.vsellm.ru/v1"),
+                        "$DEEPSEEK_API_KEY",
+                    ),
                     other => (other, provider_url.unwrap_or(""), "$CUSTOM_API_KEY"),
                 };
 

@@ -20,7 +20,6 @@ import { captureSettingsChange } from "@/lib/analytics/settings-change";
 import { resolveTelemetryDisabledByEnv, shouldIdentifyInPostHog } from "@/lib/telemetry-env";
 import { User } from "../utils/tauri";
 import { SettingsStore } from "../utils/tauri";
-import { installAuthInterceptor } from "../auth-guard";
 import {
 	getLocalPlanPolicy,
 	hasAppEntitlement,
@@ -66,6 +65,7 @@ export type AIProviderType =
 	| "openai-chatgpt"
 	| "anthropic"
 	| "custom"
+	| "deepseek"
 	| "embedded"
 	| "screenpipe-cloud"
 	| "acp"
@@ -130,6 +130,10 @@ export type AIPreset = {
 	  }
 	| {
 			provider: "custom";
+			apiKey: string;
+	  }
+	| {
+			provider: "deepseek";
 			apiKey: string;
 	  }
 	| {
@@ -619,54 +623,31 @@ const DEFAULT_IGNORED_WINDOWS_PER_OS: Record<string, string[]> = {
 	linux: ["Info center", "Discover", "Parted"],
 };
 
-// Default screenpipe-cloud presets on first install — every seed runs on
-// "auto": the ai-gateway routes to the best model the user's tier allows, so
-// nobody starts pinned to a specific (possibly tier-gated) Claude model.
-// - "Chat":  default preset, used by interactive chat.
-// - "Pipes": same routing, separate id so recurring pipe runs can be
-//           customized independently; users can override per-pipe.
-const CHAT_PRESET_ID = "chat";
-const PIPES_PRESET_ID = "pipes";
+// Default preset on first install: DeepSeek's multimodal model through the
+// team gateway (OpenAI-compatible, OpenRouter-style model ids; no screenpipe
+// account). The API key is read from the preset, then the DEEPSEEK_API_KEY
+// environment variable, then the credential baked into the binary at build
+// time (SCREENPIPE_DEEPSEEK_API_KEY) — so a preset without a key still works.
+export const DEEPSEEK_PRESET_ID = "deepseek";
+export const DEEPSEEK_API_URL = "https://api.vsellm.ru/v1";
+export const DEEPSEEK_DEFAULT_MODEL = "deepseek/deepseek-v4-flash-vision-exp";
 
-// Non-pro users get a single "screenpipe" preset on auto — auto handles
-// model routing without needing the user to know what to pick.
-const SCREENPIPE_PRESET_ID = "screenpipe";
-
-export function makeDefaultPresets(isPro: boolean): AIPreset[] {
-	if (isPro) {
-		return [
-			{
-				id: CHAT_PRESET_ID,
-				provider: "screenpipe-cloud",
-				url: "",
-				model: "auto",
-				maxContextChars: 200000,
-				defaultPreset: true,
-				prompt: "",
-			},
-			{
-				id: PIPES_PRESET_ID,
-				provider: "screenpipe-cloud",
-				url: "",
-				model: "auto",
-				maxContextChars: 200000,
-				defaultPreset: false,
-				prompt: "",
-			},
-		];
-	}
+export function makeDefaultPresets(_isPro: boolean): AIPreset[] {
 	return [
 		{
-			id: SCREENPIPE_PRESET_ID,
-			provider: "screenpipe-cloud",
-			url: "",
-			model: "auto",
+			id: DEEPSEEK_PRESET_ID,
+			provider: "deepseek",
+			apiKey: "",
+			url: DEEPSEEK_API_URL,
+			model: DEEPSEEK_DEFAULT_MODEL,
 			maxContextChars: 200000,
 			defaultPreset: true,
 			prompt: "",
 		},
 	];
 }
+
+const DEFAULT_DEEPSEEK_PRESET: AIPreset = makeDefaultPresets(false)[0];
 
 const DEFAULT_AUDIO_ENGINE = "whisper-large-v3-turbo-quantized";
 
@@ -1217,22 +1198,10 @@ function createSettingsStore() {
 		// installs default to "meetings-only" (via createDefaultSettingsObject, which
 		// get() returns directly when there are no stored settings).
 
-		// b2 seed: the first time we see a logged-in user, replace the anonymous
-		// "screenpipe" placeholder with the pro pair (chat + pipes) IF they're pro.
-		// Anonymous users keep the placeholder forever (which is correct — non-pro
-		// stays on the single "screenpipe" auto preset). Existing users with their
-		// own presets are untouched. Runs exactly once per install.
-		if (!(settings as any)._presetsSeededForUser && settings.user?.token) {
+		// Migration: Add default presets if user has none
+		if (!Array.isArray(settings.aiPresets) || settings.aiPresets.length === 0) {
 			const isPro = settings.user?.cloud_subscribed === true;
-			const presets = settings.aiPresets ?? [];
-			const isAnonymousPlaceholder =
-				presets.length === 1 &&
-				(presets[0] as any)?.id === SCREENPIPE_PRESET_ID &&
-				(presets[0] as any)?.provider === "screenpipe-cloud";
-			if (isPro && isAnonymousPlaceholder) {
-				settings.aiPresets = makeDefaultPresets(true) as any;
-			}
-			(settings as any)._presetsSeededForUser = true;
+			settings.aiPresets = makeDefaultPresets(isPro) as any;
 			needsUpdate = true;
 		}
 
@@ -1249,6 +1218,48 @@ function createSettingsStore() {
 			settings.aiPresets = settings.aiPresets.map((p: any) =>
 				p.id === "pi-agent" ? { ...p, id: "screenpipe-cloud" } : p
 			);
+			needsUpdate = true;
+		}
+
+		// Migration: presets seeded before the team-gateway switch point at
+		// api.deepseek.com with unprefixed model ids; move them to the gateway.
+		if (
+			settings.aiPresets?.some(
+				(p: any) => p.provider === "deepseek" && p.url === "https://api.deepseek.com"
+			)
+		) {
+			settings.aiPresets = settings.aiPresets.map((p: any) =>
+				p.provider === "deepseek" && p.url === "https://api.deepseek.com"
+					? {
+							...p,
+							url: DEEPSEEK_API_URL,
+							model:
+								p.model && !p.model.includes("/")
+									? `deepseek/${p.model}`
+									: p.model || DEEPSEEK_DEFAULT_MODEL,
+					  }
+					: p
+			);
+			needsUpdate = true;
+		}
+
+		// Migration: add the DeepSeek preset for existing installs (without
+		// touching their existing presets). It becomes the default so a store that
+		// only ever had screenpipe-cloud presets (which now need no account but
+		// still need a cloud token) lands on a provider that works out of the box.
+		const hasDeepSeekPreset = settings.aiPresets?.some(
+			(p: any) => p.provider === "deepseek"
+		);
+		if (settings.aiPresets && settings.aiPresets.length > 0 && !hasDeepSeekPreset) {
+			const onlyCloudDefaults = settings.aiPresets.every(
+				(p: any) => !p.defaultPreset || p.provider === "screenpipe-cloud"
+			);
+			settings.aiPresets = [
+				{ ...DEFAULT_DEEPSEEK_PRESET, defaultPreset: onlyCloudDefaults } as any,
+				...settings.aiPresets.map((p: any) =>
+					onlyCloudDefaults ? { ...p, defaultPreset: false } : p
+				),
+			];
 			needsUpdate = true;
 		}
 
@@ -1617,44 +1628,8 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 	const authGenerationRef = useRef(0);
 
 	useEffect(() => {
-		installAuthInterceptor(
-			() => {
-				const user = settingsRef.current.user as
-					| (User & { __e2eSkipAccountRefresh?: boolean })
-					| null
-					| undefined;
-				// Synthetic E2E sessions intentionally use tokens the production web
-				// service cannot verify. A background cloud request may still return
-				// 401 while the native onboarding flow is under test; do not let that
-				// unrelated response erase the fixture from every app window.
-				if (
-					process.env.NEXT_PUBLIC_SCREENPIPE_E2E === "true" &&
-					(hasActiveE2EAccountFixture() ||
-						user?.__e2eSkipAccountRefresh === true)
-				) {
-					return undefined;
-				}
-				return user?.token ?? undefined;
-			},
-			async () => {
-				// Any webview can observe a 401 from an unrelated cloud request. An
-				// E2E fixture is intentionally synthetic, so consult the shared store
-				// before allowing that response to erase the account across windows.
-				if (await hasPersistedE2EAccountFixture()) return;
-				// A response from the website auth surface definitively rejected the
-				// credential. Clear the account so it cannot be confused with a
-				// transient secret-store hydration miss.
-				await updateSettings({ user: null as any });
-				// Mirror the sign-out into the sidecar so the pi-agent and
-				// cloud_proxy.rs stop sending the now-revoked token on the
-				// next pipe run.
-				try {
-					await commands.setCloudToken(null);
-				} catch (e) {
-					console.warn("failed to clear cloud token in sidecar:", e);
-				}
-			}
-		);
+		// Authorization was removed from this build: no screenpipe account, no
+		// session interceptor. The user's own provider keys live in AI presets.
 	}, []); // eslint-disable-line react-hooks/exhaustive-deps
 
 	// Cross-window sign-out: when any window broadcasts a sign-out (logout

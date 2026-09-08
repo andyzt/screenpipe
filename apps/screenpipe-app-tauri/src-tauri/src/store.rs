@@ -1566,6 +1566,8 @@ pub enum AIProviderType {
     NativeOllama,
     #[serde(rename = "custom")]
     Custom,
+    #[serde(rename = "deepseek")]
+    DeepSeek,
     #[serde(rename = "screenpipe-cloud", alias = "claude-code")]
     ScreenpipeCloud,
     #[serde(rename = "acp")]

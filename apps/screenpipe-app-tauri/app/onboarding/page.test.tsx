@@ -235,42 +235,6 @@ describe("enterprise onboarding authentication", () => {
     mocks.isSettingsLoaded = true;
   });
 
-  it("offers regular sign-in and Enterprise Key on the login step", () => {
-    render(<OnboardingPage />);
-
-    expect(screen.getByText("regular sign in")).toBeInTheDocument();
-    fireEvent.click(
-      screen.getByRole("button", { name: /use enterprise key/i }),
-    );
-    expect(mocks.selectAuthenticationMethod).toHaveBeenCalledWith(
-      "license_key",
-    );
-  });
-
-  it("renders Enterprise Key entry on the onboarding login step", () => {
-    mocks.enterprisePolicy.authenticationState = "license_key";
-    render(<OnboardingPage />);
-
-    expect(screen.getByText("enterprise key form")).toBeInTheDocument();
-    expect(screen.queryByText("regular sign in")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /sign in instead/i }));
-    expect(mocks.selectAuthenticationMethod).toHaveBeenCalledWith("account");
-  });
-
-  it("keeps non-enterprise onboarding on regular sign-in", () => {
-    mocks.enterprisePolicy.isManagedDeployment = false;
-    render(<OnboardingPage />);
-
-    expect(screen.getByText("regular sign in")).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: /use enterprise key/i }),
-    ).not.toBeInTheDocument();
-    expect(mocks.capture).toHaveBeenCalledWith("onboarding_funnel_step", {
-      funnel_version: "onboarding_ui_v2",
-      step: "started",
-    });
-  });
-
   it("restores the plan controller after hosted checkout returns", async () => {
     window.history.replaceState({}, "", "/onboarding?checkout=complete");
     mocks.enterprisePolicy.isManagedDeployment = false;
@@ -341,29 +305,6 @@ describe("enterprise onboarding authentication", () => {
     expect(mocks.setOnboardingStep).not.toHaveBeenCalledWith(
       "trial-activation-v1-unlocked",
     );
-  });
-
-  it("leaves login completion analytics to the login gate", async () => {
-    mocks.enterprisePolicy.isManagedDeployment = false;
-    render(<OnboardingPage />);
-
-    fireEvent.click(
-      screen.getByRole("button", { name: /complete regular sign in/i }),
-    );
-
-    await waitFor(() =>
-      expect(mocks.setOnboardingStep).toHaveBeenCalledWith("acquisition"),
-    );
-    expect(
-      mocks.capture.mock.calls.filter(
-        ([event]) => event === "onboarding_login_completed",
-      ),
-    ).toHaveLength(0);
-    expect(
-      mocks.capture.mock.calls.filter(
-        ([event]) => event === "onboarding_step_reached",
-      ),
-    ).toHaveLength(1);
   });
 
   it("does not start the standard funnel for managed onboarding", () => {
@@ -587,68 +528,6 @@ describe("enterprise onboarding authentication", () => {
       .toBe("control");
   });
 
-  it("records a fresh login once when assignment temporarily unmounts the real login gate", async () => {
-    HTMLCanvasElement.prototype.getContext = vi.fn(() => null) as any;
-    mocks.useRealLoginGate = true;
-    mocks.enterprisePolicy.isManagedDeployment = false;
-    mocks.featureFlagsReady = false;
-    mocks.posthogDistinctId = "clerk-1";
-    mocks.trialActivationVariant = "control";
-    onboardingData.trialActivationFreshInstall = true;
-    const { rerender } = render(<OnboardingPage />);
-    expect(await screen.findByTestId("login-cta")).toBeInTheDocument();
-
-    mocks.settings.user = {
-      has_payment_method: false,
-      entitlement_source: "none",
-      token: "fresh-token",
-      clerk_id: "clerk-1",
-      email: "fresh@example.com",
-    };
-    rerender(<OnboardingPage />);
-    expect(screen.getByTestId("trial-activation-assignment-pending"))
-      .toBeInTheDocument();
-    expect(mocks.capture.mock.calls.filter(([event]) => event === "onboarding_login_completed"))
-      .toHaveLength(1);
-
-    act(() => {
-      mocks.featureFlagsCallback?.([], {}, {});
-      mocks.featureFlagsCallback?.([], {}, {});
-      mocks.featureFlagsCallback?.([], {}, {});
-    });
-    await waitFor(() => expect(screen.queryByTestId("trial-activation-assignment-pending"))
-      .not.toBeInTheDocument());
-    rerender(<OnboardingPage />);
-    expect(mocks.capture.mock.calls.filter(([event]) => event === "onboarding_login_completed"))
-      .toHaveLength(1);
-  });
-
-  it("does not count an authenticated settings hydration as a fresh login", async () => {
-    mocks.enterprisePolicy.isManagedDeployment = false;
-    mocks.isSettingsLoaded = false;
-    const { rerender } = render(<OnboardingPage />);
-
-    mocks.isSettingsLoaded = true;
-    mocks.settings.user = { token: "persisted-token" };
-    rerender(<OnboardingPage />);
-    expect(await screen.findByText("regular sign in")).toBeInTheDocument();
-    expect(mocks.capture).not.toHaveBeenCalledWith("onboarding_login_completed");
-  });
-
-  it("records one fresh login without an experiment assignment as well", async () => {
-    HTMLCanvasElement.prototype.getContext = vi.fn(() => null) as any;
-    mocks.useRealLoginGate = true;
-    mocks.enterprisePolicy.isManagedDeployment = false;
-    const { rerender } = render(<OnboardingPage />);
-    expect(await screen.findByTestId("login-cta")).toBeInTheDocument();
-
-    mocks.settings.user = { token: "fresh-token" };
-    rerender(<OnboardingPage />);
-    rerender(<OnboardingPage />);
-    expect(mocks.capture.mock.calls.filter(([event]) => event === "onboarding_login_completed"))
-      .toHaveLength(1);
-  });
-
   it("restores the pinned route instead of reassigning after checkout navigation", async () => {
     mocks.enterprisePolicy.isManagedDeployment = false;
     mocks.trialActivationVariant = "summary_first";
@@ -856,21 +735,6 @@ describe("enterprise onboarding authentication", () => {
       }),
     );
     expect(screen.queryByText("plan selection")).not.toBeInTheDocument();
-  });
-
-  it("returns a signed-out consumer with a persisted engine step to login", async () => {
-    mocks.enterprisePolicy.isManagedDeployment = false;
-    mocks.settings.user = null;
-    onboardingData.currentStep = "engine";
-
-    render(
-      <StartupAuthenticationContext.Provider value="logged_out">
-        <OnboardingPage />
-      </StartupAuthenticationContext.Provider>,
-    );
-
-    expect(await screen.findByText("regular sign in")).toBeInTheDocument();
-    expect(screen.queryByText("engine")).not.toBeInTheDocument();
   });
 
   it("restores an authenticated consumer after a logged-out startup", async () => {
@@ -1113,22 +977,6 @@ describe("enterprise onboarding authentication", () => {
     await waitFor(() =>
       expect(mocks.setOnboardingStep).toHaveBeenCalledWith("permissions"),
     );
-  });
-
-  it("keeps a rejected enterprise account on login with the key alternative", () => {
-    mocks.enterprisePolicy.authenticationState = "account";
-    mocks.enterprisePolicy.authenticationError =
-      "this account is not associated with the enterprise organization";
-
-    render(<OnboardingPage />);
-
-    expect(
-      screen.getByText(/not associated with the enterprise organization/i),
-    ).toBeInTheDocument();
-    expect(screen.getByText("regular sign in")).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: /use enterprise key/i }),
-    ).toBeInTheDocument();
   });
 
   it("completes onboarding after permissions when enterprise app UI is hidden", async () => {

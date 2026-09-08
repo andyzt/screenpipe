@@ -516,6 +516,37 @@ export function AIProviderConfig({
           "couldn't load live models — showing known models",
         );
       })();
+    } else if (selectedProvider === "deepseek") {
+      (async () => {
+        setModelDiscoveryStatus("loading");
+        const known = [
+          { id: "deepseek/deepseek-v4-flash-vision-exp" },
+          { id: "deepseek/deepseek-v4-flash" },
+          { id: "deepseek/deepseek-v4-pro" },
+        ];
+        try {
+          if (formData.apiKey) {
+            const resp = await tauriFetchWithDeadline(
+              `${(formData.url || "https://api.vsellm.ru/v1").replace(/\/+$/, "")}/models`,
+              { headers: { Authorization: `Bearer ${formData.apiKey}` } },
+            );
+            if (resp.ok) {
+              const data = await resp.json();
+              const live = ((data?.data as { id: string }[]) || []).filter(
+                (m, idx, arr) => arr.findIndex((x) => x.id === m.id) === idx,
+              );
+              const ids = new Set(live.map((m) => m.id));
+              setOpenAIModels([...known.filter((m) => !ids.has(m.id)), ...live]);
+              setModelDiscoveryStatus("ready");
+              return;
+            }
+          }
+        } catch {
+          /* fall through */
+        }
+        setOpenAIModels(known);
+        setModelDiscoveryStatus("ready");
+      })();
     } else if (selectedProvider === "native-ollama") {
       const baseUrl = "http://localhost:11434/v1";
       fetchOllamaModels(baseUrl);
@@ -795,6 +826,58 @@ export function AIProviderConfig({
                 emptyMessage="no models available for this API key"
                 disabled={!formData.apiKey}
               />
+            </div>
+          </div>
+        )}
+
+        {selectedProvider === "deepseek" && (
+          <div className="space-y-1">
+            <div className="space-y-1">
+              <Label htmlFor="apiKey" className="text-xs">
+                deepseek api key
+              </Label>
+              <div className="relative">
+                <Input
+                  id="apiKey"
+                  type={showApiKey ? "text" : "password"}
+                  placeholder="optional — the built-in team key is used when empty"
+                  value={formData.apiKey || ""}
+                  onChange={(e) =>
+                    setFormData({ ...formData, apiKey: e.target.value })
+                  }
+                  className="pr-10 h-8 text-sm"
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
+                  onClick={() => setShowApiKey(!showApiKey)}
+                >
+                  {showApiKey ? (
+                    <EyeOff className="h-4 w-4" />
+                  ) : (
+                    <Eye className="h-4 w-4" />
+                  )}
+                </Button>
+              </div>
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="model" className="text-xs">model</Label>
+              <ModelPicker
+                id="model"
+                value={formData.model}
+                models={openaiModels.map((model) => model.id)}
+                onValueChange={(model) => setFormData({ ...formData, model })}
+                status={modelDiscoveryStatus}
+                errorMessage={modelDiscoveryError}
+                placeholder="deepseek/deepseek-v4-flash-vision-exp"
+                emptyMessage="type a model name"
+                allowManualEntry
+              />
+              <p className="text-[10px] text-muted-foreground">
+                deepseek-v4-flash-vision-exp accepts screenshots and images.
+              </p>
             </div>
           </div>
         )}
@@ -1118,6 +1201,24 @@ export function AIProviderConfig({
                 >
                   <Icons.openai className="h-3.5 w-3.5" />
                   <span>chatgpt</span>
+                </Button>
+                <Button
+                  type="button"
+                  variant={selectedProvider === "deepseek" ? "default" : "outline"}
+                  className="flex h-8 items-center justify-center gap-1.5 px-3 text-xs"
+                  onClick={() => {
+                    setSelectedProvider("deepseek");
+                    setFormData({
+                      ...formData,
+                      provider: "deepseek",
+                      url: "https://api.vsellm.ru/v1",
+                      model: "deepseek/deepseek-v4-flash-vision-exp",
+                    });
+                  }}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src="/images/deepseek.svg" alt="" className="h-3.5 w-3.5 rounded-sm" />
+                  <span>deepseek</span>
                 </Button>
                 <Button
                   type="button"
@@ -1493,7 +1594,9 @@ export const AIPresetsSelector = ({
   // Check if selected preset requires login
   const selectedPresetRequiresLogin = useMemo(() => {
     const preset = aiPresets.find((p) => p.id === selectedPreset);
-    return preset?.provider === "screenpipe-cloud" && !settings?.user?.token;
+    // No account login exists in this build.
+    void preset;
+    return false;
   }, [aiPresets, selectedPreset, settings?.user?.token]);
 
   const selectedPresetData = useMemo(

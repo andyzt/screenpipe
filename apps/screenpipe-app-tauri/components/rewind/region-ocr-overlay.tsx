@@ -7,7 +7,6 @@ import { toast } from "@/components/ui/use-toast";
 import { commands } from "@/lib/utils/tauri";
 import { Loader2 } from "lucide-react";
 import { localFetch } from "@/lib/api";
-import { fetchAiGateway } from "@/lib/ai-gateway-url";
 import { presentQuotaError } from "@/lib/chat/quota-errors";
 
 interface RegionOcrOverlayProps {
@@ -89,10 +88,15 @@ export const RegionOcrOverlay: FC<RegionOcrOverlayProps> = ({
         return;
       }
 
-      if (!userToken) {
+      // No account in this build: region OCR talks to DeepSeek directly with
+      // the user's own key (preset or DEEPSEEK_API_KEY).
+      void userToken;
+      const deepseek = await commands.deepseekConfig();
+      if (!deepseek.hasApiKey) {
         toast({
-          title: "login required",
-          description: "login required for region OCR",
+          title: "DeepSeek API key required",
+          description:
+            "add your key to the DeepSeek AI preset in settings (or export DEEPSEEK_API_KEY)",
           variant: "destructive",
         });
         setSelectionRect(null);
@@ -142,48 +146,18 @@ export const RegionOcrOverlay: FC<RegionOcrOverlayProps> = ({
         URL.revokeObjectURL(blobUrl);
 
         const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
-        const base64 = dataUrl.replace(/^data:image\/jpeg;base64,/, "");
 
-        // Call screenpipe cloud API
-        const response = await fetchAiGateway(
-          "/chat/completions",
-          {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${userToken}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              model: "auto",
-              max_tokens: 4096,
-              messages: [
-                {
-                  role: "user",
-                  content: [
-                    {
-                      type: "image_url",
-                      image_url: {
-                        url: `data:image/jpeg;base64,${base64}`,
-                      },
-                    },
-                    {
-                      type: "text",
-                      text: "Extract all text from this image. Return ONLY the extracted text, preserving the original formatting and line breaks. Do not add any commentary.",
-                    },
-                  ],
-                },
-              ],
-            }),
-          }
+        // The Rust side picks the transport per endpoint: DeepSeek's own API
+        // gets the Files API (upload + file_id + delete), the team gateway
+        // gets the image inlined as base64 (it has no Files API).
+        const completion = await commands.deepseekVisionCompletion(
+          [dataUrl],
+          "Extract all text from this image. Return ONLY the extracted text, preserving the original formatting and line breaks. Do not add any commentary.",
+          deepseek.model.includes("vision") ? deepseek.model : null,
+          4096,
         );
-
-        if (!response.ok) {
-          const errText = await response.text().catch(() => "unknown error");
-          throw new Error(`API error ${response.status}: ${errText}`);
-        }
-
-        const data = await response.json();
-        const extractedText = data?.choices?.[0]?.message?.content?.trim();
+        if (completion.status === "error") throw new Error(completion.error);
+        const extractedText = completion.data.trim();
 
         if (!extractedText) {
           toast({
