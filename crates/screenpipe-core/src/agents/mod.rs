@@ -13,10 +13,12 @@
 pub mod acp;
 pub mod bash_env;
 pub mod chat_control;
+pub mod chat_destination;
 pub mod cli_runtime;
 pub mod cloud;
 mod cloud_context;
 pub mod pi;
+pub mod worktree;
 
 use anyhow::Result;
 use std::path::Path;

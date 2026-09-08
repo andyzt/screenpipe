@@ -390,3 +390,92 @@ describe("AIPresetsSelector controlled preset creation", () => {
     expect(trigger).not.toHaveTextContent("recommended");
   });
 });
+
+describe("AIPresetsSelector agent presets", () => {
+  const agentPreset: AIPreset = {
+    ...originalPreset,
+    id: "cursor",
+    provider: "acp",
+    model: "cursor",
+    acpAgent: { id: "cursor" },
+    defaultPreset: false,
+  } as AIPreset;
+
+  beforeEach(() => {
+    mocks.settings.current = {
+      aiPresets: [originalPreset, agentPreset],
+      user: { token: "test-token" },
+    };
+    mocks.settings.listeners.clear();
+    mocks.updateSettings.mockClear();
+    mocks.controlledSelect.mockClear();
+    mocks.acpEnabled.current = true;
+  });
+
+  it("lists and selects agent presets on every surface", () => {
+    render(
+      <AIPresetsSelector
+        compact
+        showModelOnly
+        controlledPresetId={originalPreset.id}
+        onControlledSelect={mocks.controlledSelect}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("combobox"));
+    const option = screen.getByTestId("ai-preset-option-cursor");
+    expect(option).not.toHaveAttribute("data-disabled");
+
+    fireEvent.click(option);
+    expect(mocks.controlledSelect).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "cursor", provider: "acp" }),
+    );
+  });
+});
+
+describe("AIPresetsSelector preset deletion", () => {
+  const localPreset: AIPreset = {
+    ...originalPreset,
+    id: "local",
+    provider: "native-ollama",
+    model: "qwen3",
+    url: "http://localhost:11434",
+    defaultPreset: false,
+  };
+
+  beforeEach(() => {
+    mocks.settings.listeners.clear();
+    mocks.updateSettings.mockClear();
+    mocks.controlledSelect.mockClear();
+    mocks.acpEnabled.current = false;
+  });
+
+  it("deletes the cloud preset when a local preset remains", () => {
+    mocks.settings.current = {
+      aiPresets: [originalPreset, localPreset],
+      user: { token: "test-token", cloud_subscribed: true },
+    };
+    render(<AIPresetsSelector compact showModelOnly />);
+
+    fireEvent.click(screen.getByRole("combobox"));
+    fireEvent.click(screen.getByRole("button", { name: "Delete original" }));
+
+    expect(mocks.updateSettings).toHaveBeenCalledWith({
+      aiPresets: [{ ...localPreset, defaultPreset: true }],
+    });
+  });
+
+  it("does not offer deletion for the sole remaining preset", () => {
+    mocks.settings.current = {
+      aiPresets: [originalPreset],
+      user: { token: "test-token", cloud_subscribed: true },
+    };
+    render(<AIPresetsSelector compact showModelOnly />);
+
+    fireEvent.click(screen.getByRole("combobox"));
+
+    expect(
+      screen.queryByRole("button", { name: "Delete original" }),
+    ).not.toBeInTheDocument();
+  });
+});

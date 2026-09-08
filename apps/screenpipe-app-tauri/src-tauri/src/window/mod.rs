@@ -11,6 +11,8 @@ mod first_responder;
 mod focus;
 mod gesture;
 mod panel;
+#[cfg(target_os = "macos")]
+pub(crate) mod renderer_watchdog;
 mod show;
 mod util;
 
@@ -160,6 +162,17 @@ pub(crate) fn make_panel_key_if_allowed(panel: &tauri_nspanel::raw_nspanel::RawN
     if window_activation_allowed() {
         panel.make_key_window();
     }
+}
+
+/// Whether a visible panel belongs to the user's currently active macOS Space.
+///
+/// `isVisible` remains true for windows pinned to a different Space, so callers
+/// must use this when deciding whether an invocation should hide the panel or
+/// move it to the Space the user is currently viewing.
+#[cfg(target_os = "macos")]
+pub(crate) fn panel_is_on_active_space(panel: &tauri_nspanel::raw_nspanel::RawNSPanel) -> bool {
+    use objc::{msg_send, sel, sel_impl};
+    unsafe { msg_send![panel, isOnActiveSpace] }
 }
 
 /// `[NSApp activateIgnoringOtherApps:YES]`, unless an e2e run is non-activating.
@@ -403,6 +416,22 @@ pub async fn set_history_swipe_navigation_enabled(
     gesture::set_history_swipe_navigation_enabled(window, enabled).await
 }
 
+/// Record that a webview renderer's main event loop is responsive.
+///
+/// The macOS renderer watchdog compares this monotonic heartbeat with the
+/// moment a window was shown. If WebKit wedges while submitting a paint to its
+/// GPU process, JavaScript cannot advance its event loop and the native shell
+/// can rebuild the stale UI without restarting capture.
+#[tauri::command]
+#[specta::specta]
+pub fn webview_renderer_heartbeat(window: tauri::WebviewWindow) {
+    #[cfg(target_os = "macos")]
+    renderer_watchdog::record_heartbeat(window.label());
+
+    #[cfg(not(target_os = "macos"))]
+    let _ = window;
+}
+
 /// Make the live app match the enterprise hidden-UI policy.
 ///
 /// The startup window gate (`main.rs`) already honors `is_app_ui_hidden()` —
@@ -508,6 +537,8 @@ pub use focus::clear_frontmost_app;
 pub use focus::restore_frontmost_app;
 #[cfg(target_os = "macos")]
 pub use panel::{reset_to_regular_and_refresh_tray, MAIN_PANEL_SHOWN};
+#[cfg(target_os = "macos")]
+pub(crate) use renderer_watchdog::{watch_focused, watch_visible};
 #[cfg(target_os = "macos")]
 pub use show::apply_chat_panel_on_top;
 #[cfg(target_os = "macos")]

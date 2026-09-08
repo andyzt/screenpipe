@@ -473,11 +473,36 @@ impl ShowRewindWindow {
         app: &AppHandle,
         search_origin: Option<&str>,
     ) -> tauri::Result<WebviewWindow> {
+        let window = self.show_with_search_origin_inner(app, search_origin)?;
+        #[cfg(target_os = "macos")]
+        super::watch_visible(&window, self.clone());
+        Ok(window)
+    }
+
+    fn show_with_search_origin_inner(
+        &self,
+        app: &AppHandle,
+        search_origin: Option<&str>,
+    ) -> tauri::Result<WebviewWindow> {
         let id = self.id();
         let onboarding_store = OnboardingStore::get(app)
             .unwrap_or_else(|_| None)
             .unwrap_or_default();
         let allowed_while_hidden = allowed_while_hidden_ui(&id, onboarding_store.is_completed);
+
+        if onboarding_store.blocks_trial_activation_app()
+            && !crate::should_skip_onboarding()
+            && !matches!(&id, RewindWindowId::Home | RewindWindowId::PermissionRecovery)
+        {
+            info!(
+                "trial activation: routing blocked {} entry point to first summary",
+                id.label()
+            );
+            return ShowRewindWindow::Home {
+                page: Some("home".to_string()),
+            }
+            .show(app);
+        }
 
         if crate::enterprise_policy::is_app_ui_hidden() && !allowed_while_hidden {
             info!(
@@ -717,6 +742,14 @@ impl ShowRewindWindow {
 
                         if let Ok(panel) = app_clone.get_webview_panel(RewindWindowId::Chat.label())
                         {
+                            // A panel pinned to another Space still reports itself as
+                            // visible. Order it out first so MoveToActiveSpace is applied
+                            // when it is ordered front again on the current Space.
+                            if panel.is_visible()
+                                && !crate::window::panel_is_on_active_space(&*panel)
+                            {
+                                panel.order_out(None);
+                            }
                             apply_chat_panel_on_top(&*panel, chat_on_top);
                             let _: () =
                                 unsafe { msg_send![&*panel, setMovableByWindowBackground: true] };

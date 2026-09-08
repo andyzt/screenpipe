@@ -4,7 +4,11 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
-import { MeetingChatPanel, type MeetingChatTurn } from "./meeting-chat-panel";
+import {
+  MeetingChatPanel,
+  formatMeetingChatTimeRange,
+  type MeetingChatTurn,
+} from "./meeting-chat-panel";
 import { type MeetingChatConditions } from "./meeting-chat-state";
 import type { MeetingSummaryExecution } from "./meeting-summary-lifecycle";
 import type { AIPreset } from "@/lib/utils/tauri";
@@ -67,6 +71,9 @@ const conditions = (
 function setup(overrides: Partial<React.ComponentProps<typeof MeetingChatPanel>> = {}) {
   const props = {
     conditions: conditions(),
+    meetingTitle: "Claimio enterprise discovery call",
+    meetingStart: new Date(2026, 7, 14, 15, 29).getTime(),
+    meetingEnd: new Date(2026, 7, 14, 16, 40).getTime(),
     turns: [] as MeetingChatTurn[],
     draft: "",
     onDraftChange: vi.fn(),
@@ -93,6 +100,28 @@ function setup(overrides: Partial<React.ComponentProps<typeof MeetingChatPanel>>
 }
 
 describe("meeting chat panel", () => {
+  it("names the attached meeting, evidence, and local time range", () => {
+    setup({ conditions: conditions({ hasWrittenContext: true }) });
+    expect(
+      screen.getByText("Claimio enterprise discovery call"),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("meeting-chat-context")).toHaveTextContent(
+      "transcript + notes",
+    );
+    expect(screen.getByTestId("meeting-chat-context")).toHaveTextContent(
+      formatMeetingChatTimeRange(
+        new Date(2026, 7, 14, 15, 29).getTime(),
+        new Date(2026, 7, 14, 16, 40).getTime(),
+      )!,
+    );
+  });
+
+  it("formats epoch-millisecond context times and live ranges", () => {
+    const start = new Date(2026, 7, 14, 15, 29).getTime();
+    expect(formatMeetingChatTimeRange(start, null)).toContain("–now");
+    expect(formatMeetingChatTimeRange(Number.NaN, null)).toBeNull();
+  });
+
   it("is a labelled aside, so it is one region to assistive tech (case 93)", () => {
     setup();
     const panel = screen.getByTestId("meeting-chat-panel");
@@ -205,6 +234,9 @@ describe("meeting chat panel", () => {
       >
         <MeetingChatPanel
           conditions={conditions()}
+          meetingTitle="Claimio enterprise discovery call"
+          meetingStart={new Date(2026, 7, 14, 15, 29).getTime()}
+          meetingEnd={new Date(2026, 7, 14, 16, 40).getTime()}
           turns={[]}
           draft=""
           onDraftChange={vi.fn()}
@@ -307,6 +339,61 @@ describe("meeting chat panel", () => {
     );
   });
 
+  it("keeps a parenthesized citation together as one no-wrap control", () => {
+    setup({
+      turns: [
+        {
+          id: "a",
+          role: "assistant",
+          text: "you agreed at (3:34) to send pricing",
+          done: true,
+        },
+      ],
+    });
+    const citation = screen.getByTestId("meeting-chat-citation");
+    expect(citation).toHaveTextContent("(3:34)");
+    expect(citation.className).toContain("whitespace-nowrap");
+  });
+
+  it("renders assistant Markdown without breaking transcript citations", () => {
+    setup({
+      turns: [
+        {
+          id: "a",
+          role: "assistant",
+          text: "At **3:34**, this was *important*.\n\n- first point\n- second point",
+          done: true,
+        },
+      ],
+    });
+
+    expect(
+      screen.getByTestId("meeting-chat-citation").closest("strong"),
+    ).not.toBeNull();
+    expect(screen.getByText("important").closest("em")).not.toBeNull();
+    expect(screen.getByText("first point").closest("li")).not.toBeNull();
+    expect(screen.queryByText("**3:34**")).toBeNull();
+  });
+
+  it("keeps images out of the meeting thread", () => {
+    setup({
+      turns: [
+        {
+          id: "a",
+          role: "assistant",
+          text: "text before ![chart](https://example.com/chart.png) and ![clip](/tmp/clip.mp4) text after",
+          done: true,
+        },
+      ],
+    });
+
+    expect(
+      screen
+        .getByTestId("meeting-chat-answer")
+        .querySelector("img, video, audio"),
+    ).toBeNull();
+  });
+
   it("case 66: a finished empty turn says so rather than rendering blank", () => {
     setup({
       turns: [{ id: "a", role: "assistant", text: "", done: true }],
@@ -347,9 +434,11 @@ describe("meeting chat panel", () => {
 
   it("case 5 (layout): states its scope without making it selectable", () => {
     setup();
-    expect(
-      screen.queryByText("reading transcript · notes · screen"),
-    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("meeting-chat-context").tagName).toBe("P");
+    expect(screen.getByTestId("meeting-chat-context")).not.toHaveAttribute(
+      "role",
+      "button",
+    );
   });
 
   it("keeps the selected model visible and lets this chat change it", () => {

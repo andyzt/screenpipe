@@ -277,6 +277,11 @@ jobs:
       working-directory: ./apps/screenpipe-app-tauri
       run: bun run test:e2e:onboarding-background-ai-tools
 
+    - name: Verify clean Free onboarding without card capture
+      shell: pwsh
+      working-directory: ./apps/screenpipe-app-tauri
+      run: bun run test:e2e:onboarding-first-run
+
     - name: Run E2E Tests
       shell: pwsh
       working-directory: ./apps/screenpipe-app-tauri
@@ -635,6 +640,7 @@ jobs:
         export RECORD_VIDEO=1
 
         bun run test:e2e:onboarding-background-ai-tools
+        bun run test:e2e:onboarding-first-run
         rm -rf ./e2e/results
         bun run test:e2e
 
@@ -923,6 +929,11 @@ jobs:
       working-directory: ./apps/screenpipe-app-tauri
       run: bun run test:e2e:onboarding-background-ai-tools
 
+    - name: Verify clean Free onboarding without card capture
+      shell: bash
+      working-directory: ./apps/screenpipe-app-tauri
+      run: bun run test:e2e:onboarding-first-run
+
     - name: Run E2E Tests
       # ADVISORY (non-blocking): the full serial suite (maxInstances:1) with
       # specFileRetries:3 on the slow macos-15 image exceeds the job budget and
@@ -973,7 +984,9 @@ jobs:
   linux-wayland-e2e-gate:
     name: Linux Wayland E2E Tests
     needs: [changes, linux-wayland-e2e-test]
-    if: always()
+    # A superseding main push cancels the old workflow. Keep that required
+    # check skipped instead of manufacturing a failure from "cancelled".
+    if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - name: Verify routed check

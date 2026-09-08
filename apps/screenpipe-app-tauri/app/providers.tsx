@@ -19,12 +19,14 @@ import { useUpdateListener } from "@/components/update-banner";
 import { DeeplinkHandler } from "@/components/deeplink-handler";
 import { registerAppVersionProperty } from "@/lib/analytics/app-version-property";
 import { LiveViewOnboardingFollowUp } from "@/components/live-view-onboarding-follow-up";
+import { BackgroundPipeAllowanceNotifier } from "@/components/background-pipe-allowance-notifier";
 import { usePathname } from "next/navigation";
 import { readCachedAnalyticsId, readCachedAnalyticsEnabled } from "@/lib/analytics-id";
 import { resolveTelemetryDisabledByEnv } from "@/lib/telemetry-env";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { queryClient } from "@/lib/query-client";
 import { DesktopRemoteControl } from "@/components/desktop-remote-control";
+
 
 /// Global mount point for the updater event listener. Lives here (not in
 /// per-page hooks) so the listener is registered for the lifetime of the
@@ -136,21 +138,23 @@ export const Providers = forwardRef<
                     defaultTheme="system"
                     storageKey="screenpipe-ui-theme"
                   >
-                    <ChangelogDialogProvider>
-                      <PermissionMonitorProvider>
-                        <UpdateListenerMount />
-                        <PostHogProvider client={posthog}>
-                          {mounted ? (
-                            <>
-                              <DesktopRemoteControl enabled={posthogReady} />
-                              {!isOverlay && <DeeplinkHandler />}
-                              {!isOverlay && <LiveViewOnboardingFollowUp />}
-                              {children}
-                            </>
-                          ) : null}
-                        </PostHogProvider>
-                      </PermissionMonitorProvider>
-                    </ChangelogDialogProvider>
+                    <PostHogProvider client={posthog}>
+                      {/* Authorization was removed from this build: no
+                          AuthGuard / AppEntitlementGate. The app subtree
+                          mounts as soon as the client render starts. */}
+                      {mounted ? (
+                        <ChangelogDialogProvider>
+                          {!isOverlay && <DeeplinkHandler />}
+                          <PermissionMonitorProvider>
+                            <UpdateListenerMount />
+                            <DesktopRemoteControl enabled={posthogReady} />
+                            {!isOverlay && <LiveViewOnboardingFollowUp />}
+                            {!isOverlay && <BackgroundPipeAllowanceNotifier />}
+                            {children}
+                          </PermissionMonitorProvider>
+                        </ChangelogDialogProvider>
+                      ) : null}
+                    </PostHogProvider>
                   </ThemeProvider>
               </ManagedPolicyProvider>
             </SettingsProvider>

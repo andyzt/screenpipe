@@ -15,6 +15,7 @@ use tracing::{debug, error, info};
 
 use crate::{
     analytics,
+    history_access::HistoryAccessPolicy,
     hot_frame_cache::HotFrameCache,
     routes::{
         activity_ledger::get_activity_ledger,
@@ -50,8 +51,9 @@ use crate::{
             bulk_delete_meetings_handler, delete_meeting_handler, export_handler,
             get_meeting_handler, get_meeting_summary_status_handler,
             get_meeting_transcript_handler, list_meetings_handler, meeting_status_handler,
-            merge_meetings_handler, split_meeting_handler, start_meeting_handler,
-            stop_meeting_handler, update_meeting_handler,
+            merge_meetings_handler, resolve_room_change_handler, save_meeting_summary_handler,
+            split_meeting_handler, start_meeting_handler, stop_meeting_handler,
+            update_meeting_handler,
         },
         memories::{
             create_memory_handler, delete_memory_handler, get_memory_handler,
@@ -159,6 +161,7 @@ fn search_query_concurrency(read_pool_max: u32) -> usize {
 
 pub struct AppState {
     pub db: Arc<DatabaseManager>,
+    pub history_access: HistoryAccessPolicy,
     pub audio_manager: Arc<AudioManager>,
     pub app_start_time: DateTime<Utc>,
     pub screenpipe_dir: PathBuf,
@@ -249,6 +252,9 @@ pub struct AppState {
 
 pub struct SCServer {
     db: Arc<DatabaseManager>,
+    /// Rolling history policy. Standalone/headless construction is unrestricted;
+    /// the consumer desktop app explicitly supplies its live account policy.
+    pub history_access: HistoryAccessPolicy,
     addr: SocketAddr,
     audio_manager: Arc<AudioManager>,
     screenpipe_dir: PathBuf,
@@ -380,6 +386,7 @@ impl SCServer {
         let audio_metrics = audio_manager.metrics.clone();
         SCServer {
             db,
+            history_access: HistoryAccessPolicy::unrestricted(),
             addr,
             screenpipe_dir,
             vision_disabled,
@@ -612,6 +619,13 @@ impl SCServer {
             std::time::Instant::now(),
         );
 
+        // Engine-owned backstop for meeting summaries: reconciles completed
+        // meeting-summary runs against the meeting record and requeues runs a
+        // restart interrupted. Spawned here because both entrypoints (engine
+        // binary and the desktop's embedded server) build their router through
+        // this path; the finalizer itself is once-per-process.
+        crate::meeting_summary::spawn_meeting_summary_finalizer(self.db.clone());
+
         if analytics_enabled {
             // Spawn periodic API usage reporter (every 5 minutes)
             let counter_clone = api_request_count.clone();
@@ -763,6 +777,7 @@ impl SCServer {
 
         let app_state = Arc::new(AppState {
             db: self.db.clone(),
+            history_access: self.history_access.clone(),
             audio_manager: self.audio_manager.clone(),
             app_start_time: Utc::now(),
             screenpipe_dir: self.screenpipe_dir.clone(),
@@ -924,11 +939,13 @@ impl SCServer {
             .post("/meetings/bulk-delete", bulk_delete_meetings_handler)
             .post("/meetings/start", start_meeting_handler)
             .post("/meetings/stop", stop_meeting_handler)
+            .post("/meetings/room-change", resolve_room_change_handler)
             .get("/meetings/:id/transcript", get_meeting_transcript_handler)
             .get(
                 "/meetings/:id/summary-status",
                 get_meeting_summary_status_handler,
             )
+            .post("/meetings/:id/summary", save_meeting_summary_handler)
             .get("/meetings/:id", get_meeting_handler)
             .delete("/meetings/:id", delete_meeting_handler)
             .put("/meetings/:id", update_meeting_handler)
@@ -1189,6 +1206,16 @@ impl SCServer {
                 "/v1/web-search",
                 axum::routing::post(crate::routes::web_search::web_search),
             )
+            // User-scoped cloud data reads. The signed-in identity determines
+            // the bucket upstream; callers cannot provide an account or bucket.
+            .route(
+                "/data-sync/devices",
+                get(crate::routes::data_sync_proxy::devices),
+            )
+            .route(
+                "/data-sync/search",
+                get(crate::routes::data_sync_proxy::search),
+            )
             // Blocking connect broker for the harness MCP `screenpipe_connect_app`
             // tool: raise the in-chat connect card and wait for the user's answer.
             .route(
@@ -1211,6 +1238,10 @@ impl SCServer {
             }
             let pipe_routes = Router::new()
                 .route("/", axum::routing::get(crate::pipes_api::list_pipes))
+                .route(
+                    "/bundled/:id/install",
+                    axum::routing::post(crate::pipes_api::install_bundled_pipe),
+                )
                 .route(
                     "/install",
                     axum::routing::post(crate::pipes_api::install_pipe),

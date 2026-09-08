@@ -96,12 +96,14 @@ import { resolveModelAlias } from './providers';
 import {
 	buildHostedChatGatewayContext,
 	isHostedChatGatewayEnabled,
+	shouldUseHostedChatGateway,
 	type HostedChatGatewayContext,
 } from './services/cloudflare-ai-gateway';
 import { getCloudflareHostedChatUsage } from './services/cloudflare-ai-gateway-usage';
 import {
 	resolveBackgroundFallbackBody,
 } from './services/background-limit-fallback';
+import { buildBackgroundPipeAllowanceAdvisory } from './services/background-pipe-advisory';
 import { logApiAuthAudit, logApiRouteAudit } from './services/api-audit';
 // import { handleTTSWebSocketUpgrade } from './handlers/voice-ws';
 
@@ -423,6 +425,10 @@ export async function handleRequest(request: Request, env: Env, ctx: ExecutionCo
 						can_buy_credits: false,
 						byok_supported: true,
 					},
+					background_pipe_advisory: buildBackgroundPipeAllowanceAdvisory({
+						env,
+						allowances: cloudflareUsage?.allowances ?? null,
+					}),
 				};
 				return addCorsHeaders(createSuccessResponse(enriched));
 			}
@@ -488,6 +494,7 @@ export async function handleRequest(request: Request, env: Env, ctx: ExecutionCo
 					can_buy_credits: false,
 					byok_supported: true,
 				},
+				background_pipe_advisory: null,
 			};
 			return addCorsHeaders(createSuccessResponse(enriched));
 		}
@@ -633,7 +640,7 @@ export async function handleRequest(request: Request, env: Env, ctx: ExecutionCo
 				return rateLimit.response;
 			}
 
-			const cloudflareGateway = isHostedChatGatewayEnabled(env);
+			const cloudflareGateway = shouldUseHostedChatGateway(env, body.model);
 			let legacyRescueFallback = false;
 			// Legacy mode retains the paid weighted-query admission gate. In
 			// Cloudflare mode the provider-cost spend rules are authoritative for

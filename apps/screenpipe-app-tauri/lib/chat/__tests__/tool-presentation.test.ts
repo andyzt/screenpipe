@@ -440,6 +440,21 @@ describe("presentToolActivity — ACP tool calls", () => {
     ).toBe("Checked available automations");
   });
 
+  it("describes Claude recording queries as a user-facing search", () => {
+    expect(
+      presentToolActivity({
+        toolName: "query_recordings",
+        agentId: "claude-acp",
+        kind: "other",
+        args: {},
+      }),
+    ).toMatchObject({
+      runningLabel: "Searching recordings",
+      completedLabel: "Searched recordings",
+      icon: "search",
+    });
+  });
+
   it("falls back to the ACP kind for native tools whose title isn't a known name", () => {
     expect(
       presentToolActivity({ toolName: "Read /repo/a.ts", kind: "read", args: {} }).completedLabel,
@@ -468,6 +483,21 @@ describe("presentToolActivity — ACP tool calls", () => {
     expect(presentToolActivity({ toolName: "tool", args: {} }).completedLabel).toBe(
       "Completed a background step",
     );
+  });
+
+  it("identifies the provider when ACP supplies no meaningful tool metadata", () => {
+    expect(
+      presentToolActivity({ toolName: "MCP: tool", agentId: "cursor", args: {} }),
+    ).toMatchObject({
+      runningLabel: "Using a Cursor tool",
+      completedLabel: "Used a Cursor tool",
+    });
+    expect(
+      presentToolActivity({ toolName: "MCP: tool", agentId: "pi-acp", args: {} }).completedLabel,
+    ).toBe("Used a Pi tool");
+    expect(
+      presentToolActivity({ toolName: "MCP: tool", agentId: "custom", args: {} }).completedLabel,
+    ).toBe("Used an ACP tool");
   });
 });
 

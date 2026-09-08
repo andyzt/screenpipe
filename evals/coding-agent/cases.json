@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "suite": "screenpipe-app-coding-agent-regressions",
-  "dataset_version": "2026-08-19.3",
+  "dataset_version": "2026-09-07.1",
   "suite_type": "regression",
   "owner": "screenpipe engineering",
   "policy": {
@@ -499,6 +499,599 @@
           { "source_path": "apps/screenpipe-app-tauri/lib/settings/__tests__/capture-categories.test.ts" }
         ],
         "command": "cd apps/screenpipe-app-tauri && bun x vitest run --config vitest.config.ts lib/settings/__tests__/capture-categories.test.ts"
+      }
+    },
+    {
+      "id": "app-acp-explicit-full-access-boundary",
+      "name": "Keep ACP full access explicit, reversible, and adapter-safe",
+      "source": {
+        "kind": "git_regression",
+        "fix_commit": "e83222db608f55b3931204e061262469411de94a",
+        "pull_request": "https://github.com/screenpipe/screenpipe/pull/6514"
+      },
+      "base_ref": "989a53b86af113e0e408b4ee6c5f7dd14d886d3d",
+      "oracle_ref": "e83222db608f55b3931204e061262469411de94a",
+      "gate": "advisory",
+      "trigger_paths": [
+        "apps/screenpipe-app-tauri/components/chat/standalone/**acp**",
+        "apps/screenpipe-app-tauri/lib/stores/acp-session-config.ts",
+        "apps/screenpipe-app-tauri/lib/utils/tauri.ts",
+        "apps/screenpipe-app-tauri/src-tauri/src/pi.rs",
+        "crates/screenpipe-core/src/agents/acp/**"
+      ],
+      "tags": ["regression", "escaped-failure", "chat", "acp", "permissions", "safety-boundary"],
+      "prompt": "An ACP adapter can advertise working modes without an unrestricted one, leaving users unable to grant full access explicitly. Add a clearly warned opt-in full-access choice that restores a tool-capable mode and enables client-side automatic approval. Keep the default and unknown states approval-based, return to approval prompts when a prompted or read-only choice is selected, persist and reapply the policy for live sessions, and preserve adapter-owned unrestricted controls without duplicates.",
+      "agent_timeout_seconds": 1200,
+      "grader_dependency_links": [
+        { "source_path": "apps/screenpipe-app-tauri/node_modules", "destination_path": "apps/screenpipe-app-tauri/node_modules" }
+      ],
+      "grader": {
+        "timeout_seconds": 420,
+        "fixtures": [
+          { "source_path": "apps/screenpipe-app-tauri/components/chat/standalone/acp-permission-selector.test.tsx" },
+          { "source_path": "apps/screenpipe-app-tauri/lib/stores/acp-session-config.test.ts" }
+        ],
+        "command": "cd apps/screenpipe-app-tauri && NODE_OPTIONS=--localstorage-file=.eval-localstorage bun x vitest run --config vitest.config.ts components/chat/standalone/acp-permission-selector.test.tsx lib/stores/acp-session-config.test.ts"
+      }
+    },
+    {
+      "id": "app-sqlite-process-ownership",
+      "name": "Keep one live SQLite owner per physical database",
+      "source": {
+        "kind": "git_regression",
+        "fix_commit": "b68c120070351b90afb9e1df1e5f2c866f7fe396",
+        "pull_request": "https://github.com/screenpipe/screenpipe/pull/6517"
+      },
+      "base_ref": "6301ad06342d4bad420598db86db9e44423b05b6",
+      "oracle_ref": "b68c120070351b90afb9e1df1e5f2c866f7fe396",
+      "gate": "advisory",
+      "trigger_paths": [
+        "crates/screenpipe-db/src/db/**",
+        "crates/screenpipe-db/src/write_queue.rs",
+        "crates/screenpipe-sqlite-coordinator/src/lib.rs"
+      ],
+      "tags": ["regression", "escaped-failure", "database", "sqlite", "macos", "data-integrity", "process-ownership"],
+      "prompt": "On macOS, a live capture database can lose its process-wide SQLite ownership lock when another independently managed database generation or helper opens the same physical file. A foreign writable SQLite process can then attach while the original pools are still live, risking WAL-index invalidation and persistent disk-I/O failures. Keep exactly one live owner for each canonical physical database path, reject a duplicate before it can disturb the lock, avoid reopening an existing live file through a different SQLite path, release ownership only after authoritative pool shutdown, and allow a clean replacement after close. Preserve in-memory databases and safe missing-file recovery.",
+      "agent_timeout_seconds": 1800,
+      "grader_dependency_links": [
+        { "source_path": "target", "destination_path": "target" }
+      ],
+      "grader": {
+        "timeout_seconds": 1800,
+        "fixtures": [
+          {
+            "local_path": "graders/app-sqlite-process-ownership.rs",
+            "destination_path": "crates/screenpipe-db/tests/eval_sqlite_process_ownership.rs"
+          },
+          { "source_path": "crates/screenpipe-db/tests/sqlite_architecture_invariants_test.rs" }
+        ],
+        "command": "CARGO_TARGET_DIR=${SCREENPIPE_EVAL_CARGO_TARGET_DIR:-target} cargo test -p screenpipe-db --test eval_sqlite_process_ownership --test sqlite_architecture_invariants_test"
+      }
+    },
+    {
+      "id": "app-chat-unicode-context-pruning",
+      "name": "Keep trimmed chat context valid Unicode",
+      "source": {
+        "kind": "git_regression",
+        "fix_commit": "5c9a0831b0f7e0e6b39e916d0c9bfbd481e2db97",
+        "pull_request": "https://github.com/screenpipe/screenpipe/pull/6563"
+      },
+      "base_ref": "aff38b0634d41b2f7c2cda9e65a3c77b354b15fc",
+      "oracle_ref": "5c9a0831b0f7e0e6b39e916d0c9bfbd481e2db97",
+      "gate": "advisory",
+      "trigger_paths": [
+        "crates/screenpipe-core/assets/extensions/context-pruning.ts",
+        "apps/screenpipe-app-tauri/lib/__tests__/context-pruning.test.ts"
+      ],
+      "tags": ["regression", "escaped-failure", "chat", "unicode", "context-pruning", "cross-platform"],
+      "prompt": "Long chat context can fail before reaching the model when trimming cuts an emoji or another supplementary Unicode character in half, leaving malformed serialized text. Make every history-tail and generic head/tail trim boundary produce valid Unicode without exceeding its existing character budget. Preserve the newest conversation history, the complete current question, both ends of generic oversized content, and unchanged behavior for text already within budget.",
+      "agent_timeout_seconds": 1200,
+      "grader_dependency_links": [
+        { "source_path": "apps/screenpipe-app-tauri/node_modules", "destination_path": "apps/screenpipe-app-tauri/node_modules" }
+      ],
+      "grader": {
+        "timeout_seconds": 420,
+        "fixtures": [
+          { "source_path": "apps/screenpipe-app-tauri/lib/__tests__/context-pruning.test.ts" }
+        ],
+        "command": "cd apps/screenpipe-app-tauri && bun x vitest run --config vitest.config.ts lib/__tests__/context-pruning.test.ts"
+      }
+    },
+    {
+      "id": "app-search-accessibility-metadata-match",
+      "name": "Keep visible metadata matches from accessibility-captured frames",
+      "source": {
+        "kind": "git_regression",
+        "fix_commit": "656a05c68163a4e554f7958a2f0dc690f366412b",
+        "pull_request": "https://github.com/screenpipe/screenpipe/pull/6647"
+      },
+      "base_ref": "845dc283e938bee87cd5ed8e21a4891145ac348e",
+      "oracle_ref": "656a05c68163a4e554f7958a2f0dc690f366412b",
+      "gate": "advisory",
+      "trigger_paths": [
+        "apps/screenpipe-app-tauri/lib/hooks/use-keyword-search-store.tsx",
+        "apps/screenpipe-app-tauri/lib/hooks/__tests__/use-keyword-search-store.test.ts"
+      ],
+      "tags": ["regression", "escaped-failure", "search", "accessibility", "metadata", "false-empty"],
+      "prompt": "Desktop keyword search can receive a backend-authoritative result from an accessibility-captured frame, then erase it and show no results even when the query matches visible app, window, or URL metadata. Keep those metadata matches without presenting accessibility element bounds as precise text highlights. Continue to omit accessibility-only semantic-label matches, preserve OCR, hybrid, legacy, and fuzzy-prefix results, and do not add fallback screenshot OCR. The filter path must settle normally rather than reporting a query failure.",
+      "agent_timeout_seconds": 900,
+      "grader_dependency_links": [
+        { "source_path": "apps/screenpipe-app-tauri/node_modules", "destination_path": "apps/screenpipe-app-tauri/node_modules" }
+      ],
+      "grader": {
+        "timeout_seconds": 300,
+        "fixtures": [
+          { "source_path": "apps/screenpipe-app-tauri/lib/hooks/__tests__/use-keyword-search-store.test.ts" }
+        ],
+        "command": "cd apps/screenpipe-app-tauri && bun x vitest run --config vitest.config.ts lib/hooks/__tests__/use-keyword-search-store.test.ts"
+      }
+    },
+    {
+      "id": "app-chat-jump-to-latest",
+      "name": "Replace the chat new-content pill with a quiet jump control",
+      "source": {
+        "kind": "git_regression",
+        "fix_commit": "a245a91bfc9b2aa1a944eb9ca40cc6a66c490132",
+        "pull_request": "https://github.com/screenpipe/screenpipe/pull/6690"
+      },
+      "base_ref": "fed5c6e37603a3fc8aeb0b6fd1b4ef2b041ebd60",
+      "oracle_ref": "a245a91bfc9b2aa1a944eb9ca40cc6a66c490132",
+      "gate": "advisory",
+      "trigger_paths": [
+        "apps/screenpipe-app-tauri/components/chat/standalone/chat-main-pane.tsx",
+        "apps/screenpipe-app-tauri/components/chat/standalone/chat-composer.tsx",
+        "apps/screenpipe-app-tauri/components/chat/standalone/chat-jump-to-latest.tsx",
+        "apps/screenpipe-app-tauri/components/chat/standalone/hooks/use-chat-scroll.ts"
+      ],
+      "tags": ["regression", "escaped-failure", "chat", "scroll", "disclosure"],
+      "prompt": "When a chat is long enough to scroll, the control that appears after the user moves up says \"new content\" even when nothing new arrived. Replace that labeled notification with a quiet jump-to-latest control parked on the composer: icon only, sharp corners, no visible copy, stay mounted and faded while the viewport is already at the latest message, and keep stick-to-bottom while reading unchanged. Do not show the control as interactive on a short chat that cannot scroll.",
+      "agent_timeout_seconds": 900,
+      "grader_dependency_links": [
+        { "source_path": "apps/screenpipe-app-tauri/node_modules", "destination_path": "apps/screenpipe-app-tauri/node_modules" }
+      ],
+      "grader": {
+        "timeout_seconds": 300,
+        "fixtures": [
+          { "source_path": "apps/screenpipe-app-tauri/components/chat/standalone/chat-jump-to-latest.test.tsx" },
+          { "source_path": "apps/screenpipe-app-tauri/components/chat/standalone/chat-main-pane.test.tsx" },
+          { "source_path": "apps/screenpipe-app-tauri/components/chat/standalone/hooks/use-chat-scroll.test.tsx" }
+        ],
+        "command": "cd apps/screenpipe-app-tauri && bun x vitest run --config vitest.config.ts components/chat/standalone/chat-jump-to-latest.test.tsx components/chat/standalone/chat-main-pane.test.tsx components/chat/standalone/hooks/use-chat-scroll.test.tsx"
+      }
+    },
+    {
+      "id": "app-chat-trailing-tool-answer",
+      "name": "Preserve a completed answer before a trailing tool",
+      "source": {
+        "kind": "git_regression",
+        "fix_commit": "be90ee8fe24646fbee6aa6c1aae90c0716557de8",
+        "pull_request": "https://github.com/screenpipe/screenpipe/pull/6691"
+      },
+      "base_ref": "1de85ceefcb83c18a7f94f013c1f5ef67e639c96",
+      "oracle_ref": "be90ee8fe24646fbee6aa6c1aae90c0716557de8",
+      "gate": "advisory",
+      "trigger_paths": [
+        "apps/screenpipe-app-tauri/components/chat/standalone/message-content.tsx",
+        "apps/screenpipe-app-tauri/lib/chat/message-rendering.ts"
+      ],
+      "tags": ["regression", "escaped-failure", "chat", "rendering", "tool-call", "answer-loss"],
+      "prompt": "A completed assistant turn can contain earlier narration, tool activity, a final answer, and then a trailing tool event. The renderer hides all text before the last tool, leaving a tool receipt and an empty gap even though the answer is stored. Render the last non-empty answer for completed turns that end on a tool, keep earlier intermediate narration hidden, keep running turns compact, preserve text emitted after the final tool, and align the assistant action surface with the answer that is actually visible.",
+      "agent_timeout_seconds": 900,
+      "grader_dependency_links": [
+        { "source_path": "apps/screenpipe-app-tauri/node_modules", "destination_path": "apps/screenpipe-app-tauri/node_modules" }
+      ],
+      "grader": {
+        "timeout_seconds": 300,
+        "fixtures": [
+          { "source_path": "apps/screenpipe-app-tauri/components/chat/standalone/message-content.answer-recovery.test.tsx" },
+          { "source_path": "apps/screenpipe-app-tauri/components/chat/standalone/message-content.agent-action.test.tsx" },
+          { "source_path": "apps/screenpipe-app-tauri/components/chat/standalone/message-content.structured-output.test.tsx" },
+          { "source_path": "apps/screenpipe-app-tauri/lib/chat/__tests__/message-rendering.test.ts" }
+        ],
+        "command": "cd apps/screenpipe-app-tauri && bun x vitest run --config vitest.config.ts components/chat/standalone/message-content.answer-recovery.test.tsx components/chat/standalone/message-content.agent-action.test.tsx components/chat/standalone/message-content.structured-output.test.tsx lib/chat/__tests__/message-rendering.test.ts"
+      }
+    },
+    {
+      "id": "app-chat-recents-pool-eviction",
+      "name": "Keep Recents stable when the agent pool evicts a chat",
+      "source": {
+        "kind": "git_regression",
+        "fix_commit": "3d10440e5ad238a8790a74a220ec3631a26ca2e1",
+        "pull_request": "https://github.com/screenpipe/screenpipe/pull/6741"
+      },
+      "base_ref": "a47bfd71075c1d8d63f3b76f4d45fe17d414a5c9",
+      "oracle_ref": "3d10440e5ad238a8790a74a220ec3631a26ca2e1",
+      "gate": "advisory",
+      "trigger_paths": [
+        "apps/screenpipe-app-tauri/lib/stores/pi-event-router.ts",
+        "apps/screenpipe-app-tauri/components/chat/standalone/hooks/use-chat-session-runtime.ts",
+        "apps/screenpipe-app-tauri/components/standalone-chat.tsx"
+      ],
+      "tags": ["regression", "escaped-failure", "chat", "recents", "session-eviction", "ordering", "state-preservation"],
+      "prompt": "When several chats are running, the agent process pool can evict one chat. The app then removes that conversation from its in-memory index, so it disappears from Recents and a later event can recreate it untitled with new sort timestamps; an active evicted chat can also jump to a blank conversation. Treat process eviction as a runtime state change rather than conversation deletion: keep the existing conversation identity, title, timestamps, ordering, messages, and on-disk history; settle its loading and streaming state; ignore evictions for unknown conversations; and let the next send restart the agent under the same conversation ID. Preserve normal clean termination and background event routing.",
+      "agent_timeout_seconds": 900,
+      "grader_dependency_links": [
+        { "source_path": "apps/screenpipe-app-tauri/node_modules", "destination_path": "apps/screenpipe-app-tauri/node_modules" }
+      ],
+      "grader": {
+        "timeout_seconds": 300,
+        "fixtures": [
+          {
+            "local_path": "graders/app-chat-recents-pool-eviction.test.ts",
+            "destination_path": "apps/screenpipe-app-tauri/lib/__tests__/pi-event-router.pool-eviction-eval.test.ts"
+          },
+          {
+            "source_ref": "a47bfd71075c1d8d63f3b76f4d45fe17d414a5c9",
+            "source_path": "apps/screenpipe-app-tauri/lib/__tests__/pi-event-router.test.ts"
+          },
+          {
+            "source_ref": "a47bfd71075c1d8d63f3b76f4d45fe17d414a5c9",
+            "source_path": "apps/screenpipe-app-tauri/components/chat/standalone/hooks/use-chat-session-runtime.test.tsx"
+          },
+          {
+            "source_ref": "a47bfd71075c1d8d63f3b76f4d45fe17d414a5c9",
+            "source_path": "apps/screenpipe-app-tauri/lib/__tests__/chat-store.test.ts"
+          }
+        ],
+        "command": "cd apps/screenpipe-app-tauri && NODE_OPTIONS=--localstorage-file=.eval-localstorage bun x vitest run --config vitest.config.ts lib/__tests__/pi-event-router.pool-eviction-eval.test.ts lib/__tests__/pi-event-router.test.ts components/chat/standalone/hooks/use-chat-session-runtime.test.tsx lib/__tests__/chat-store.test.ts"
+      }
+    },
+    {
+      "id": "app-chat-overlapping-load-isolation",
+      "name": "Keep overlapping chat loads isolated",
+      "source": {
+        "kind": "git_regression",
+        "fix_commit": "3aa56c5a12d7797f83d523ffdd045fa17ac232cf",
+        "pull_request": "https://github.com/screenpipe/screenpipe/pull/6772"
+      },
+      "base_ref": "10ae49880fcb8d072bc17b2c08522f1e4ec1f1d1",
+      "oracle_ref": "3aa56c5a12d7797f83d523ffdd045fa17ac232cf",
+      "oracle_paths": [
+        "apps/screenpipe-app-tauri/components/hooks/use-chat-conversations.ts"
+      ],
+      "gate": "advisory",
+      "trigger_paths": [
+        "apps/screenpipe-app-tauri/components/hooks/use-chat-conversations.ts",
+        "apps/screenpipe-app-tauri/lib/stores/chat-store.ts",
+        "apps/screenpipe-app-tauri/lib/chat-storage.ts"
+      ],
+      "tags": ["regression", "escaped-failure", "chat", "navigation", "concurrency", "data-corruption", "state-isolation"],
+      "prompt": "Rapid chat navigation can start a second conversation load while the first still awaits metadata or disk work. The eager session reference then points at the requested chat while the rendered transcript still belongs to the outgoing chat, so the wrong messages can be saved under another conversation and a stale request can reclaim the foreground. Bind every outgoing snapshot to the conversation and messages still rendered, and allow only the newest navigation to commit panel, current-session, settings, and preset state after asynchronous work. Keep each conversation's stored messages unchanged, leave the newest chat in the foreground when an older load finishes late, and preserve single-load behavior, temporary side-chat boundaries, stable ID fallbacks, concurrent save merging, browser state, and user-message timestamps.",
+      "agent_timeout_seconds": 1200,
+      "grader_dependency_links": [
+        { "source_path": "apps/screenpipe-app-tauri/node_modules", "destination_path": "apps/screenpipe-app-tauri/node_modules" }
+      ],
+      "grader": {
+        "timeout_seconds": 420,
+        "fixtures": [
+          { "source_path": "apps/screenpipe-app-tauri/lib/__tests__/save-conversation-race.test.tsx" }
+        ],
+        "command": "cd apps/screenpipe-app-tauri && NODE_OPTIONS=--localstorage-file=.eval-localstorage bun x vitest run --config vitest.config.ts lib/__tests__/save-conversation-race.test.tsx"
+      }
+    },
+    {
+      "id": "app-chat-renderer-reload-hydration",
+      "name": "Hydrate a saved chat after renderer reload",
+      "source": {
+        "kind": "git_regression",
+        "fix_commit": "4bc33459becbdf0f824243a1600aa6263f174768",
+        "pull_request": "https://github.com/screenpipe/screenpipe/pull/6766"
+      },
+      "base_ref": "664233bf1df466feafdcea117fb26f2787df7786",
+      "oracle_ref": "4bc33459becbdf0f824243a1600aa6263f174768",
+      "oracle_paths": [
+        "apps/screenpipe-app-tauri/components/chat/standalone/hooks/use-chat-window-events.ts",
+        "apps/screenpipe-app-tauri/components/standalone-chat.tsx"
+      ],
+      "gate": "advisory",
+      "trigger_paths": [
+        "apps/screenpipe-app-tauri/components/chat/standalone/hooks/use-chat-window-events.ts",
+        "apps/screenpipe-app-tauri/components/standalone-chat.tsx",
+        "apps/screenpipe-app-tauri/lib/stores/chat-store.ts",
+        "apps/screenpipe-app-tauri/lib/chat-storage.ts"
+      ],
+      "tags": ["regression", "escaped-failure", "chat", "renderer-reload", "hydration", "false-empty", "state-recovery"],
+      "prompt": "After a chat renderer reload, the selected tab and conversation metadata can recover before the message pane. Routing sees that the requested conversation ID already matches the current session and returns early forever, leaving a blank transcript even though the saved conversation still contains messages. Treat matching IDs as complete only when the current view has renderable state; otherwise hydrate the known saved conversation instead of replacing it with a fresh blank chat. Preserve the fast path and current-session notification when the transcript is already rendered.",
+      "agent_timeout_seconds": 900,
+      "grader_dependency_links": [
+        { "source_path": "apps/screenpipe-app-tauri/node_modules", "destination_path": "apps/screenpipe-app-tauri/node_modules" }
+      ],
+      "grader": {
+        "timeout_seconds": 300,
+        "fixtures": [
+          { "source_path": "apps/screenpipe-app-tauri/components/chat/standalone/hooks/use-chat-window-events.test.tsx" }
+        ],
+        "command": "cd apps/screenpipe-app-tauri && NODE_OPTIONS=--localstorage-file=.eval-localstorage bun x vitest run --config vitest.config.ts components/chat/standalone/hooks/use-chat-window-events.test.tsx"
+      }
+    },
+    {
+      "id": "app-pipe-history-tool-call-rendering",
+      "name": "Render tool activity from saved pipe history",
+      "source": {
+        "kind": "git_regression",
+        "fix_commit": "ce59063b095bc54ddad910938b0c77bcd9a46a24"
+      },
+      "base_ref": "d0b2d298c1c5167eb843b32f8e08939ee54badce",
+      "oracle_ref": "ce59063b095bc54ddad910938b0c77bcd9a46a24",
+      "oracle_paths": [
+        "apps/screenpipe-app-tauri/lib/pipe-ndjson-to-chat.ts"
+      ],
+      "gate": "advisory",
+      "trigger_paths": [
+        "apps/screenpipe-app-tauri/lib/pipe-ndjson-to-chat.ts",
+        "apps/screenpipe-app-tauri/components/chat/**"
+      ],
+      "tags": ["regression", "escaped-failure", "pipes", "chat", "tool-call", "rendering", "false-empty", "ndjson"],
+      "prompt": "Saved pipe execution history can contain valid assistant tool calls and results, but the chat view renders empty bubbles instead of showing what the pipe did. Make each parsed completed tool call render with its name and structured arguments, and attach its result to the same tool activity. Recover the name and arguments when streaming deltas are thin but the completed event contains them, and keep oversized results bounded. Preserve ordinary text, thinking, multi-turn ordering, agent-end fallback, malformed or truncated input, empty input, tool-result deduplication, unique message IDs, and conversation metadata.",
+      "agent_timeout_seconds": 900,
+      "grader_dependency_links": [
+        { "source_path": "apps/screenpipe-app-tauri/node_modules", "destination_path": "apps/screenpipe-app-tauri/node_modules" }
+      ],
+      "grader": {
+        "timeout_seconds": 420,
+        "fixtures": [
+          { "source_path": "apps/screenpipe-app-tauri/components/__tests__/pipe-ndjson-to-chat.test.ts" }
+        ],
+        "command": "cd apps/screenpipe-app-tauri && bun x vitest run --config vitest.config.ts components/__tests__/pipe-ndjson-to-chat.test.ts"
+      }
+    },
+    {
+      "id": "app-log-share-redaction-false-positive",
+      "name": "Preserve accessibility telemetry while redacting shared logs",
+      "source": {
+        "kind": "git_regression",
+        "fix_commit": "08feb4df5db8c6d95f58f5f1fe02930a450885c3"
+      },
+      "base_ref": "3828e565d41de1df99a24c26e69da0121f8c71c1",
+      "oracle_ref": "08feb4df5db8c6d95f58f5f1fe02930a450885c3",
+      "oracle_paths": [
+        "apps/screenpipe-app-tauri/components/share-logs-button.tsx",
+        "apps/screenpipe-app-tauri/lib/utils/redact-pii.ts"
+      ],
+      "gate": "advisory",
+      "trigger_paths": [
+        "apps/screenpipe-app-tauri/components/share-logs-button.tsx",
+        "apps/screenpipe-app-tauri/lib/utils/redact-pii.ts",
+        "crates/screenpipe-core/src/pii_removal.rs"
+      ],
+      "tags": ["regression", "escaped-failure", "privacy", "log-sharing", "redaction", "accessibility", "false-positive", "data-integrity"],
+      "prompt": "A shared support bundle includes recent chat context after removing personal information, but its phone-number detector also replaces bare accessibility coordinates and numeric telemetry. Preserve structured bounds, frame and monitor identifiers, hashes, process identifiers, pixel dimensions, and other unformatted numeric values in the uploaded bundle. Continue to remove formatted phone numbers, email addresses, government identifiers, payment-card numbers, bearer tokens, API credentials, IP addresses, and home-directory usernames. Do not solve the problem by disabling redaction or omitting the chat context.",
+      "agent_timeout_seconds": 900,
+      "grader_dependency_links": [
+        { "source_path": "apps/screenpipe-app-tauri/node_modules", "destination_path": "apps/screenpipe-app-tauri/node_modules" }
+      ],
+      "grader": {
+        "timeout_seconds": 420,
+        "fixtures": [
+          {
+            "local_path": "graders/app-log-share-redaction.test.tsx",
+            "destination_path": "apps/screenpipe-app-tauri/components/__tests__/app-log-share-redaction.eval.test.tsx"
+          }
+        ],
+        "command": "cd apps/screenpipe-app-tauri && bun x vitest run --config vitest.config.ts components/__tests__/app-log-share-redaction.eval.test.tsx"
+      }
+    },
+    {
+      "id": "app-startup-auth-not-required",
+      "name": "Start signup-free builds without a false sign-in gate",
+      "source": {
+        "kind": "git_regression",
+        "fix_commit": "27fb5d84707fc778b6d5740f54943ee25b6128b5",
+        "pull_request": "https://github.com/screenpipe/screenpipe/pull/6810"
+      },
+      "base_ref": "7ded3c132196a0ce3b347469843b4693d6765ff6",
+      "oracle_ref": "27fb5d84707fc778b6d5740f54943ee25b6128b5",
+      "oracle_paths": [
+        "apps/screenpipe-app-tauri/components/app-entitlement-gate.tsx"
+      ],
+      "gate": "advisory",
+      "trigger_paths": [
+        "apps/screenpipe-app-tauri/components/app-entitlement-gate.tsx",
+        "apps/screenpipe-app-tauri/components/providers/app-init-provider.tsx",
+        "apps/screenpipe-app-tauri/src-tauri/src/startup_auth.rs",
+        "apps/screenpipe-app-tauri/src-tauri/src/main.rs"
+      ],
+      "tags": ["regression", "escaped-failure", "auth", "startup", "signup-free", "false-gate", "recording"],
+      "prompt": "A signup-free desktop build has already resolved startup authentication as not required, but the protected app still renders a sign-in gate because no user account exists. Make an explicit no-auth-required startup reach the application without stopping the recorder. Ordinary signed-out builds must still require sign-in; authenticated, enterprise, onboarding, development-skip, entitlement, hydration, recovery, and non-primary-window behavior must remain unchanged.",
+      "agent_timeout_seconds": 900,
+      "grader_dependency_links": [
+        { "source_path": "apps/screenpipe-app-tauri/node_modules", "destination_path": "apps/screenpipe-app-tauri/node_modules" }
+      ],
+      "grader": {
+        "timeout_seconds": 420,
+        "fixtures": [
+          {
+            "source_ref": "27fb5d84707fc778b6d5740f54943ee25b6128b5",
+            "source_path": "apps/screenpipe-app-tauri/components/app-entitlement-gate.test.tsx"
+          }
+        ],
+        "command": "cd apps/screenpipe-app-tauri && NODE_OPTIONS=--localstorage-file=.eval-localstorage bun x vitest run --config vitest.config.ts components/app-entitlement-gate.test.tsx"
+      }
+    },
+    {
+      "id": "app-enterprise-account-handoff-recording",
+      "name": "Keep recording authorized during enterprise account handoff",
+      "source": {
+        "kind": "git_regression",
+        "fix_commit": "666dd855cd1e6539f700426990e90114d06e97d8",
+        "pull_request": "https://github.com/screenpipe/screenpipe/pull/6841"
+      },
+      "base_ref": "c6721aae2caefb59ce7d8a839c732107332bb773",
+      "oracle_ref": "666dd855cd1e6539f700426990e90114d06e97d8",
+      "oracle_paths": [
+        "apps/screenpipe-app-tauri/lib/hooks/use-enterprise-policy.ts"
+      ],
+      "gate": "advisory",
+      "trigger_paths": [
+        "apps/screenpipe-app-tauri/lib/hooks/use-enterprise-policy.ts",
+        "apps/screenpipe-app-tauri/lib/hooks/__tests__/use-enterprise-policy.test.tsx"
+      ],
+      "tags": ["regression", "escaped-failure", "enterprise", "auth", "recording", "account-handoff", "race", "fail-closed"],
+      "prompt": "An enterprise desktop has a previously verified device grant, a policy that now requires account sign-in, and a saved account credential ready to check. During startup, evaluating the device credential first revokes native recording authorization before the viable account credential finishes, stopping capture and racing the later account grant. Keep recording authorized through that account handoff, then grant account authorization when verification succeeds. Preserve immediate fail-closed behavior for key-only devices, explicit account denial, invalid or missing credentials, rotated keys, transient failures, policy changes, and ordinary non-enterprise startup.",
+      "agent_timeout_seconds": 900,
+      "grader_dependency_links": [
+        { "source_path": "apps/screenpipe-app-tauri/node_modules", "destination_path": "apps/screenpipe-app-tauri/node_modules" }
+      ],
+      "grader": {
+        "timeout_seconds": 420,
+        "fixtures": [
+          {
+            "source_ref": "666dd855cd1e6539f700426990e90114d06e97d8",
+            "source_path": "apps/screenpipe-app-tauri/lib/hooks/__tests__/use-enterprise-policy.test.tsx"
+          }
+        ],
+        "command": "cd apps/screenpipe-app-tauri && NODE_OPTIONS=--localstorage-file=.eval-localstorage bun x vitest run --config vitest.config.ts lib/hooks/__tests__/use-enterprise-policy.test.tsx"
+      }
+    },
+    {
+      "id": "ai-gateway-nested-json-schema",
+      "name": "Accept standard nested JSON Schema response formats",
+      "source": {
+        "kind": "git_regression",
+        "fix_commit": "28da95884640708ced5db107a4e08b587c2e32d6",
+        "pull_request": "https://github.com/screenpipe/screenpipe/pull/6873"
+      },
+      "base_ref": "05a801d6103426108817849f99b26edb94e5be42",
+      "oracle_ref": "28da95884640708ced5db107a4e08b587c2e32d6",
+      "oracle_paths": [
+        "packages/ai-gateway/src/providers/openai.ts",
+        "packages/ai-gateway/src/providers/openrouter.ts",
+        "packages/ai-gateway/src/types.ts"
+      ],
+      "gate": "advisory",
+      "trigger_paths": [
+        "packages/ai-gateway/src/providers/openai.ts",
+        "packages/ai-gateway/src/providers/openrouter.ts",
+        "packages/ai-gateway/src/types.ts",
+        "packages/ai-gateway/src/index.ts"
+      ],
+      "tags": ["regression", "escaped-failure", "ai-gateway", "structured-output", "json-schema", "openai", "openrouter", "compatibility"],
+      "prompt": "Valid structured-output requests using the standard nested response_format.json_schema shape are rejected before provider dispatch, although the equivalent legacy flattened form works. Accept the nested form for both OpenAI and OpenRouter while preserving flattened compatibility. When both forms are present, nested fields must take precedence; json_object requests must stay unchanged; and incomplete schemas must still fail before dispatch.",
+      "agent_timeout_seconds": 900,
+      "grader_dependency_links": [
+        { "source_path": "packages/ai-gateway/node_modules", "destination_path": "packages/ai-gateway/node_modules" }
+      ],
+      "grader": {
+        "timeout_seconds": 300,
+        "fixtures": [
+          {
+            "local_path": "graders/ai-gateway-nested-json-schema.test.ts",
+            "destination_path": "packages/ai-gateway/src/test/eval-nested-json-schema.test.ts"
+          },
+          {
+            "source_ref": "28da95884640708ced5db107a4e08b587c2e32d6",
+            "source_path": "packages/ai-gateway/src/test/openai-models.unit.test.ts"
+          }
+        ],
+        "command": "cd packages/ai-gateway && bun test src/test/eval-nested-json-schema.test.ts src/test/openai-models.unit.test.ts --timeout=10000"
+      }
+    },
+    {
+      "id": "ai-gateway-gpt5-output-limit-retry",
+      "name": "Recover from retryable GPT-5 output-limit rejections",
+      "source": {
+        "kind": "git_regression",
+        "fix_commit": "ae5f134d90acd4e38cf0e3a8a234f33df3c4806f",
+        "pull_request": "https://github.com/screenpipe/screenpipe/pull/6904"
+      },
+      "base_ref": "d375badd50f99e194c251c8dbc6ba90dc476231e",
+      "oracle_ref": "ae5f134d90acd4e38cf0e3a8a234f33df3c4806f",
+      "oracle_paths": [
+        "packages/ai-gateway/src/providers/openai.ts"
+      ],
+      "gate": "advisory",
+      "trigger_paths": [
+        "packages/ai-gateway/src/providers/openai.ts",
+        "packages/ai-gateway/src/handlers/chat.ts",
+        "packages/ai-gateway/src/types.ts"
+      ],
+      "tags": ["regression", "escaped-failure", "ai-gateway", "openai", "gpt-5", "output-limit", "retry", "bounded-recovery"],
+      "prompt": "GPT-5 requests can fail before producing a response when the provider explicitly says the configured output limit was reached and asks the caller to retry with a higher limit. Recover that request with a bounded higher-limit retry instead of letting the model chain fail. Preserve the caller's initial limit until this exact rejection occurs, keep the retry within the supported GPT-5 ceiling, avoid a futile retry when already at that ceiling, leave non-GPT-5 and unrelated errors untouched, and preserve the provider's existing parameter-repair behavior and loop bound.",
+      "agent_timeout_seconds": 900,
+      "grader_dependency_links": [
+        { "source_path": "packages/ai-gateway/node_modules", "destination_path": "packages/ai-gateway/node_modules" }
+      ],
+      "grader": {
+        "timeout_seconds": 300,
+        "fixtures": [
+          {
+            "source_ref": "ae5f134d90acd4e38cf0e3a8a234f33df3c4806f",
+            "source_path": "packages/ai-gateway/src/test/openai-param-retry.unit.test.ts"
+          }
+        ],
+        "command": "cd packages/ai-gateway && bun test src/test/openai-param-retry.unit.test.ts --timeout=10000"
+      }
+    },
+    {
+      "id": "ai-gateway-anthropic-tool-input-object",
+      "name": "Normalize Anthropic tool-use inputs to objects",
+      "source": {
+        "kind": "git_regression",
+        "fix_commit": "b06e1ffa467989bb075540e0d2e86ae36dc03683",
+        "pull_request": "https://github.com/screenpipe/screenpipe/pull/6905"
+      },
+      "base_ref": "1a645b0ba4d0c51e00a2665e871050800ae6fac5",
+      "oracle_ref": "b06e1ffa467989bb075540e0d2e86ae36dc03683",
+      "oracle_paths": [
+        "packages/ai-gateway/src/providers/anthropic.ts"
+      ],
+      "gate": "advisory",
+      "trigger_paths": [
+        "packages/ai-gateway/src/providers/anthropic.ts",
+        "packages/ai-gateway/src/types.ts",
+        "packages/ai-gateway/src/handlers/chat.ts"
+      ],
+      "tags": ["regression", "escaped-failure", "ai-gateway", "anthropic", "tool-use", "schema", "compatibility"],
+      "prompt": "OpenAI-compatible assistant history can contain tool-call arguments that parse as JSON null, an array, a number, or a string. Forwarding those values as Anthropic tool-use input causes the provider to reject the request because tool input must be an object. Normalize every parsed non-object tool input to an empty object before Anthropic dispatch. Preserve valid object arguments unchanged, keep malformed JSON fail-safe, and preserve tool call identifiers and names, tool results, ordinary text and image messages, streaming behavior, and provider routing.",
+      "agent_timeout_seconds": 900,
+      "grader_dependency_links": [
+        { "source_path": "packages/ai-gateway/node_modules", "destination_path": "packages/ai-gateway/node_modules" }
+      ],
+      "grader": {
+        "timeout_seconds": 300,
+        "fixtures": [
+          {
+            "source_ref": "b06e1ffa467989bb075540e0d2e86ae36dc03683",
+            "source_path": "packages/ai-gateway/src/test/anthropic-proxy.unit.test.ts"
+          }
+        ],
+        "command": "cd packages/ai-gateway && bun test src/test/anthropic-proxy.unit.test.ts --timeout=10000"
+      }
+    },
+    {
+      "id": "meeting-audio-fallback-before-process-tap",
+      "name": "Preserve meeting audio until process capture is ready",
+      "source": {
+        "kind": "git_regression",
+        "fix_commit": "c366c0747298cf919b767095c3b5f6632ffdfcde",
+        "pull_request": "https://github.com/screenpipe/screenpipe/pull/6937"
+      },
+      "base_ref": "018f1ecfa4c7bd0c28210607209c4bff19aa9bd8",
+      "oracle_ref": "c366c0747298cf919b767095c3b5f6632ffdfcde",
+      "oracle_paths": [
+        "crates/screenpipe-audio/src/audio_manager/meeting_piggyback.rs"
+      ],
+      "gate": "advisory",
+      "trigger_paths": [
+        "crates/screenpipe-audio/src/audio_manager/meeting_piggyback.rs",
+        "crates/screenpipe-audio/src/audio_manager.rs",
+        "crates/screenpipe-audio/src/core/device.rs"
+      ],
+      "tags": ["regression", "escaped-failure", "audio", "meeting", "microphone", "fallback", "capture-reliability", "data-loss", "bluetooth"],
+      "prompt": "A detected meeting can start before process-level audio capture opens or while process microphone resolution is temporarily empty. In those states, preserve the existing fallback microphone and normal configured capture so neither side of the meeting is silently lost. Retry process capture only within the existing bound. Once process capture has opened, retain meeting capture ownership through transient gaps. When the meeting ends or the feature is disabled, clean up session devices and resume suspended capture. Preserve ordinary non-meeting behavior.",
+      "agent_timeout_seconds": 900,
+      "grader_dependency_links": [
+        { "source_path": "target", "destination_path": "target" }
+      ],
+      "grader": {
+        "timeout_seconds": 600,
+        "fixtures": [
+          {
+            "local_path": "graders/meeting-audio-fallback.mjs",
+            "destination_path": "crates/screenpipe-audio/eval-meeting-audio-fallback.mjs"
+          }
+        ],
+        "command": "node crates/screenpipe-audio/eval-meeting-audio-fallback.mjs && cargo test -p screenpipe-audio --lib eval_meeting_audio_fallback -- --test-threads=2"
       }
     }
   ]

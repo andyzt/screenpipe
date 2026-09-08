@@ -50,7 +50,8 @@ pub use db::{
     DeleteTimeRangeResult, ImmediateTx, NewMeetingTranscriptSegment, SemanticActor,
     SemanticActorAlias, SemanticActorReference, SemanticAttachResult, SemanticCleanupResult,
     SemanticContextQuery, SemanticFrameContext, SemanticProjectionWriteResult,
-    MEETING_END_REASON_AUTO_END, MEETING_END_REASON_EXPLICIT_STOP, MEETING_END_REASON_SHUTDOWN,
+    MEETING_END_REASON_AUTO_END, MEETING_END_REASON_EXPLICIT_STOP, MEETING_END_REASON_ROOM_CHANGED,
+    MEETING_END_REASON_SHUTDOWN,
 };
 pub use recovery::{
     probe_quarantined_generation_health, rebuild_recovered_fts5_indexes,
@@ -60,13 +61,13 @@ pub use screenpipe_sqlite_coordinator::{
     archive_resolved_sqlite_quarantine, persist_sqlite_quarantine,
     prepare_sqlite_quarantine_reserve, read_sqlite_quarantine, resolve_verified_sqlite_quarantine,
     sqlite_file_identity, sqlite_hard_fault_latched, sqlite_quarantine_exists,
-    sqlite_quarantine_is_self_healable, sqlite_quarantine_marker_path, SqliteFileIdentity,
-    SqliteQuarantineMarker,
+    sqlite_quarantine_marker_path, sqlite_quarantine_self_heal_prerequisite, SqliteFileIdentity,
+    SqliteQuarantineMarker, SqliteQuarantineSelfHealPrerequisite,
 };
 pub use text_normalizer::{expand_search_query, sanitize_fts5_query};
 pub use types::*;
 pub use write_queue::{
     is_retryable_write_stall, is_write_lock_contention, is_write_pool_starved, request_write_pause,
-    request_write_resume, PersistentFailureHook, SyncTable, WriteQueueHealth,
-    WRITE_LOCK_HELD_MESSAGE, WRITE_POOL_STARVED_MESSAGE,
+    request_write_resume, DatabaseRestartHook, DatabaseRestartReason, PersistentFailureHook,
+    SyncTable, WriteQueueHealth, WRITE_LOCK_HELD_MESSAGE, WRITE_POOL_STARVED_MESSAGE,
 };

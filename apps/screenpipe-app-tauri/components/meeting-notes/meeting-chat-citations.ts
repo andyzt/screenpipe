@@ -41,6 +41,86 @@ export interface CitationWindow {
   endMs: number | null;
 }
 
+/** Internal Markdown link used to carry a parsed transcript timestamp. */
+export const MEETING_CITATION_HOST = "meeting-citation";
+
+interface MarkdownAstNode {
+  type: string;
+  value?: string;
+  url?: string;
+  children?: MarkdownAstNode[];
+}
+
+const CITATION_EXCLUDED_NODES = new Set([
+  "code",
+  "inlineCode",
+  "link",
+  "linkReference",
+]);
+
+function citationHref(at: number): string {
+  return `screenpipe://${MEETING_CITATION_HOST}?at=${at}`;
+}
+
+/** Read a timestamp only from links created by the meeting citation plugin. */
+export function meetingCitationAtFromHref(href?: string): number | null {
+  if (!href) return null;
+  try {
+    const url = new URL(href);
+    if (url.protocol !== "screenpipe:" || url.host !== MEETING_CITATION_HOST) {
+      return null;
+    }
+    const rawAt = url.searchParams.get("at");
+    if (!rawAt) return null;
+    const at = Number(rawAt);
+    return Number.isFinite(at) ? at : null;
+  } catch {
+    return null;
+  }
+}
+
+function linkMeetingCitations(
+  node: MarkdownAstNode,
+  window: CitationWindow | null,
+): void {
+  if (!node.children || CITATION_EXCLUDED_NODES.has(node.type)) return;
+
+  const next: MarkdownAstNode[] = [];
+  for (const child of node.children) {
+    if (child.type === "text" && typeof child.value === "string") {
+      for (const run of splitCitations(child.value, window)) {
+        next.push(
+          run.at === null
+            ? { type: "text", value: run.text }
+            : {
+                type: "link",
+                url: citationHref(run.at),
+                children: [{ type: "text", value: run.text }],
+              },
+        );
+      }
+      continue;
+    }
+
+    linkMeetingCitations(child, window);
+    next.push(child);
+  }
+  node.children = next;
+}
+
+/**
+ * Remark plugin that turns resolvable clock times into transcript controls.
+ *
+ * It runs after Markdown parsing, so emphasis such as `**11:25**` remains a
+ * strong element containing the citation instead of being split into literal
+ * asterisks around a button. Existing links and code stay untouched.
+ */
+export function createMeetingCitationPlugin(window: CitationWindow | null) {
+  return function meetingCitationPlugin() {
+    return (tree: MarkdownAstNode) => linkMeetingCitations(tree, window);
+  };
+}
+
 function windowEnd(window: CitationWindow): number {
   return window.endMs ?? Date.now();
 }
@@ -90,6 +170,7 @@ export function resolveCitationTime(
   } else {
     // No meridiem: try the literal hour and its 12h counterpart.
     push(hours);
+    if (hours === 12) push(0);
     if (hours < 12) push(hours + 12);
   }
 
@@ -135,12 +216,25 @@ export function splitCitations(
     );
     if (at === null) continue;
 
-    if (match.index > cursor) {
-      runs.push({ text: text.slice(cursor, match.index), at: null });
+    // Keep a parenthesized citation atomic. Previously `(3:46)` became three
+    // inline nodes — `(`, the link, and `)` — so a narrow meeting rail could
+    // strand the closing parenthesis on the next line.
+    let citationStart = match.index;
+    let citationEnd = match.index + raw.length;
+    if (
+      masked[citationStart - 1] === "(" &&
+      masked[citationEnd] === ")"
+    ) {
+      citationStart -= 1;
+      citationEnd += 1;
+    }
+
+    if (citationStart > cursor) {
+      runs.push({ text: text.slice(cursor, citationStart), at: null });
     }
     // Slice from the original so masked code never leaks into output.
-    runs.push({ text: text.slice(match.index, match.index + raw.length), at });
-    cursor = match.index + raw.length;
+    runs.push({ text: text.slice(citationStart, citationEnd), at });
+    cursor = citationEnd;
   }
 
   if (cursor < text.length) runs.push({ text: text.slice(cursor), at: null });

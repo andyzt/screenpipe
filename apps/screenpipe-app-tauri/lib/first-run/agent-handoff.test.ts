@@ -5,12 +5,16 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  agentHandoffTargetForPrompt,
   CURSOR_DEEPLINK_REPLAY_DELAY_MS,
   HANDOFF_PROMPT,
   handoffTargets,
+  handoffTargetById,
   openAgentHandoffDeeplink,
+  performAgentHandoff,
   pickHandoffTarget,
   pickHandoffTargets,
+  preferredHandoffTargetForRecentApps,
 } from "./agent-handoff";
 
 describe("pickHandoffTargets", () => {
@@ -78,6 +82,23 @@ describe("pickHandoffTarget", () => {
       expect(target.hint).toMatch(/review and send/i);
     }
   });
+
+  it("rebuilds allowlisted routes for a caller-provided prompt", () => {
+    const prompt = "Run the Day Recap with Screenpipe.";
+    const encoded = encodeURIComponent(prompt);
+    expect(
+      Object.fromEntries(
+        handoffTargets().map((target) => [
+          target.id,
+          agentHandoffTargetForPrompt(target, prompt).deeplink,
+        ]),
+      ),
+    ).toEqual({
+      claude: `claude://claude.ai/new?q=${encoded}`,
+      cursor: `cursor://anysphere.cursor-deeplink/prompt?text=${encoded}`,
+      codex: `codex://threads/new?prompt=${encoded}`,
+    });
+  });
 });
 
 describe("openAgentHandoffDeeplink", () => {
@@ -134,6 +155,79 @@ describe("openAgentHandoffDeeplink", () => {
       replayed: false,
       failedStage: "replay",
     });
+  });
+});
+
+describe("notification handoff recovery", () => {
+  it("copies before opening and preserves Cursor's cold-start replay", async () => {
+    const cursor = handoffTargetById("cursor")!;
+    const copyText = vi.fn(async () => {});
+    const openUrl = vi.fn(async () => {});
+    const delay = vi.fn(async () => {});
+
+    const result = await performAgentHandoff(cursor, {
+      copyText,
+      openUrl,
+      delay,
+    });
+
+    expect(copyText).toHaveBeenCalledWith(HANDOFF_PROMPT);
+    expect(openUrl).toHaveBeenCalledTimes(2);
+    expect(result).toMatchObject({ copied: true, prefilled: true, replayed: true });
+  });
+
+  it("rejects unknown target ids instead of opening attacker-selected schemes", () => {
+    expect(handoffTargetById("terminal")).toBeNull();
+    expect(handoffTargetById(null)).toBeNull();
+  });
+
+  it("copies and opens a caller-provided prompt instead of the first-run prompt", async () => {
+    const claude = handoffTargetById("claude")!;
+    const prompt = "Use Screenpipe to find my missed to-dos.";
+    const copyText = vi.fn(async () => {});
+    const openUrl = vi.fn(async () => {});
+
+    await performAgentHandoff(claude, { copyText, openUrl }, prompt);
+
+    expect(copyText).toHaveBeenCalledWith(prompt);
+    expect(openUrl).toHaveBeenCalledWith(
+      `claude://claude.ai/new?q=${encodeURIComponent(prompt)}`,
+    );
+  });
+});
+
+describe("preferredHandoffTargetForRecentApps", () => {
+  const connected = pickHandoffTargets(["claude", "cursor", "codex"]);
+
+  it("uses aggregate active time before frames", () => {
+    expect(
+      preferredHandoffTargetForRecentApps(connected, [
+        { name: "Claude", activeMinutes: 1, frameCount: 100, lastSeenAt: 0 },
+        { name: "Cursor", activeMinutes: 4, frameCount: 2, lastSeenAt: 0 },
+      ])?.id,
+    ).toBe("cursor");
+  });
+
+  it("recognizes ChatGPT as the Codex desktop handoff", () => {
+    expect(
+      preferredHandoffTargetForRecentApps(connected, [
+        { name: "ChatGPT", activeMinutes: 2, frameCount: 3, lastSeenAt: 0 },
+      ])?.id,
+    ).toBe("codex");
+  });
+
+  it("never infers preference from window content or an unconnected app", () => {
+    expect(
+      preferredHandoffTargetForRecentApps(connected, [
+        { name: "Arc", activeMinutes: 9, frameCount: 90, lastSeenAt: 0 },
+      ]),
+    ).toBeNull();
+    expect(
+      preferredHandoffTargetForRecentApps(
+        pickHandoffTargets(["claude"]),
+        [{ name: "Cursor", activeMinutes: 9, frameCount: 90, lastSeenAt: 0 }],
+      ),
+    ).toBeNull();
   });
 });
 

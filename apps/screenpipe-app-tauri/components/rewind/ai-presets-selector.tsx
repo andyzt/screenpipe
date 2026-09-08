@@ -1449,8 +1449,6 @@ interface AIPresetsSelectorProps {
   onOpenChange?: (open: boolean) => void;
   /** Optional controls that belong with model selection in the same popover. */
   popoverFooter?: ReactNode;
-  /** Scheduled pipes still run through raw Pi and cannot execute ACP adapters. */
-  includeAgentPresets?: boolean;
 }
 
 export const AIPresetDialog = ({
@@ -1550,7 +1548,6 @@ export const AIPresetsSelector = ({
   providerIconOnly = false,
   onOpenChange,
   popoverFooter,
-  includeAgentPresets = true,
 }: AIPresetsSelectorProps) => {
   const { settings, updateSettings } = useSettings();
   const [open, setOpen] = useState(false);
@@ -1576,13 +1573,10 @@ export const AIPresetsSelector = ({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const aiPresets = useMemo(() => {
     const presets = (settings?.aiPresets || []) as AIPreset[];
-    const policyPresets = isManagedDeployment
+    return isManagedDeployment
       ? filterPresetsForEnterprisePolicy(presets, aiPresetPolicy)
       : presets;
-    return includeAgentPresets
-      ? policyPresets
-      : policyPresets.filter((preset) => preset.provider !== "acp");
-  }, [settings?.aiPresets, isManagedDeployment, aiPresetPolicy, includeAgentPresets]);
+  }, [settings?.aiPresets, isManagedDeployment, aiPresetPolicy]);
 
   const selectedPreset = useMemo(() => {
     if (isControlled) {
@@ -1792,11 +1786,7 @@ export const AIPresetsSelector = ({
     // A newly created preset belongs to the controlled surface that created
     // it. Pass the full value so the host can activate it immediately without
     // waiting for the settings store to publish the updated preset list.
-    if (
-      isControlled &&
-      createdPreset &&
-      (includeAgentPresets || createdPreset.provider !== "acp")
-    ) {
+    if (isControlled && createdPreset) {
       onControlledSelect(createdPreset);
     }
 
@@ -1891,12 +1881,11 @@ export const AIPresetsSelector = ({
       return;
     }
 
-    // Safety net: prevent deletion of the last screenpipe-cloud preset for subscribers
-    if (preset.provider === "screenpipe-cloud" && settings.user?.cloud_subscribed) {
-      const cloudPresets = settings.aiPresets.filter((p) => p.provider === "screenpipe-cloud");
-      if (cloudPresets.length <= 1) {
-        return;
-      }
+    if (settings.aiPresets.length <= 1) {
+      toast.error("Cannot delete preset", {
+        description: "At least one AI preset is required",
+      });
+      return;
     }
 
     let updatedPresets = settings.aiPresets.filter((p) => p.id !== preset.id);
@@ -1914,13 +1903,7 @@ export const AIPresetsSelector = ({
     });
   };
 
-  // Hide delete button on the last remaining screenpipe-cloud preset for subscribers
-  const cloudPresetCount = useMemo(
-    () => (settings?.aiPresets || []).filter((p) => p.provider === "screenpipe-cloud").length,
-    [settings?.aiPresets]
-  );
-  const isLastCloudPreset = (preset: AIPreset) =>
-    preset.provider === "screenpipe-cloud" && settings.user?.cloud_subscribed && cloudPresetCount <= 1;
+  const isOnlyPreset = (settings?.aiPresets || []).length <= 1;
   const selectedProviderName =
     selectedPresetData?.provider === "acp"
       ? acpAdapterInfo(selectedPresetData.acpAgent?.id).name
@@ -2234,6 +2217,7 @@ export const AIPresetsSelector = ({
                         handleOpenChange(false);
                       }}
                       className="flex py-2"
+                      data-testid={`ai-preset-option-${preset.id}`}
                     >
                       <div className="flex w-full items-center justify-between gap-2 overflow-hidden">
                         <div className="flex items-center gap-2 min-w-0">
@@ -2329,10 +2313,11 @@ export const AIPresetsSelector = ({
                                 <Star className="h-3.5 w-3.5" />
                               </Button>
                             )}
-                            {canManageEmployeePresets && !isEnterpriseManagedPreset(preset) && !isLastCloudPreset(preset) && (
+                            {canManageEmployeePresets && !isEnterpriseManagedPreset(preset) && !isOnlyPreset && (
                               <Button
                                 variant="ghost"
                                 size="icon"
+                                aria-label={`Delete ${preset.id}`}
                                 className="h-6 w-6 shrink-0"
                                 onClick={(e) => {
                                   e.stopPropagation();

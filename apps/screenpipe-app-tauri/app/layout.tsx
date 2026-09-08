@@ -14,6 +14,7 @@ import { Suspense, useEffect } from "react";
 import { ShortcutTracker } from "@/components/shortcut-reminder";
 import { PipeInstallDialog } from "@/components/pipe-install-dialog";
 import { BrowserPairingDialog } from "@/components/browser-pairing-dialog";
+import { CloseTabOrWindowShortcut } from "@/components/close-tab-or-window-shortcut";
 import { RecentChatSwitcherController } from "@/components/chat/recent-chat-switcher-controller";
 import { FeedbackDialog } from "@/components/feedback-dialog";
 import { AnnouncementHost } from "@/components/announcement-host";
@@ -75,12 +76,10 @@ function RecentChatSwitcherMount() {
   );
 }
 
-function ExperimentalFeatureControls() {
-  const enabled = useExperimentalFeaturesEnabled();
-
+function WebviewGestureControls() {
   useEffect(() => {
-    void commands.setHistorySwipeNavigationEnabled(enabled).catch(() => {});
-  }, [enabled]);
+    void commands.setHistorySwipeNavigationEnabled(false).catch(() => {});
+  }, []);
 
   return null;
 }
@@ -103,6 +102,24 @@ export default function RootLayout({
     if (typeof window === "undefined") return;
 
     const uninstallBrowserLogBridge = installBrowserLogBridge();
+
+    // A native foreground watchdog requires a heartbeat from WebKit's main
+    // event loop. When paint submission wedges in the GPU-process IPC path,
+    // the page cannot run this callback; the shell then rebuilds the stale UI
+    // webviews while the capture engine and local API keep running.
+    let rendererHeartbeatInFlight = false;
+    const sendRendererHeartbeat = () => {
+      if (rendererHeartbeatInFlight) return;
+      rendererHeartbeatInFlight = true;
+      void commands.webviewRendererHeartbeat().finally(() => {
+        rendererHeartbeatInFlight = false;
+      });
+    };
+    const rendererHeartbeatTimer = window.setInterval(
+      sendRendererHeartbeat,
+      1_000,
+    );
+    sendRendererHeartbeat();
 
     // Patch Tauri event listener race condition (APP-2/5/9/W, 69 users)
     // Tauri's unregisterListener doesn't null-check listeners[eventId]
@@ -224,6 +241,7 @@ export default function RootLayout({
       window.removeEventListener("error", handleWindowError);
       window.removeEventListener("unhandledrejection", handleUnhandled);
       clearInterval(focusWatchdog);
+      window.clearInterval(rendererHeartbeatTimer);
     };
   }, []);
 
@@ -316,7 +334,8 @@ export default function RootLayout({
           {!isOverlay && <ShortcutTracker />}
           {!isOverlay && <PipeInstallDialog />}
           {!isOverlay && <BrowserPairingDialog />}
-          <ExperimentalFeatureControls />
+          <WebviewGestureControls />
+          <CloseTabOrWindowShortcut />
           <Suspense fallback={null}>
             <RecentChatSwitcherMount />
           </Suspense>
