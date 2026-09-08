@@ -6,7 +6,6 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { useToast } from "@/components/ui/use-toast";
-import OnboardingLogin from "@/components/onboarding/login-gate";
 import AcquisitionStep from "@/components/onboarding/acquisition-step";
 import PermissionsStep from "@/components/onboarding/permissions-step";
 import TimelineChoice from "@/components/onboarding/timeline-choice";
@@ -15,7 +14,6 @@ import PlanSelectionStep from "@/components/onboarding/plan-selection-step";
 import { useOnboarding } from "@/lib/hooks/use-onboarding";
 import { useManagedPolicy } from "@/lib/hooks/use-managed-policy";
 import { useSettings } from "@/lib/hooks/use-settings";
-import { EnterpriseLicensePrompt } from "@/components/enterprise-license-prompt";
 import posthog from "posthog-js";
 import { commands } from "@/lib/utils/tauri";
 import { onboardingFunnel } from "@/lib/analytics/onboarding-funnel";
@@ -23,8 +21,9 @@ import type { AppUser } from "@/lib/app-entitlement";
 import { readOnboardingCheckoutStatus } from "@/lib/onboarding-checkout-navigation";
 import { requiresOnboardingCheckout } from "@/lib/onboarding-checkout";
 
-type SlideKey =
-  "login" | "acquisition" | "permissions" | "timeline" | "engine" | "plan";
+// "login" is gone: this build has no screenpipe account. Saved installs that
+// stopped on it resume at acquisition.
+type SlideKey = "acquisition" | "permissions" | "timeline" | "engine" | "plan";
 
 // One size for the whole flow. Per-slide sizes made the window jump on every
 // step, worst on "plan", which widened to 760 even though the content column is
@@ -42,7 +41,6 @@ const ONBOARDING_WINDOW_SIZE = { width: 500, height: 680 };
 // When shown, the timeline choice sits before "engine" so disableTimeline is
 // persisted before the engine spawns and reads it — no restart needed.
 const SLIDE_ORDER: SlideKey[] = [
-  "login",
   "acquisition",
   "permissions",
   "timeline",
@@ -124,7 +122,7 @@ export default function OnboardingPage() {
       : readOnboardingCheckoutStatus(window.location.search),
   );
   const [currentSlide, setCurrentSlide] = useState<SlideKey>(() =>
-    checkoutReturnStatus ? "plan" : "login",
+    checkoutReturnStatus ? "plan" : "acquisition",
   );
   const [isVisible, setIsVisible] = useState(true);
   const [isTransitioning, setIsTransitioning] = useState(false);
@@ -145,12 +143,6 @@ export default function OnboardingPage() {
   const {
     isManagedDeployment,
     isManagedDeploymentResolved,
-    authenticationState,
-    authenticationError,
-    isManagedAuthenticated,
-    selectAuthenticationMethod,
-    submitLicenseKey,
-    policy: managedPolicy,
     isSettingLocked,
   } = useManagedPolicy();
   // This intervention is intentionally narrow: only a canonical "low" tier
@@ -241,7 +233,7 @@ export default function OnboardingPage() {
         const step = onboardingData.currentStep as string;
         // Map old and new step names
         const stepMap: Record<string, SlideKey> = {
-          login: "login",
+          login: "acquisition",
           acquisition: "acquisition",
           permissions: "permissions",
           timeline: "timeline",
@@ -260,8 +252,8 @@ export default function OnboardingPage() {
           encrypt: "engine",
           read: "engine",
           shortcut: "engine",
-          welcome: "login",
-          intro: "login",
+          welcome: "acquisition",
+          intro: "acquisition",
           usecases: "permissions",
           status: "permissions",
           setup: "permissions",
@@ -353,12 +345,7 @@ export default function OnboardingPage() {
     transitioningRef.current = true;
     setIsTransitioning(true);
 
-    // The login gate owns this event because only it can distinguish a fresh
-    // logged-out -> logged-in transition from resuming a persisted session.
-    // Capturing it here as well duplicates every fresh-login completion.
-    if (currentSlide !== "login") {
-      posthog.capture(`onboarding_${currentSlide}_completed`);
-    }
+    posthog.capture(`onboarding_${currentSlide}_completed`);
     const currentIdx = SLIDE_ORDER.indexOf(currentSlide);
     posthog.capture("onboarding_step_reached", {
       step_name: `${currentSlide}_completed`,
@@ -449,25 +436,23 @@ export default function OnboardingPage() {
     visibleOrder,
   ]);
 
-  // Enterprise authentication owns the onboarding login step. Existing saved
-  // keys and accepted workspace accounts advance silently once verified.
+  // The login slide used to be the universal entry point and auto-advanced
+  // managed installs past "acquisition". Without it, land on the first slide
+  // this deployment actually shows and persist it so a relaunch resumes there.
   useEffect(() => {
-    if (
-      currentSlide === "login" &&
-      isManagedDeploymentResolved &&
-      isManagedDeployment &&
-      isManagedAuthenticated &&
-      !isTransitioning
-    ) {
-      void handleNextSlide();
-    }
+    if (isLoading || !isSettingsLoaded || !isManagedDeploymentResolved) return;
+    if (isTransitioning || visibleOrder.length === 0) return;
+    if (visibleOrder.includes(currentSlide)) return;
+    const first = visibleOrder[0];
+    setCurrentSlide(first);
+    commands.setOnboardingStep(first).catch(() => {});
   }, [
     currentSlide,
-    isManagedDeployment,
+    isLoading,
     isManagedDeploymentResolved,
-    isManagedAuthenticated,
+    isSettingsLoaded,
     isTransitioning,
-    handleNextSlide,
+    visibleOrder,
   ]);
 
   if (isLoading || !isSettingsLoaded || !isManagedDeploymentResolved) {
@@ -494,59 +479,11 @@ export default function OnboardingPage() {
             isVisible ? "opacity-100" : "opacity-0"
           }`}
         >
-          {currentSlide !== "login" && (
-            <EndowedProgress
-              step={Math.max(1, visibleOrder.indexOf(currentSlide) + 1)}
-              total={visibleOrder.length}
-              sub={currentSlide === "permissions" ? permissionsProgress : null}
-            />
-          )}
-          {currentSlide === "login" &&
-            (isManagedDeployment ? (
-              authenticationState === "license_key" ? (
-                <div className="mx-auto w-full max-w-sm">
-                  <h2 className="mb-1 text-lg font-semibold">
-                    activate this device
-                  </h2>
-                  <p className="mb-4 text-sm text-muted-foreground">
-                    enter the enterprise key provided by your administrator
-                  </p>
-                  <EnterpriseLicensePrompt
-                    embedded
-                    onSubmit={submitLicenseKey}
-                    onSignIn={() => selectAuthenticationMethod("account")}
-                  />
-                </div>
-              ) : authenticationState === "choice" ||
-                authenticationState === "account" ? (
-                <div className="flex flex-col items-center">
-                  {authenticationError && (
-                    <p className="mb-3 max-w-[360px] text-center font-mono text-[11px] text-destructive">
-                      {authenticationError}
-                    </p>
-                  )}
-                  <OnboardingLogin
-                    handleNextSlide={handleNextSlide}
-                    suppressAutoAdvance
-                  />
-                  {!managedPolicy?.requireAccountLogin && (
-                    <button
-                      type="button"
-                      onClick={() => selectAuthenticationMethod("license_key")}
-                      className="mt-3 font-mono text-xs text-muted-foreground/70 underline underline-offset-4 decoration-muted-foreground/40 transition-colors hover:text-foreground hover:decoration-foreground"
-                    >
-                      use enterprise key
-                    </button>
-                  )}
-                </div>
-              ) : (
-                <div className="flex min-h-[400px] items-center justify-center">
-                  <div className="h-6 w-6 animate-spin rounded-full border border-foreground border-t-transparent" />
-                </div>
-              )
-            ) : (
-              <OnboardingLogin handleNextSlide={handleNextSlide} />
-            ))}
+          <EndowedProgress
+            step={Math.max(1, visibleOrder.indexOf(currentSlide) + 1)}
+            total={visibleOrder.length}
+            sub={currentSlide === "permissions" ? permissionsProgress : null}
+          />
           {currentSlide === "acquisition" && (
             <AcquisitionStep handleNextSlide={handleNextSlide} />
           )}

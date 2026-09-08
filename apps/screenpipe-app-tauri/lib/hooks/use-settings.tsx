@@ -20,7 +20,6 @@ import { captureSettingsChange } from "@/lib/analytics/settings-change";
 import { resolveTelemetryDisabledByEnv, shouldIdentifyInPostHog } from "@/lib/telemetry-env";
 import { User } from "../utils/tauri";
 import { SettingsStore } from "../utils/tauri";
-import { installAuthInterceptor } from "../auth-guard";
 import {
 	getLocalPlanPolicy,
 	hasAppEntitlement,
@@ -65,6 +64,7 @@ export type AIProviderType =
 	| "openai-chatgpt"
 	| "anthropic"
 	| "custom"
+	| "deepseek"
 	| "embedded"
 	| "screenpipe-cloud"
 	| "acp"
@@ -129,6 +129,10 @@ export type AIPreset = {
 	  }
 	| {
 			provider: "custom";
+			apiKey: string;
+	  }
+	| {
+			provider: "deepseek";
 			apiKey: string;
 	  }
 	| {
@@ -608,48 +612,22 @@ const DEFAULT_IGNORED_WINDOWS_PER_OS: Record<string, string[]> = {
 	linux: ["Info center", "Discover", "Parted"],
 };
 
-// Default screenpipe-cloud presets on first install — every seed runs on
-// "auto": the ai-gateway routes to the best model the user's tier allows, so
-// nobody starts pinned to a specific (possibly tier-gated) Claude model.
-// - "Chat":  default preset, used by interactive chat.
-// - "Pipes": same routing, separate id so recurring pipe runs can be
-//           customized independently; users can override per-pipe.
-const CHAT_PRESET_ID = "chat";
-const PIPES_PRESET_ID = "pipes";
+// Default preset on first install: DeepSeek's multimodal model, talked to
+// directly with the user's own DeepSeek API key (no screenpipe account). The
+// key is read from the preset, falling back to the DEEPSEEK_API_KEY
+// environment variable of the app process.
+export const DEEPSEEK_PRESET_ID = "deepseek";
+export const DEEPSEEK_API_URL = "https://api.deepseek.com";
+export const DEEPSEEK_DEFAULT_MODEL = "deepseek-v4-flash-vision-exp";
 
-// Non-pro users get a single "screenpipe" preset on auto — auto handles
-// model routing without needing the user to know what to pick.
-const SCREENPIPE_PRESET_ID = "screenpipe";
-
-export function makeDefaultPresets(isPro: boolean): AIPreset[] {
-	if (isPro) {
-		return [
-			{
-				id: CHAT_PRESET_ID,
-				provider: "screenpipe-cloud",
-				url: "",
-				model: "auto",
-				maxContextChars: 200000,
-				defaultPreset: true,
-				prompt: "",
-			},
-			{
-				id: PIPES_PRESET_ID,
-				provider: "screenpipe-cloud",
-				url: "",
-				model: "auto",
-				maxContextChars: 200000,
-				defaultPreset: false,
-				prompt: "",
-			},
-		];
-	}
+export function makeDefaultPresets(_isPro: boolean): AIPreset[] {
 	return [
 		{
-			id: SCREENPIPE_PRESET_ID,
-			provider: "screenpipe-cloud",
-			url: "",
-			model: "auto",
+			id: DEEPSEEK_PRESET_ID,
+			provider: "deepseek",
+			apiKey: "",
+			url: DEEPSEEK_API_URL,
+			model: DEEPSEEK_DEFAULT_MODEL,
 			maxContextChars: 200000,
 			defaultPreset: true,
 			prompt: "",
@@ -657,9 +635,7 @@ export function makeDefaultPresets(isPro: boolean): AIPreset[] {
 	];
 }
 
-// Seed value — module load can't know pro status yet, so fall back to non-pro.
-// ensureDefaultPreset() re-seeds with pro status once settings.user is loaded.
-const DEFAULT_CLOUD_PRESET: AIPreset = makeDefaultPresets(false)[0];
+const DEFAULT_DEEPSEEK_PRESET: AIPreset = makeDefaultPresets(false)[0];
 
 const DEFAULT_AUDIO_ENGINE = "whisper-large-v3-turbo-quantized";
 
@@ -1200,25 +1176,6 @@ function createSettingsStore() {
 			needsUpdate = true;
 		}
 
-		// b2 seed: the first time we see a logged-in user, replace the anonymous
-		// "screenpipe" placeholder with the pro pair (chat + pipes) IF they're pro.
-		// Anonymous users keep the placeholder forever (which is correct — non-pro
-		// stays on the single "screenpipe" auto preset). Existing users with their
-		// own presets are untouched. Runs exactly once per install.
-		if (!(settings as any)._presetsSeededForUser && settings.user?.token) {
-			const isPro = settings.user?.cloud_subscribed === true;
-			const presets = settings.aiPresets ?? [];
-			const isAnonymousPlaceholder =
-				presets.length === 1 &&
-				(presets[0] as any)?.id === SCREENPIPE_PRESET_ID &&
-				(presets[0] as any)?.provider === "screenpipe-cloud";
-			if (isPro && isAnonymousPlaceholder) {
-				settings.aiPresets = makeDefaultPresets(true) as any;
-			}
-			(settings as any)._presetsSeededForUser = true;
-			needsUpdate = true;
-		}
-
 		// Migration: Rename "pi" provider to "screenpipe-cloud" for clarity
 		if (settings.aiPresets?.some((p: any) => p.provider === "pi")) {
 			settings.aiPresets = settings.aiPresets.map((p: any) =>
@@ -1235,15 +1192,23 @@ function createSettingsStore() {
 			needsUpdate = true;
 		}
 
-		// Migration: Add screenpipe-cloud preset for existing users (without touching their existing presets)
-		const hasCloudPreset = settings.aiPresets?.some(
-			(p: any) => p.id === "screenpipe-cloud" || p.provider === "screenpipe-cloud"
+		// Migration: add the DeepSeek preset for existing installs (without
+		// touching their existing presets). It becomes the default so a store that
+		// only ever had screenpipe-cloud presets (which now need no account but
+		// still need a cloud token) lands on a provider that works out of the box.
+		const hasDeepSeekPreset = settings.aiPresets?.some(
+			(p: any) => p.provider === "deepseek"
 		);
-		if (settings.aiPresets && settings.aiPresets.length > 0 && !hasCloudPreset) {
-			// Only set as default if no other preset is already default
-			const hasDefault = settings.aiPresets.some((p: any) => p.defaultPreset);
-			const cloudPreset = { ...DEFAULT_CLOUD_PRESET, defaultPreset: !hasDefault };
-			settings.aiPresets = [cloudPreset as any, ...settings.aiPresets];
+		if (settings.aiPresets && settings.aiPresets.length > 0 && !hasDeepSeekPreset) {
+			const onlyCloudDefaults = settings.aiPresets.every(
+				(p: any) => !p.defaultPreset || p.provider === "screenpipe-cloud"
+			);
+			settings.aiPresets = [
+				{ ...DEFAULT_DEEPSEEK_PRESET, defaultPreset: onlyCloudDefaults } as any,
+				...settings.aiPresets.map((p: any) =>
+					onlyCloudDefaults ? { ...p, defaultPreset: false } : p
+				),
+			];
 			needsUpdate = true;
 		}
 
@@ -1575,23 +1540,8 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 	const authGenerationRef = useRef(0);
 
 	useEffect(() => {
-		installAuthInterceptor(
-			() => settingsRef.current.user?.token ?? undefined,
-			async () => {
-				// A response from the website auth surface definitively rejected the
-				// credential. Clear the account so it cannot be confused with a
-				// transient secret-store hydration miss.
-				await updateSettings({ user: null as any });
-				// Mirror the sign-out into the sidecar so the pi-agent and
-				// cloud_proxy.rs stop sending the now-revoked token on the
-				// next pipe run.
-				try {
-					await commands.setCloudToken(null);
-				} catch (e) {
-					console.warn("failed to clear cloud token in sidecar:", e);
-				}
-			}
-		);
+		// Authorization was removed from this build: no screenpipe account, no
+		// session interceptor. The user's own provider keys live in AI presets.
 	}, []); // eslint-disable-line react-hooks/exhaustive-deps
 
 	// Cross-window sign-out: when any window broadcasts a sign-out (logout

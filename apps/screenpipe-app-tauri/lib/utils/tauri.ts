@@ -341,6 +341,48 @@ async copyTextToClipboard(text: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * What the frontend needs to decide whether DeepSeek calls can be made.
+ */
+async deepseekConfig() : Promise<DeepSeekConfig> {
+    return await TAURI_INVOKE("deepseek_config");
+},
+/**
+ * `DELETE /files/{id}`. Best-effort cleanup after a one-shot use.
+ */
+async deepseekDeleteFile(fileId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("deepseek_delete_file", { fileId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Upload one image (base64, optionally a `data:` URL) to the DeepSeek Files
+ * API with `purpose=user_data`. Returns the file object; reference it in a
+ * user message as `{"type":"file","file_id":…}`.
+ */
+async deepseekUploadFile(dataBase64: string, filename: string, mimeType: string | null, expiresAfterSeconds: number | null) : Promise<Result<DeepSeekFile, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("deepseek_upload_file", { dataBase64, filename, mimeType, expiresAfterSeconds }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Non-streaming chat completion whose user message carries uploaded files
+ * plus a text prompt. Images are only accepted in `user` messages.
+ */
+async deepseekVisionCompletion(fileIds: string[], prompt: string, model: string | null, maxTokens: number | null) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("deepseek_vision_completion", { fileIds, prompt, model, maxTokens }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async deleteBrainView(id: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("delete_brain_view", { id }) };
@@ -2893,7 +2935,7 @@ async writeBrowserLogs(entries: BrowserLogEntry[]) : Promise<void> {
 /** user-defined types **/
 
 export type AIPreset = { id: string; prompt: string; provider: AIProviderType; acpAgent?: AcpAgentPresetConfig | null; url?: string; model?: string; defaultPreset: boolean; apiKey: string | null; maxContextChars: number; maxTokens?: number }
-export type AIProviderType = "openai" | "openai-chatgpt" | "native-ollama" | "custom" | "screenpipe-cloud" | "acp" | "pi" | "anthropic"
+export type AIProviderType = "openai" | "openai-chatgpt" | "native-ollama" | "custom" | "deepseek" | "screenpipe-cloud" | "acp" | "pi" | "anthropic"
 export type AcpAgentConfig = {
 /**
  * Registry id (for example `codex-acp`) or `custom`.
@@ -3081,6 +3123,20 @@ export type ChatGptOAuthStatus = { logged_in: boolean;
  */
 error: string | null }
 export type Credits = { amount: number }
+export type DeepSeekConfig = {
+/**
+ * Base URL of the DeepSeek API (preset `url` or the default).
+ */
+baseUrl: string;
+/**
+ * Model of the default DeepSeek preset, or the vision model.
+ */
+model: string;
+/**
+ * True when a key is available from the preset or the environment.
+ */
+hasApiKey: boolean }
+export type DeepSeekFile = { id: string; filename: string; bytes: number; purpose: string; expires_at?: number | null }
 /**
  * A skill folder discovered somewhere on the user's device.
  */

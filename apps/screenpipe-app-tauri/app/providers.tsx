@@ -13,11 +13,9 @@ import { SettingsProvider } from "@/lib/hooks/use-settings";
 import { ManagedPolicyProvider } from "@/lib/hooks/use-managed-policy";
 import { ThemeProvider } from "@/components/theme-provider";
 import { PermissionMonitorProvider } from "@/lib/hooks/use-permission-monitor";
-import { AuthGuard } from "@/lib/auth-guard";
 import { forwardRef } from "react";
 import { NuqsAdapter } from "nuqs/adapters/next/app";
 import { useUpdateListener } from "@/components/update-banner";
-import { AppEntitlementGate } from "@/components/app-entitlement-gate";
 import { DeeplinkHandler } from "@/components/deeplink-handler";
 import { registerAppVersionProperty } from "@/lib/analytics/app-version-property";
 import { LiveViewOnboardingFollowUp } from "@/components/live-view-onboarding-follow-up";
@@ -134,7 +132,6 @@ export const Providers = forwardRef<
           <QueryClientProvider client={queryClient}>
             <SettingsProvider>
               <ManagedPolicyProvider>
-                <AuthGuard>
                   <ThemeProvider
                     defaultTheme="system"
                     storageKey="screenpipe-ui-theme"
@@ -148,14 +145,13 @@ export const Providers = forwardRef<
                               <DesktopRemoteControl enabled={posthogReady} />
                               {!isOverlay && <DeeplinkHandler />}
                               {!isOverlay && <LiveViewOnboardingFollowUp />}
-                              <AppEntitlementGate>{children}</AppEntitlementGate>
+                              {children}
                             </>
                           ) : null}
                         </PostHogProvider>
                       </PermissionMonitorProvider>
                     </ChangelogDialogProvider>
                   </ThemeProvider>
-                </AuthGuard>
               </ManagedPolicyProvider>
             </SettingsProvider>
           </QueryClientProvider>

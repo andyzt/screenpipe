@@ -49,6 +49,7 @@ pub fn base_url_for(preset: &ResolvedPreset) -> Option<String> {
     let base = match provider {
         "openai" | "openai-chatgpt" => "https://api.openai.com/v1",
         "native-ollama" | "ollama" => "http://localhost:11434/v1",
+        "deepseek" => "https://api.deepseek.com",
         // screenpipe-cloud and anything unknown have no local default: the
         // preset must carry an explicit url, otherwise we would be guessing
         // where to send the user's key.

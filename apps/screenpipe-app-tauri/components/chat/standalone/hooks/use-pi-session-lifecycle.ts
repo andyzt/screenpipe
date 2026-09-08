@@ -167,7 +167,8 @@ export function usePiSessionLifecycle({
   const hasValidModel = activePreset?.provider === "acp"
     ? Boolean(activePreset.acpAgent?.id?.trim())
     : Boolean(activePreset?.model && activePreset.model.trim() !== "");
-  const needsLogin = activePreset?.provider === "screenpipe-cloud" && !userToken;
+  // No account login exists in this build; presets carry their own API keys.
+  const needsLogin = false;
   const canChat = hasPresets && hasValidModel && !piStarting && !presetSwitching;
 
   const disabledReason = (() => {

@@ -562,6 +562,10 @@ const AISection = ({
       case "custom":
         newUrl = settingsPreset?.url || "";
         break;
+      case "deepseek":
+        newUrl = "https://api.deepseek.com";
+        newModel = "deepseek-v4-flash-vision-exp";
+        break;
       case "openai-chatgpt":
         newUrl = "https://api.openai.com/v1";
         newModel = "gpt-5.5";
@@ -1095,6 +1099,40 @@ const AISection = ({
           }
           break;
 
+        case "deepseek": {
+          // DeepSeek lists models at GET /models (OpenAI shape). The vision
+          // model is always offered even when the key can't list yet.
+          const fallback = [
+            { id: "deepseek-v4-flash-vision-exp", name: "deepseek-v4-flash-vision-exp", provider: "deepseek" },
+            { id: "deepseek-v4-flash", name: "deepseek-v4-flash", provider: "deepseek" },
+            { id: "deepseek-v4-pro", name: "deepseek-v4-pro", provider: "deepseek" },
+          ];
+          try {
+            const resp = await tauriFetchWithDeadline(
+              aiEndpointUrl(settingsPreset?.url || "https://api.deepseek.com", "models"),
+              {
+                headers: settingsPreset.apiKey
+                  ? { Authorization: `Bearer ${settingsPreset.apiKey}` }
+                  : {},
+              }
+            );
+            if (!resp.ok) {
+              setModels(fallback);
+              return;
+            }
+            const listed = parseOpenAiModelList(await resp.json(), {
+              provider: "deepseek",
+              url: settingsPreset?.url,
+            });
+            const ids = new Set(listed.map((m) => m.id));
+            setModels([...fallback.filter((m) => !ids.has(m.id)), ...listed]);
+          } catch (error) {
+            console.warn("failed to fetch deepseek models, using built-in list", error);
+            setModels(fallback);
+          }
+          break;
+        }
+
         case "anthropic": {
           try {
             const anthropicResp = await tauriFetchWithDeadline("https://api.anthropic.com/v1/models", {
@@ -1260,6 +1298,7 @@ const AISection = ({
     if (
       (settingsPreset?.provider === "openai" ||
         settingsPreset?.provider === "anthropic" ||
+        settingsPreset?.provider === "deepseek" ||
         settingsPreset?.provider === "custom") &&
       isAiApiKeyRequired(settingsPreset) &&
       !settingsPreset.apiKey
@@ -1375,7 +1414,7 @@ const AISection = ({
       )}
 
 
-      {(settingsPreset?.provider === "anthropic" || settingsPreset?.provider === "custom" || (apiKeyRequired &&
+      {(settingsPreset?.provider === "anthropic" || settingsPreset?.provider === "custom" || settingsPreset?.provider === "deepseek" || (apiKeyRequired &&
         settingsPreset?.provider === "openai")) && (
           <div className="w-full">
             <div className="flex flex-col gap-4 mb-4 w-full">
@@ -1426,6 +1465,15 @@ const AISection = ({
                   onClick={() => openUrl("https://console.anthropic.com/settings/keys")}
                 >
                   Get your API key at console.anthropic.com
+                </button>
+              )}
+              {settingsPreset?.provider === "deepseek" && (
+                <button
+                  type="button"
+                  className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2 w-fit"
+                  onClick={() => openUrl("https://platform.deepseek.com/api_keys")}
+                >
+                  Get your API key at platform.deepseek.com (or export DEEPSEEK_API_KEY)
                 </button>
               )}
             </div>

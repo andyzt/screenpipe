@@ -56,6 +56,7 @@ mod chatgpt_oauth;
 #[allow(deprecated)]
 mod commands;
 mod db_recovery_notifications;
+mod deepseek;
 mod db_relaunch;
 mod db_self_heal;
 mod deep_link;

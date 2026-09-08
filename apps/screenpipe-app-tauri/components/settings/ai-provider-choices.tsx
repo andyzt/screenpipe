@@ -18,6 +18,7 @@ export interface AIProviderCardProps {
     | "native-ollama"
     | "anthropic"
     | "custom"
+    | "deepseek"
     | "embedded"
     | "screenpipe-cloud"
     | "acp";
@@ -123,6 +124,15 @@ export function AIProviderChoices({
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
+        <AIProviderCard
+          type="deepseek"
+          title="DeepSeek"
+          description="DeepSeek V4 Flash Vision with your DeepSeek API key."
+          imageSrc="/images/deepseek.svg"
+          selected={selectedProvider === "deepseek"}
+          onClick={() => onSelectProvider("deepseek")}
+        />
+
         {showScreenpipeCloud && (
           <AIProviderCard
             type="screenpipe-cloud"

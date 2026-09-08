@@ -152,42 +152,6 @@ describe("enterprise onboarding authentication", () => {
     mocks.isSettingsLoaded = true;
   });
 
-  it("offers regular sign-in and Enterprise Key on the login step", () => {
-    render(<OnboardingPage />);
-
-    expect(screen.getByText("regular sign in")).toBeInTheDocument();
-    fireEvent.click(
-      screen.getByRole("button", { name: /use enterprise key/i }),
-    );
-    expect(mocks.selectAuthenticationMethod).toHaveBeenCalledWith(
-      "license_key",
-    );
-  });
-
-  it("renders Enterprise Key entry on the onboarding login step", () => {
-    mocks.enterprisePolicy.authenticationState = "license_key";
-    render(<OnboardingPage />);
-
-    expect(screen.getByText("enterprise key form")).toBeInTheDocument();
-    expect(screen.queryByText("regular sign in")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /sign in instead/i }));
-    expect(mocks.selectAuthenticationMethod).toHaveBeenCalledWith("account");
-  });
-
-  it("keeps non-enterprise onboarding on regular sign-in", () => {
-    mocks.enterprisePolicy.isManagedDeployment = false;
-    render(<OnboardingPage />);
-
-    expect(screen.getByText("regular sign in")).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: /use enterprise key/i }),
-    ).not.toBeInTheDocument();
-    expect(mocks.capture).toHaveBeenCalledWith("onboarding_funnel_step", {
-      funnel_version: "onboarding_ui_v2",
-      step: "started",
-    });
-  });
-
   it("restores the plan controller after hosted checkout returns", async () => {
     window.history.replaceState({}, "", "/onboarding?checkout=complete");
     mocks.enterprisePolicy.isManagedDeployment = false;
@@ -204,29 +168,6 @@ describe("enterprise onboarding authentication", () => {
     await waitFor(() =>
       expect(mocks.setOnboardingStep).toHaveBeenCalledWith("plan"),
     );
-  });
-
-  it("leaves login completion analytics to the login gate", async () => {
-    mocks.enterprisePolicy.isManagedDeployment = false;
-    render(<OnboardingPage />);
-
-    fireEvent.click(
-      screen.getByRole("button", { name: /complete regular sign in/i }),
-    );
-
-    await waitFor(() =>
-      expect(mocks.setOnboardingStep).toHaveBeenCalledWith("acquisition"),
-    );
-    expect(
-      mocks.capture.mock.calls.filter(
-        ([event]) => event === "onboarding_login_completed",
-      ),
-    ).toHaveLength(0);
-    expect(
-      mocks.capture.mock.calls.filter(
-        ([event]) => event === "onboarding_step_reached",
-      ),
-    ).toHaveLength(1);
   });
 
   it("does not start the standard funnel for managed onboarding", () => {
@@ -373,7 +314,6 @@ describe("enterprise onboarding authentication", () => {
   // way for over a week, because the only check that objected was a desktop E2E
   // nobody could read through the other red jobs.
   it("does not ask managed onboarding where it heard about screenpipe", async () => {
-    mocks.enterprisePolicy.isManagedAuthenticated = true;
 
     render(<OnboardingPage />);
 
@@ -557,22 +497,6 @@ describe("enterprise onboarding authentication", () => {
     await waitFor(() =>
       expect(mocks.setOnboardingStep).toHaveBeenCalledWith("permissions"),
     );
-  });
-
-  it("keeps a rejected enterprise account on login with the key alternative", () => {
-    mocks.enterprisePolicy.authenticationState = "account";
-    mocks.enterprisePolicy.authenticationError =
-      "this account is not associated with the enterprise organization";
-
-    render(<OnboardingPage />);
-
-    expect(
-      screen.getByText(/not associated with the enterprise organization/i),
-    ).toBeInTheDocument();
-    expect(screen.getByText("regular sign in")).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: /use enterprise key/i }),
-    ).toBeInTheDocument();
   });
 
   it("completes onboarding after permissions when enterprise app UI is hidden", async () => {

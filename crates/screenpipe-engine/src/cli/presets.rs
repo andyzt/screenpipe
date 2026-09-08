@@ -32,6 +32,7 @@ pub enum Provider {
     Anthropic,
     NativeOllama,
     Custom,
+    DeepSeek,
     ScreenpipeCloud,
     /// CLI refuses to write this — token lives in the encrypted secrets store
     /// and is established by the OAuth login flow, not a flag.
@@ -45,10 +46,11 @@ impl Provider {
             "anthropic" => Ok(Provider::Anthropic),
             "native-ollama" | "ollama" => Ok(Provider::NativeOllama),
             "custom" => Ok(Provider::Custom),
+            "deepseek" => Ok(Provider::DeepSeek),
             "screenpipe-cloud" | "pi" => Ok(Provider::ScreenpipeCloud),
             "openai-chatgpt" => Ok(Provider::OpenAiChatGpt),
             other => bail!(
-                "unknown provider '{}'. Valid: openai, anthropic, native-ollama, custom, screenpipe-cloud",
+                "unknown provider '{}'. Valid: openai, anthropic, native-ollama, custom, deepseek, screenpipe-cloud",
                 other
             ),
         }
@@ -60,6 +62,7 @@ impl Provider {
             Provider::Anthropic => "anthropic",
             Provider::NativeOllama => "native-ollama",
             Provider::Custom => "custom",
+            Provider::DeepSeek => "deepseek",
             Provider::ScreenpipeCloud => "screenpipe-cloud",
             Provider::OpenAiChatGpt => "openai-chatgpt",
         }

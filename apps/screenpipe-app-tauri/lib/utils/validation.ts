@@ -41,7 +41,7 @@ export const userSchema = z.object({
   entitlement: z.any().nullable().optional(),
 });
 
-export const aiProviderTypeSchema = z.enum(["openai", "openai-chatgpt", "native-ollama", "custom", "screenpipe-cloud", "pi", "anthropic", "acp"]);
+export const aiProviderTypeSchema = z.enum(["openai", "openai-chatgpt", "native-ollama", "custom", "deepseek", "screenpipe-cloud", "pi", "anthropic", "acp"]);
 
 export const aiPresetSchema = z.object({
   id: z.string().min(1, "Preset name is required").regex(/^[a-zA-Z0-9\s\-_]+$/, "Only letters, numbers, spaces, hyphens, and underscores allowed").refine(
@@ -255,6 +255,8 @@ export const isAiApiKeyRequired = (preset: AiPresetConnectionInput): boolean => 
     case "openai":
     case "anthropic":
       return true;
+    // DeepSeek needs a key too, but it may come from the DEEPSEEK_API_KEY
+    // environment variable instead of the preset, so the field stays optional.
     case "custom":
       return isGeminiApiUrl(preset.url);
     // ACP agents authenticate via their own sign-in, never a pasted key, so a
@@ -530,6 +532,14 @@ export const validateApiKey = (
     case "anthropic":
       if (!apiKey.startsWith("sk-ant-")) {
         return { isValid: false, error: "Anthropic API keys should start with 'sk-ant-'" };
+      }
+      break;
+    case "deepseek":
+      if (!apiKey.startsWith("sk-")) {
+        return {
+          isValid: true,
+          warning: "DeepSeek API keys usually start with 'sk-'; the connection test will verify it",
+        };
       }
       break;
     case "custom":

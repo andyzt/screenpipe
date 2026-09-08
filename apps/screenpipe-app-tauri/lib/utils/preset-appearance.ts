@@ -160,6 +160,7 @@ export const PROVIDER_IMAGE_SRC: Record<string, string> = {
   anthropic: "/images/claude-ai.svg",
   "native-ollama": "/images/ollama.png",
   custom: "/images/custom.png",
+  deepseek: "/images/deepseek.svg",
   pi: "/images/screenpipe.png",
   screenpipe: "/images/screenpipe.png",
   "screenpipe-cloud": "/images/screenpipe.png",
@@ -182,6 +183,7 @@ function modelImageSrc(
   if (normalizedModel.includes("codex")) return "/images/codex.svg";
   if (normalizedModel.includes("claude")) return "/images/claude-ai.svg";
   if (normalizedModel.includes("gemini")) return "/images/gemini.svg";
+  if (normalizedModel.includes("deepseek")) return "/images/deepseek.svg";
   if (
     normalizedModel.startsWith("gpt-") ||
     /^o[1345](?:[-.:]|$)/.test(normalizedModel)
@@ -240,6 +242,7 @@ const PROVIDER_PRESET_NAMES: Record<string, string> = {
   openai: "openai",
   anthropic: "claude",
   "native-ollama": "ollama",
+  deepseek: "deepseek",
   "screenpipe-cloud": "screenpipe-cloud",
   custom: "custom",
 };
