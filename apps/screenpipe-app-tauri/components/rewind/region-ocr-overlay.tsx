@@ -147,30 +147,17 @@ export const RegionOcrOverlay: FC<RegionOcrOverlayProps> = ({
 
         const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
 
-        // DeepSeek Files API: upload the crop once, reference it by file_id
-        // in the vision request, then delete it (one-shot use).
-        const uploaded = await commands.deepseekUploadFile(
-          dataUrl,
-          `region-${frameId}.jpg`,
-          "image/jpeg",
-          3600,
+        // The Rust side picks the transport per endpoint: DeepSeek's own API
+        // gets the Files API (upload + file_id + delete), the team gateway
+        // gets the image inlined as base64 (it has no Files API).
+        const completion = await commands.deepseekVisionCompletion(
+          [dataUrl],
+          "Extract all text from this image. Return ONLY the extracted text, preserving the original formatting and line breaks. Do not add any commentary.",
+          deepseek.model.includes("vision") ? deepseek.model : null,
+          4096,
         );
-        if (uploaded.status === "error") throw new Error(uploaded.error);
-        const fileId = uploaded.data.id;
-
-        let extractedText: string | undefined;
-        try {
-          const completion = await commands.deepseekVisionCompletion(
-            [fileId],
-            "Extract all text from this image. Return ONLY the extracted text, preserving the original formatting and line breaks. Do not add any commentary.",
-            deepseek.model.includes("vision") ? deepseek.model : null,
-            4096,
-          );
-          if (completion.status === "error") throw new Error(completion.error);
-          extractedText = completion.data.trim();
-        } finally {
-          void commands.deepseekDeleteFile(fileId);
-        }
+        if (completion.status === "error") throw new Error(completion.error);
+        const extractedText = completion.data.trim();
 
         if (!extractedText) {
           toast({

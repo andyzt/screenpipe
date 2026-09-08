@@ -139,6 +139,21 @@ say "identity ready in temporary keychain"
 # Build + sign (queue-backed)
 # ---------------------------------------------------------------------------
 cd "$APP_DIR"
+
+# Bake the team AI-gateway credential into the binary (option_env! in
+# src-tauri/src/deepseek.rs). The file is gitignored; see .env.ai.example.
+if [[ -f "$APP_DIR/.env.ai.local" ]]; then
+  set -a; # shellcheck disable=SC1091
+  source "$APP_DIR/.env.ai.local"; set +a
+  if [[ -n "${SCREENPIPE_DEEPSEEK_API_KEY:-}" ]]; then
+    say "AI credentials loaded (SCREENPIPE_DEEPSEEK_API_KEY set)"
+  else
+    say "AI credentials file present but SCREENPIPE_DEEPSEEK_API_KEY is missing"
+  fi
+else
+  say "warning: $APP_DIR/.env.ai.local not found — the build will have NO baked DeepSeek key"
+fi
+
 command -v bun >/dev/null || die "bun not on PATH (run scripts/dev/sp-build-mac-dev first)"
 command -v sccache >/dev/null || export PATH="$HOME/.local/bin:$PATH"
 command -v sccache >/dev/null || die "sccache missing — run scripts/dev/sp-build-mac-dev once to install prerequisites"

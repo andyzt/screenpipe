@@ -127,7 +127,7 @@ export function AIProviderChoices({
         <AIProviderCard
           type="deepseek"
           title="DeepSeek"
-          description="DeepSeek V4 Flash Vision with your DeepSeek API key."
+          description="DeepSeek V4 Flash Vision via the team gateway. Key built in."
           imageSrc="/images/deepseek.svg"
           selected={selectedProvider === "deepseek"}
           onClick={() => onSelectProvider("deepseek")}

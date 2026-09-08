@@ -520,14 +520,14 @@ export function AIProviderConfig({
       (async () => {
         setModelDiscoveryStatus("loading");
         const known = [
-          { id: "deepseek-v4-flash-vision-exp" },
-          { id: "deepseek-v4-flash" },
-          { id: "deepseek-v4-pro" },
+          { id: "deepseek/deepseek-v4-flash-vision-exp" },
+          { id: "deepseek/deepseek-v4-flash" },
+          { id: "deepseek/deepseek-v4-pro" },
         ];
         try {
           if (formData.apiKey) {
             const resp = await tauriFetchWithDeadline(
-              `${(formData.url || "https://api.deepseek.com").replace(/\/+$/, "")}/models`,
+              `${(formData.url || "https://api.vsellm.ru/v1").replace(/\/+$/, "")}/models`,
               { headers: { Authorization: `Bearer ${formData.apiKey}` } },
             );
             if (resp.ok) {
@@ -840,7 +840,7 @@ export function AIProviderConfig({
                 <Input
                   id="apiKey"
                   type={showApiKey ? "text" : "password"}
-                  placeholder="sk-... (or leave empty to use DEEPSEEK_API_KEY)"
+                  placeholder="optional — the built-in team key is used when empty"
                   value={formData.apiKey || ""}
                   onChange={(e) =>
                     setFormData({ ...formData, apiKey: e.target.value })
@@ -871,7 +871,7 @@ export function AIProviderConfig({
                 onValueChange={(model) => setFormData({ ...formData, model })}
                 status={modelDiscoveryStatus}
                 errorMessage={modelDiscoveryError}
-                placeholder="deepseek-v4-flash-vision-exp"
+                placeholder="deepseek/deepseek-v4-flash-vision-exp"
                 emptyMessage="type a model name"
                 allowManualEntry
               />
@@ -1211,8 +1211,8 @@ export function AIProviderConfig({
                     setFormData({
                       ...formData,
                       provider: "deepseek",
-                      url: "https://api.deepseek.com",
-                      model: "deepseek-v4-flash-vision-exp",
+                      url: "https://api.vsellm.ru/v1",
+                      model: "deepseek/deepseek-v4-flash-vision-exp",
                     });
                   }}
                 >

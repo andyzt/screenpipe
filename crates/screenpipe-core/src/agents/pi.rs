@@ -1375,7 +1375,7 @@ impl PiExecutor {
                     ),
                     "deepseek" => (
                         "deepseek",
-                        provider_url.unwrap_or("https://api.deepseek.com"),
+                        provider_url.unwrap_or("https://api.vsellm.ru/v1"),
                         "$DEEPSEEK_API_KEY",
                     ),
                     other => (other, provider_url.unwrap_or(""), "$CUSTOM_API_KEY"),

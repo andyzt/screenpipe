@@ -623,13 +623,14 @@ const DEFAULT_IGNORED_WINDOWS_PER_OS: Record<string, string[]> = {
 	linux: ["Info center", "Discover", "Parted"],
 };
 
-// Default preset on first install: DeepSeek's multimodal model, talked to
-// directly with the user's own DeepSeek API key (no screenpipe account). The
-// key is read from the preset, falling back to the DEEPSEEK_API_KEY
-// environment variable of the app process.
+// Default preset on first install: DeepSeek's multimodal model through the
+// team gateway (OpenAI-compatible, OpenRouter-style model ids; no screenpipe
+// account). The API key is read from the preset, then the DEEPSEEK_API_KEY
+// environment variable, then the credential baked into the binary at build
+// time (SCREENPIPE_DEEPSEEK_API_KEY) — so a preset without a key still works.
 export const DEEPSEEK_PRESET_ID = "deepseek";
-export const DEEPSEEK_API_URL = "https://api.deepseek.com";
-export const DEEPSEEK_DEFAULT_MODEL = "deepseek-v4-flash-vision-exp";
+export const DEEPSEEK_API_URL = "https://api.vsellm.ru/v1";
+export const DEEPSEEK_DEFAULT_MODEL = "deepseek/deepseek-v4-flash-vision-exp";
 
 export function makeDefaultPresets(_isPro: boolean): AIPreset[] {
 	return [
@@ -1216,6 +1217,28 @@ function createSettingsStore() {
 		if (settings.aiPresets?.some((p: any) => p.id === "pi-agent")) {
 			settings.aiPresets = settings.aiPresets.map((p: any) =>
 				p.id === "pi-agent" ? { ...p, id: "screenpipe-cloud" } : p
+			);
+			needsUpdate = true;
+		}
+
+		// Migration: presets seeded before the team-gateway switch point at
+		// api.deepseek.com with unprefixed model ids; move them to the gateway.
+		if (
+			settings.aiPresets?.some(
+				(p: any) => p.provider === "deepseek" && p.url === "https://api.deepseek.com"
+			)
+		) {
+			settings.aiPresets = settings.aiPresets.map((p: any) =>
+				p.provider === "deepseek" && p.url === "https://api.deepseek.com"
+					? {
+							...p,
+							url: DEEPSEEK_API_URL,
+							model:
+								p.model && !p.model.includes("/")
+									? `deepseek/${p.model}`
+									: p.model || DEEPSEEK_DEFAULT_MODEL,
+					  }
+					: p
 			);
 			needsUpdate = true;
 		}

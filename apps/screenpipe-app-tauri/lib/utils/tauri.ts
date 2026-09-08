@@ -384,8 +384,8 @@ async deepseekDeleteFile(fileId: string) : Promise<Result<null, string>> {
 },
 /**
  * Upload one image (base64, optionally a `data:` URL) to the DeepSeek Files
- * API with `purpose=user_data`. Returns the file object; reference it in a
- * user message as `{"type":"file","file_id":…}`.
+ * API with `purpose=user_data`. Only works against api.deepseek.com — the
+ * team gateway has no Files API.
  */
 async deepseekUploadFile(dataBase64: string, filename: string, mimeType: string | null, expiresAfterSeconds: number | null) : Promise<Result<DeepSeekFile, string>> {
     try {
@@ -396,12 +396,15 @@ async deepseekUploadFile(dataBase64: string, filename: string, mimeType: string 
 }
 },
 /**
- * Non-streaming chat completion whose user message carries uploaded files
- * plus a text prompt. Images are only accepted in `user` messages.
+ * Non-streaming vision chat completion. `images_base64` are data URLs (or
+ * bare base64, assumed JPEG). Against api.deepseek.com the images go through
+ * the Files API (upload, reference by file_id, delete after); against the
+ * team gateway they are inlined as base64 `image_url` parts, since it has no
+ * Files API. Images are only accepted in `user` messages.
  */
-async deepseekVisionCompletion(fileIds: string[], prompt: string, model: string | null, maxTokens: number | null) : Promise<Result<string, string>> {
+async deepseekVisionCompletion(imagesBase64: string[], prompt: string, model: string | null, maxTokens: number | null) : Promise<Result<string, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("deepseek_vision_completion", { fileIds, prompt, model, maxTokens }) };
+    return { status: "ok", data: await TAURI_INVOKE("deepseek_vision_completion", { imagesBase64, prompt, model, maxTokens }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };

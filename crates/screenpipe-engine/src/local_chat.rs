@@ -49,7 +49,7 @@ pub fn base_url_for(preset: &ResolvedPreset) -> Option<String> {
     let base = match provider {
         "openai" | "openai-chatgpt" => "https://api.openai.com/v1",
         "native-ollama" | "ollama" => "http://localhost:11434/v1",
-        "deepseek" => "https://api.deepseek.com",
+        "deepseek" => "https://api.vsellm.ru/v1",
         // screenpipe-cloud and anything unknown have no local default: the
         // preset must carry an explicit url, otherwise we would be guessing
         // where to send the user's key.
@@ -59,9 +59,16 @@ pub fn base_url_for(preset: &ResolvedPreset) -> Option<String> {
 }
 
 pub fn upstream_for(preset: &ResolvedPreset) -> Option<Upstream> {
+    // DeepSeek presets may carry no key: the desktop app exports the baked
+    // credential as DEEPSEEK_API_KEY into this process's environment.
+    let api_key = preset.api_key.clone().or_else(|| {
+        (preset.provider.as_deref() == Some("deepseek"))
+            .then(|| std::env::var("DEEPSEEK_API_KEY").ok().filter(|k| !k.trim().is_empty()))
+            .flatten()
+    });
     Some(Upstream {
         url: format!("{}/chat/completions", base_url_for(preset)?),
-        api_key: preset.api_key.clone(),
+        api_key,
         model: preset.model.clone(),
     })
 }

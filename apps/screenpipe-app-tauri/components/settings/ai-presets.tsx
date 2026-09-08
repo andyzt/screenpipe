@@ -563,8 +563,8 @@ const AISection = ({
         newUrl = settingsPreset?.url || "";
         break;
       case "deepseek":
-        newUrl = "https://api.deepseek.com";
-        newModel = "deepseek-v4-flash-vision-exp";
+        newUrl = "https://api.vsellm.ru/v1";
+        newModel = "deepseek/deepseek-v4-flash-vision-exp";
         break;
       case "openai-chatgpt":
         newUrl = "https://api.openai.com/v1";
@@ -1103,13 +1103,13 @@ const AISection = ({
           // DeepSeek lists models at GET /models (OpenAI shape). The vision
           // model is always offered even when the key can't list yet.
           const fallback = [
-            { id: "deepseek-v4-flash-vision-exp", name: "deepseek-v4-flash-vision-exp", provider: "deepseek" },
-            { id: "deepseek-v4-flash", name: "deepseek-v4-flash", provider: "deepseek" },
-            { id: "deepseek-v4-pro", name: "deepseek-v4-pro", provider: "deepseek" },
+            { id: "deepseek/deepseek-v4-flash-vision-exp", name: "deepseek/deepseek-v4-flash-vision-exp", provider: "deepseek" },
+            { id: "deepseek/deepseek-v4-flash", name: "deepseek/deepseek-v4-flash", provider: "deepseek" },
+            { id: "deepseek/deepseek-v4-pro", name: "deepseek/deepseek-v4-pro", provider: "deepseek" },
           ];
           try {
             const resp = await tauriFetchWithDeadline(
-              aiEndpointUrl(settingsPreset?.url || "https://api.deepseek.com", "models"),
+              aiEndpointUrl(settingsPreset?.url || "https://api.vsellm.ru/v1", "models"),
               {
                 headers: settingsPreset.apiKey
                   ? { Authorization: `Bearer ${settingsPreset.apiKey}` }
@@ -1468,13 +1468,10 @@ const AISection = ({
                 </button>
               )}
               {settingsPreset?.provider === "deepseek" && (
-                <button
-                  type="button"
-                  className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2 w-fit"
-                  onClick={() => openUrl("https://platform.deepseek.com/api_keys")}
-                >
-                  Get your API key at platform.deepseek.com (or export DEEPSEEK_API_KEY)
-                </button>
+                <p className="text-xs text-muted-foreground">
+                  Optional: the team-gateway key baked into this build is used
+                  when this field is empty.
+                </p>
               )}
             </div>
           </div>

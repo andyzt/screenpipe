@@ -94,6 +94,20 @@ command -v sccache >/dev/null || die "sccache still not on PATH after install"
 # ---------------------------------------------------------------------------
 cd "$APP_DIR"
 
+# Bake the team AI-gateway credential into the binary (option_env! in
+# src-tauri/src/deepseek.rs). The file is gitignored; see .env.ai.example.
+if [[ -f "$APP_DIR/.env.ai.local" ]]; then
+  set -a; # shellcheck disable=SC1091
+  source "$APP_DIR/.env.ai.local"; set +a
+  if [[ -n "${SCREENPIPE_DEEPSEEK_API_KEY:-}" ]]; then
+    say "AI credentials loaded (SCREENPIPE_DEEPSEEK_API_KEY set)"
+  else
+    say "AI credentials file present but SCREENPIPE_DEEPSEEK_API_KEY is missing"
+  fi
+else
+  say "warning: $APP_DIR/.env.ai.local not found — the build will have NO baked DeepSeek key"
+fi
+
 if [[ ! -d node_modules ]]; then
   say "installing JS dependencies"
   bun install --frozen-lockfile
@@ -128,7 +142,11 @@ if (( MAKE_APP )); then
 fi
 
 if (( RUN_AFTER )); then
-  say "launching dev binary (DEEPSEEK_API_KEY ${DEEPSEEK_API_KEY:+set}${DEEPSEEK_API_KEY:-not set})"
+  if [[ -n "${DEEPSEEK_API_KEY:-}" ]]; then
+    say "launching dev binary (DEEPSEEK_API_KEY set)"
+  else
+    say "launching dev binary (DEEPSEEK_API_KEY not set)"
+  fi
   exec "$BIN"
 fi
 

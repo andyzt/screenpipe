@@ -39,7 +39,7 @@ const endpointForPreset = (preset: AiPresetConnectionInput): string => {
     case "custom":
       return aiEndpointUrl(preset.url, "chat/completions");
     case "deepseek":
-      return aiEndpointUrl(preset.url || "https://api.deepseek.com", "chat/completions");
+      return aiEndpointUrl(preset.url || "https://api.vsellm.ru/v1", "chat/completions");
     default:
       throw new Error("This provider does not use a BYOK connection test");
   }
