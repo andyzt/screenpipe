@@ -141,10 +141,13 @@ describe('Settings sections', () => {
   });
 
   it('keeps audio and meeting notes separate from screen capture visibility', async () => {
-    const navAudio = await $('[data-testid="settings-nav-audio"]');
-    await navAudio.waitForExist({ timeout: 8_000 });
-    expect((await navAudio.getText()).toLowerCase()).toContain('audio & meetings');
-    await navAudio.click();
+    // Audio & meetings is one of HIDDEN_SETTINGS_SECTIONS in this accountless
+    // build (lib/settings-sections.ts) so it no longer has a sidebar row, but
+    // the section id still resolves via a direct route — same contract other
+    // specs rely on for deep links (e.g. the storage low-disk notification).
+    await browser.execute(() => {
+      window.location.href = '/settings?section=audio';
+    });
 
     const section = await $('[data-testid="section-settings-audio"]');
     await section.waitForExist({ timeout: 8_000 });
@@ -305,9 +308,12 @@ describe('Settings sections', () => {
   });
 
   it('navigates to Speakers settings and mounts section container', async () => {
-    const navSpeakers = await $('[data-testid="settings-nav-speakers"]');
-    await navSpeakers.waitForExist({ timeout: 8_000 });
-    await navSpeakers.click();
+    // Speakers is also hidden from the settings nav in this accountless build
+    // (lib/settings-sections.ts HIDDEN_SETTINGS_SECTIONS); the id still
+    // resolves via a direct route.
+    await browser.execute(() => {
+      window.location.href = '/settings?section=speakers';
+    });
 
     const speakersSection = await $('[data-testid="section-settings-speakers"]');
     await speakersSection.waitForExist({ timeout: 6_000 });

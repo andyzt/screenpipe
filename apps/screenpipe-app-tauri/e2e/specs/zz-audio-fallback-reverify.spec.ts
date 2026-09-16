@@ -134,12 +134,15 @@ async function restoreFetch(): Promise<void> {
 }
 
 async function openAudioSettings(): Promise<void> {
-  const navSettings = await $('[data-testid="nav-settings"]');
-  await navSettings.waitForExist({ timeout: t(10_000) });
-  await navSettings.click();
-  const navAudio = await $('[data-testid="settings-nav-audio"]');
-  await navAudio.waitForExist({ timeout: t(8_000) });
-  await navAudio.click();
+  // Audio & meetings is hidden from the settings nav in this accountless
+  // build (lib/settings-sections.ts HIDDEN_SETTINGS_SECTIONS), so there is no
+  // `settings-nav-audio` row to click. The section id still resolves via a
+  // direct route.
+  await browser.execute(() => {
+    window.location.href = "/settings?section=audio";
+  });
+  const section = await $('[data-testid="section-settings-audio"]');
+  await section.waitForExist({ timeout: t(8_000) });
 }
 
 async function loginStatusText(): Promise<string> {
