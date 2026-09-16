@@ -25,7 +25,7 @@ vi.mock("@/lib/hooks/use-timeline-store", () => ({
     selector({ setPendingNavigation }),
 }));
 
-import { EvidenceDrawer } from "./evidence-drawer";
+import { EvidenceList } from "./evidence-list";
 import { makeActivityCard } from "@/lib/journal/fixtures";
 
 function detail(overrides: Record<string, unknown> = {}) {
@@ -60,10 +60,12 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe("EvidenceDrawer", () => {
-  it("does not call the API until a card is selected", () => {
-    render(<EvidenceDrawer activityId={null} onClose={vi.fn()} />);
-    expect(fetchActivityDetail).not.toHaveBeenCalled();
+describe("EvidenceList", () => {
+  it("asks for the card's evidence as soon as it is mounted", async () => {
+    fetchActivityDetail.mockResolvedValue(detail());
+    render(<EvidenceList activityId={42} />);
+    await waitFor(() => expect(fetchActivityDetail).toHaveBeenCalled());
+    expect(fetchActivityDetail.mock.calls[0][0]).toBe(42);
   });
 
   it("lists sampled rows with time, app, window and url", async () => {
@@ -82,10 +84,8 @@ describe("EvidenceDrawer", () => {
         ],
       }),
     );
-    render(<EvidenceDrawer activityId={42} onClose={vi.fn()} />);
+    render(<EvidenceList activityId={42} />);
 
-    await waitFor(() => expect(fetchActivityDetail).toHaveBeenCalled());
-    expect(fetchActivityDetail.mock.calls[0][0]).toBe(42);
     await waitFor(() =>
       expect(screen.getByText("Google Chrome")).toBeInTheDocument(),
     );
@@ -98,8 +98,8 @@ describe("EvidenceDrawer", () => {
   it("opens the timeline at the frame's moment through the existing mechanism", async () => {
     vi.useFakeTimers();
     fetchActivityDetail.mockResolvedValue(detail());
-    const onClose = vi.fn();
-    render(<EvidenceDrawer activityId={42} onClose={onClose} />);
+    const onNavigate = vi.fn();
+    render(<EvidenceList activityId={42} onNavigate={onNavigate} />);
 
     await vi.waitFor(() =>
       expect(screen.getAllByTestId("journal-evidence-open-timeline").length).toBe(1),
@@ -113,18 +113,17 @@ describe("EvidenceDrawer", () => {
     expect(routerPush).toHaveBeenCalledWith("/home?section=timeline");
     vi.advanceTimersByTime(300);
     expect(emit).toHaveBeenCalledWith("navigate-to-frame", "12345");
-    expect(onClose).toHaveBeenCalled();
+    expect(onNavigate).toHaveBeenCalled();
     vi.useRealTimers();
   });
 
   it("offers no timeline jump for audio evidence", async () => {
     fetchActivityDetail.mockResolvedValue(detail());
-    render(<EvidenceDrawer activityId={42} onClose={vi.fn()} />);
+    render(<EvidenceList activityId={42} />);
     await waitFor(() =>
       expect(screen.getAllByTestId("journal-evidence-row").length).toBe(2),
     );
     expect(screen.getAllByTestId("journal-evidence-open-timeline")).toHaveLength(1);
-    // The audio row names its source instead of offering a frame jump.
     const rows = screen.getAllByTestId("journal-evidence-row");
     expect(rows[1]).toHaveTextContent("audio");
     expect(
@@ -134,7 +133,7 @@ describe("EvidenceDrawer", () => {
 
   it("explains an empty evidence list rather than showing a blank panel", async () => {
     fetchActivityDetail.mockResolvedValue(detail({ evidence: [] }));
-    render(<EvidenceDrawer activityId={42} onClose={vi.fn()} />);
+    render(<EvidenceList activityId={42} />);
     await waitFor(() =>
       expect(
         screen.getByText(/no evidence rows are stored for this card/),
@@ -144,7 +143,7 @@ describe("EvidenceDrawer", () => {
 
   it("surfaces a load failure", async () => {
     fetchActivityDetail.mockRejectedValue(new Error("activity not found"));
-    render(<EvidenceDrawer activityId={42} onClose={vi.fn()} />);
+    render(<EvidenceList activityId={42} />);
     await waitFor(() =>
       expect(screen.getByRole("alert")).toHaveTextContent("activity not found"),
     );

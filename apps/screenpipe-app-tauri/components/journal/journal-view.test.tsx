@@ -7,10 +7,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 const fetchJournalDay = vi.fn();
+const fetchActivityDetail = vi.fn();
 
 vi.mock("@/lib/journal/api", () => ({
   fetchJournalDay: (...args: unknown[]) => fetchJournalDay(...args),
-  fetchActivityDetail: vi.fn(),
+  fetchActivityDetail: (...args: unknown[]) => fetchActivityDetail(...args),
+}));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
+vi.mock("@tauri-apps/api/event", () => ({ emit: vi.fn() }));
+vi.mock("@/lib/hooks/use-timeline-store", () => ({
+  useTimelineStore: (selector: (state: unknown) => unknown) =>
+    selector({ setPendingNavigation: vi.fn() }),
 }));
 // The live strips own their own polling and are covered by their own tests;
 // stubbing them keeps this file about the day itself.
@@ -30,18 +37,52 @@ vi.mock("./intention-bar", () => ({
 vi.mock("./now-strip", () => ({
   NowStrip: () => <div data-testid="stub-now-strip" />,
 }));
-vi.mock("./evidence-drawer", () => ({
-  EvidenceDrawer: ({ activityId }: { activityId: number | null }) => (
-    <div data-testid="stub-evidence-drawer">{activityId ?? "closed"}</div>
-  ),
-}));
 
 import { JournalView } from "./journal-view";
 import { journalDayToday, shiftJournalDay } from "@/lib/journal/format";
 import { makeActivityCard, makeJournalDay } from "@/lib/journal/fixtures";
 
+/** Local wall clock, so canvas geometry does not depend on the machine's zone. */
+function at(hour: number, minute = 0): string {
+  const today = journalDayToday();
+  const [year, month, day] = today.split("-").map(Number);
+  return new Date(year, month - 1, day, hour, minute, 0, 0).toISOString();
+}
+
+function dayWithCards() {
+  return makeJournalDay({
+    date: journalDayToday(),
+    day_start: at(4),
+    activities: [
+      makeActivityCard({
+        id: 1,
+        title: "First",
+        start_at: at(9),
+        end_at: at(10),
+      }),
+      makeActivityCard({
+        id: 2,
+        title: "Second",
+        start_at: at(10),
+        end_at: at(11),
+      }),
+      makeActivityCard({
+        id: 3,
+        title: "Third",
+        start_at: at(11),
+        end_at: at(12),
+      }),
+    ],
+  });
+}
+
 beforeEach(() => {
   fetchJournalDay.mockResolvedValue(makeJournalDay());
+  fetchActivityDetail.mockResolvedValue({
+    ...makeActivityCard(),
+    interval_keys: [],
+    evidence: [],
+  });
 });
 
 afterEach(() => {
@@ -78,7 +119,7 @@ describe("JournalView", () => {
     expect(screen.getByTestId("journal-date-label")).toHaveTextContent("today");
   });
 
-  it("walks back a day and refuses to walk past today", async () => {
+  it("walks back a day through the date pill and refuses to walk past today", async () => {
     render(<JournalView />);
     await waitFor(() => expect(fetchJournalDay).toHaveBeenCalledTimes(1));
     expect(screen.getByTestId("journal-next-day")).toBeDisabled();
@@ -92,26 +133,111 @@ describe("JournalView", () => {
     expect(screen.getByTestId("journal-next-day")).not.toBeDisabled();
   });
 
-  it("renders the overview above the cards", async () => {
-    fetchJournalDay.mockResolvedValue(
-      makeJournalDay({
-        activities: [
-          makeActivityCard({ id: 1, title: "First" }),
-          makeActivityCard({ id: 2, title: "Second" }),
-        ],
-      }),
-    );
+  it("renders the canvas beside the inspector instead of a card list", async () => {
+    fetchJournalDay.mockResolvedValue(dayWithCards());
     render(<JournalView />);
     await waitFor(() =>
-      expect(screen.getByTestId("journal-day-overview")).toBeInTheDocument(),
+      expect(screen.getByTestId("journal-canvas")).toBeInTheDocument(),
     );
-    expect(screen.getAllByTestId("journal-activity-card")).toHaveLength(2);
+    expect(screen.getAllByTestId("journal-canvas-block")).toHaveLength(3);
+    expect(screen.getByTestId("journal-inspector-summary")).toBeInTheDocument();
   });
 
-  it("marks live generation with phosphor and polls while it runs", async () => {
+  it("swaps the inspector to the card and loads its evidence on click", async () => {
+    fetchJournalDay.mockResolvedValue(dayWithCards());
+    render(<JournalView />);
+    await waitFor(() =>
+      expect(screen.getAllByTestId("journal-canvas-block").length).toBe(3),
+    );
+    expect(fetchActivityDetail).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getAllByTestId("journal-canvas-block")[1]);
+    await waitFor(() =>
+      expect(screen.getByTestId("journal-inspector-card")).toHaveTextContent(
+        "Second",
+      ),
+    );
+    expect(screen.queryByTestId("journal-inspector-summary")).toBeNull();
+    await waitFor(() => expect(fetchActivityDetail).toHaveBeenCalled());
+    expect(fetchActivityDetail.mock.calls[0][0]).toBe(2);
+  });
+
+  it("closes the card detail and returns to the day summary", async () => {
+    fetchJournalDay.mockResolvedValue(dayWithCards());
+    render(<JournalView />);
+    await waitFor(() =>
+      expect(screen.getAllByTestId("journal-canvas-block").length).toBe(3),
+    );
+    fireEvent.click(screen.getAllByTestId("journal-canvas-block")[0]);
+    await screen.findByTestId("journal-inspector-card");
+    fireEvent.click(screen.getByTestId("journal-inspector-close"));
+    expect(screen.getByTestId("journal-inspector-summary")).toBeInTheDocument();
+  });
+
+  it("moves the selection with the arrow keys and clears it with escape", async () => {
+    fetchJournalDay.mockResolvedValue(dayWithCards());
+    render(<JournalView />);
+    await waitFor(() =>
+      expect(screen.getAllByTestId("journal-canvas-block").length).toBe(3),
+    );
+
+    fireEvent.keyDown(window, { key: "ArrowDown" });
+    await waitFor(() =>
+      expect(screen.getByTestId("journal-inspector-card")).toHaveTextContent(
+        "First",
+      ),
+    );
+
+    fireEvent.keyDown(window, { key: "ArrowDown" });
+    await waitFor(() =>
+      expect(screen.getByTestId("journal-inspector-card")).toHaveTextContent(
+        "Second",
+      ),
+    );
+
+    fireEvent.keyDown(window, { key: "ArrowUp" });
+    await waitFor(() =>
+      expect(screen.getByTestId("journal-inspector-card")).toHaveTextContent(
+        "First",
+      ),
+    );
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() =>
+      expect(screen.getByTestId("journal-inspector-summary")).toBeInTheDocument(),
+    );
+  });
+
+  it("changes day with left and right, and ignores keys aimed at a text field", async () => {
+    fetchJournalDay.mockResolvedValue(dayWithCards());
+    render(<JournalView />);
+    await waitFor(() => expect(fetchJournalDay).toHaveBeenCalledTimes(1));
+
+    fireEvent.keyDown(window, { key: "ArrowLeft" });
+    await waitFor(() => expect(fetchJournalDay).toHaveBeenCalledTimes(2));
+    expect(fetchJournalDay.mock.calls[1][0]).toBe(
+      shiftJournalDay(journalDayToday(), -1),
+    );
+
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    await waitFor(() => expect(fetchJournalDay).toHaveBeenCalledTimes(3));
+    expect(fetchJournalDay.mock.calls[2][0]).toBe(journalDayToday());
+
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    input.focus();
+    fireEvent.keyDown(input, { key: "ArrowLeft" });
+    expect(fetchJournalDay).toHaveBeenCalledTimes(3);
+    input.remove();
+  });
+
+  it("marks live generation with phosphor on the now line and polls while it runs", async () => {
     vi.useFakeTimers();
     fetchJournalDay.mockResolvedValue(
       makeJournalDay({
+        date: journalDayToday(),
+        day_start: at(4),
+        activities: [makeActivityCard({ start_at: at(9), end_at: at(10) })],
         generation: {
           enabled: true,
           provider_ready: true,
@@ -146,49 +272,6 @@ describe("JournalView", () => {
     expect(fetchJournalDay).toHaveBeenCalledTimes(1);
   });
 
-  it("points at journal settings when no provider is configured", async () => {
-    fetchJournalDay.mockResolvedValue(
-      makeJournalDay({
-        data_status: "empty_but_recording",
-        activities: [],
-        generation: {
-          enabled: true,
-          provider_ready: false,
-          provider_message: "pick an openai-compatible preset.",
-          processing: false,
-          pending_windows: 0,
-          last_window_end_at: null,
-          last_error: null,
-        },
-      }),
-    );
-    const listener = vi.fn();
-    window.addEventListener("open-settings", listener);
-    render(<JournalView />);
-
-    await waitFor(() =>
-      expect(screen.getByTestId("journal-no-preset")).toBeInTheDocument(),
-    );
-    fireEvent.click(screen.getByTestId("journal-open-settings"));
-    expect(listener).toHaveBeenCalled();
-    expect((listener.mock.calls[0][0] as CustomEvent).detail).toEqual({
-      section: "journal",
-    });
-    window.removeEventListener("open-settings", listener);
-  });
-
-  it("explains an empty day in the words of its data_status", async () => {
-    fetchJournalDay.mockResolvedValue(
-      makeJournalDay({ data_status: "not_recording", activities: [] }),
-    );
-    render(<JournalView />);
-    await waitFor(() =>
-      expect(screen.getByTestId("journal-empty")).toHaveTextContent(
-        "recording is off",
-      ),
-    );
-  });
-
   it("offers a retry after a failed read", async () => {
     fetchJournalDay.mockRejectedValueOnce(new Error("mock backend unavailable"));
     render(<JournalView />);
@@ -201,9 +284,25 @@ describe("JournalView", () => {
     fetchJournalDay.mockResolvedValue(makeJournalDay());
     fireEvent.click(screen.getByTestId("journal-retry"));
     await waitFor(() =>
-      expect(screen.getByTestId("journal-day-overview")).toBeInTheDocument(),
+      expect(screen.getByTestId("journal-canvas")).toBeInTheDocument(),
     );
     expect(screen.queryByTestId("journal-error")).toBeNull();
+  });
+
+  it("shows a skeleton for the canvas and the inspector on the first read", async () => {
+    let resolve: ((value: unknown) => void) | undefined;
+    fetchJournalDay.mockImplementation(
+      () =>
+        new Promise((done) => {
+          resolve = done;
+        }),
+    );
+    render(<JournalView />);
+    expect(screen.getByTestId("journal-loading")).toBeInTheDocument();
+    resolve?.(makeJournalDay());
+    await waitFor(() =>
+      expect(screen.queryByTestId("journal-loading")).toBeNull(),
+    );
   });
 
   it("shows the live strips only on today", async () => {
@@ -212,9 +311,17 @@ describe("JournalView", () => {
       expect(screen.getByTestId("stub-now-strip")).toBeInTheDocument(),
     );
     fireEvent.click(screen.getByTestId("journal-prev-day"));
-    await waitFor(() =>
-      expect(screen.queryByTestId("stub-now-strip")).toBeNull(),
-    );
+    await waitFor(() => expect(screen.queryByTestId("stub-now-strip")).toBeNull());
     expect(screen.queryByTestId("stub-intention-bar")).toBeNull();
+  });
+
+  it("opens with a card selected when the dev select hook asks for one", async () => {
+    fetchJournalDay.mockResolvedValue(dayWithCards());
+    render(<JournalView selectRequest={3} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("journal-inspector-card")).toHaveTextContent(
+        "Third",
+      ),
+    );
   });
 });

@@ -17,34 +17,30 @@
  * See `components/activity-ledger.tsx` (openEvidence) and
  * `components/meeting-notes/replay-strip.tsx` (openInTimeline).
  *
- * The body is a separate component keyed by the activity id so switching cards
- * remounts it with fresh state instead of resetting three state fields inside
- * an effect.
+ * This lives inline in the day inspector rather than behind a dialog: the
+ * inspector already *is* the detail surface, and a modal on top of it would
+ * hide the canvas the evidence belongs to. Mount it keyed by the activity id so
+ * switching cards remounts it with fresh state instead of resetting three state
+ * fields inside an effect.
  */
 
 import React, { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { emit } from "@tauri-apps/api/event";
 
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { useTimelineStore } from "@/lib/hooks/use-timeline-store";
 import { fetchActivityDetail } from "@/lib/journal/api";
-import { formatClock, formatClockRange } from "@/lib/journal/format";
+import { formatClock } from "@/lib/journal/format";
 import type { ActivityDetail } from "@/lib/journal/types";
 
-function EvidenceBody({
+export function EvidenceList({
   activityId,
-  onClose,
+  onNavigate,
 }: {
   activityId: number;
-  onClose: () => void;
+  /** Called once the view is about to change sections, so a host can tidy up. */
+  onNavigate?: () => void;
 }) {
   const router = useRouter();
   const setPendingNavigation = useTimelineStore((s) => s.setPendingNavigation);
@@ -84,34 +80,35 @@ function EvidenceBody({
           void emit("navigate-to-timestamp", occurredAt);
         }
       }, 250);
-      onClose();
+      onNavigate?.();
     },
-    [onClose, router, setPendingNavigation],
+    [onNavigate, router, setPendingNavigation],
   );
 
   return (
-    <>
-      <DialogHeader>
-        <DialogTitle className="lowercase">evidence</DialogTitle>
-        <DialogDescription>
-          {detail
-            ? `${formatClockRange(detail.start_at, detail.end_at)} · ${detail.title}`
-            : "sampled rows behind this card."}
-        </DialogDescription>
-      </DialogHeader>
+    <section
+      aria-label="evidence"
+      data-testid="journal-evidence"
+      className="flex flex-col gap-2"
+    >
+      <h3 className="font-mono text-[10px] lowercase tracking-wide text-muted-foreground">
+        evidence
+      </h3>
 
       {loading ? (
-        <p className="text-sm text-muted-foreground">loading evidence…</p>
+        <p className="font-mono text-xs text-muted-foreground">
+          loading evidence…
+        </p>
       ) : null}
 
       {error ? (
-        <p className="text-sm text-foreground" role="alert">
+        <p className="text-xs text-foreground" role="alert">
           evidence could not be loaded: {error}
         </p>
       ) : null}
 
       {detail && detail.evidence.length === 0 ? (
-        <p className="text-sm text-muted-foreground">
+        <p className="text-xs text-muted-foreground">
           no evidence rows are stored for this card. the source frames may have
           been deleted by retention.
         </p>
@@ -122,39 +119,39 @@ function EvidenceBody({
           {detail.evidence.map((row) => (
             <li
               key={`${row.source_type}-${row.source_id}`}
-              className="flex items-start gap-3 px-3 py-2"
+              className="flex flex-col gap-1 px-2 py-2"
               data-testid="journal-evidence-row"
             >
-              <span className="w-16 shrink-0 font-mono text-[11px] text-muted-foreground">
-                {formatClock(row.occurred_at)}
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block truncate font-mono text-xs text-foreground">
+              <div className="flex items-baseline gap-2">
+                <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
+                  {formatClock(row.occurred_at)}
+                </span>
+                <span className="min-w-0 flex-1 truncate font-mono text-xs text-foreground">
                   {row.app_name ?? row.source_type}
                 </span>
-                {row.window_title ? (
-                  <span className="block truncate text-xs text-muted-foreground">
-                    {row.window_title}
-                  </span>
-                ) : null}
-                {row.browser_url ? (
-                  <span className="block truncate font-mono text-[10px] text-muted-foreground">
-                    {row.browser_url}
-                  </span>
-                ) : null}
-              </span>
+              </div>
+              {row.window_title ? (
+                <span className="truncate text-xs text-muted-foreground">
+                  {row.window_title}
+                </span>
+              ) : null}
+              {row.browser_url ? (
+                <span className="truncate font-mono text-[10px] text-muted-foreground">
+                  {row.browser_url}
+                </span>
+              ) : null}
               {row.frame_id ? (
                 <Button
                   size="sm"
                   variant="outline"
-                  className="shrink-0"
+                  className="self-start"
                   data-testid="journal-evidence-open-timeline"
                   onClick={() => openInTimeline(row.occurred_at, row.frame_id)}
                 >
                   Open in timeline
                 </Button>
               ) : (
-                <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
+                <span className="font-mono text-[10px] lowercase text-muted-foreground">
                   audio
                 </span>
               )}
@@ -168,43 +165,8 @@ function EvidenceBody({
           evidence is sampled — at most 24 rows, evenly spaced across the card.
         </p>
       ) : null}
-    </>
+    </section>
   );
 }
 
-export function EvidenceDrawer({
-  activityId,
-  onClose,
-}: {
-  activityId: number | null;
-  onClose: () => void;
-}) {
-  return (
-    <Dialog
-      open={activityId !== null}
-      onOpenChange={(open) => {
-        if (!open) onClose();
-      }}
-    >
-      <DialogContent
-        className="max-h-[80vh] max-w-2xl overflow-y-auto"
-        data-testid="journal-evidence-drawer"
-      >
-        {activityId === null ? (
-          <DialogHeader>
-            <DialogTitle className="lowercase">evidence</DialogTitle>
-            <DialogDescription>sampled rows behind this card.</DialogDescription>
-          </DialogHeader>
-        ) : (
-          <EvidenceBody
-            key={activityId}
-            activityId={activityId}
-            onClose={onClose}
-          />
-        )}
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-export default EvidenceDrawer;
+export default EvidenceList;

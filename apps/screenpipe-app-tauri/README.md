@@ -43,6 +43,12 @@ active intention; `journal-generating` shows pending windows; and
 configured. Setting and ending an intention mutates the mock, so the focus
 strip follows it.
 
+The journal is a time canvas with an inspector beside it. Adding
+`&select=<activity id>` (for example
+<http://127.0.0.1:1420/home?section=journal&select=4105>) opens with that card
+selected, so the card-detail state can be screenshotted headlessly without
+driving a click. The id must be one of the mock's cards (4101–4109).
+
 The default `ready` state also seeds a stateful Live View and canvas document.
 Edits such as changing the time range or layout mode are preserved for the
 current browser session, so Live View UI work does not need the Rust backend.

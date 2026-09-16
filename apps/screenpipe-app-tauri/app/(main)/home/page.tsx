@@ -211,6 +211,12 @@ function HomeContent() {
   const [intentionRequest, setIntentionRequest] = useQueryState("intent", {
     history: "replace",
   });
+  // Development/screenshot hook: `?select=<activity id>` opens the journal with
+  // that card already selected in the inspector, so the canvas' card state can
+  // be captured headlessly without driving a click.
+  const [journalSelectRequest] = useQueryState("select", {
+    history: "replace",
+  });
   const [activityReturnVisible, setActivityReturnVisible] = useState(false);
   const previousSectionRef = useRef(activeSection);
   const returnToActivity = useCallback(() => {
@@ -1059,6 +1065,11 @@ function HomeContent() {
           <JournalView
             focusIntentionRequest={intentionRequest === "1"}
             onIntentionFocusHandled={() => void setIntentionRequest(null)}
+            selectRequest={
+              journalSelectRequest && /^\d+$/.test(journalSelectRequest)
+                ? Number(journalSelectRequest)
+                : null
+            }
           />
         );
       case "home":
@@ -1751,7 +1762,10 @@ function HomeContent() {
                 <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0">
                   <div
                     className={cn(
-                      "mx-auto max-w-4xl px-6",
+                      "mx-auto px-6",
+                      // The journal is a time canvas beside an inspector; it
+                      // needs the width the reading-column sections do not.
+                      activeSection === "journal" ? "max-w-[1440px]" : "max-w-4xl",
                       activeSection === "pipes" ? "pb-6 pt-10" : "pb-12 pt-6",
                     )}
                   >

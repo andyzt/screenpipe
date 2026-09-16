@@ -314,16 +314,17 @@ Tests: vitest files next to the tools, mocking `callAPI`; keep
   first in `SIDEBAR_NAV_ORDER`; default landing when `journalEnabled`. Hide
   `home` (chat) and the Search tray item via the nav layout and
   `is_tray_item_hidden`-style flags; do not delete the code.
-- `components/journal/`: `journal-view.tsx` (date nav, today), `day-overview.tsx`
-  (active time, per-category bars, focus vs distraction minutes, longest focus
-  block, all labelled estimates), `activity-card.tsx` (time, title, summary,
-  category chip, distraction sub-rows, relation label when present, "View
-  evidence"), `evidence-drawer.tsx` (sampled frames via
-  `/frames/{id}/context`, "Open in timeline" deep link
-  `open_daily_summary`-style action to the native timeline), `intention-bar.tsx`
-  ("Working on … / Set / Done"), `now-strip.tsx` (focus state), plus empty,
-  loading, `data_status` and "preset not configured" states linking to
-  settings.
+- `components/journal/`: `journal-view.tsx` (date pill, today, keyboard map),
+  `day-canvas.tsx` (the day as a vertical time axis; blocks positioned by
+  minute offset, detour insets, now line, "recording…" projection) over pure
+  helpers in `lib/journal/canvas-layout.ts`, `day-inspector.tsx` (the right
+  column: day summary when nothing is selected, card detail when something is),
+  `day-overview.tsx` (active time, per-category bars, focus vs distraction
+  minutes, longest focus block, all labelled estimates), `evidence-list.tsx`
+  (sampled frames, "Open in timeline" deep link to the native timeline),
+  `intention-bar.tsx` ("Working on … / Set / Done"), `now-strip.tsx` (focus
+  state), plus empty, loading, `data_status` and "preset not configured" states
+  linking to settings.
 - Settings: `journalEnabled`, `journalAiPresetId`, `journalWorkProfile`,
   `journalCategories` (mirror of the API for offline display),
   `focusNudgesEnabled`, `focusGraceMinutes`. Frontend-only keys via the `extra`

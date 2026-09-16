@@ -57,12 +57,14 @@ export function canGoToNextJournalDay(
   return date < journalDayToday(now);
 }
 
-/** "today" for the current day, otherwise a written-out date. */
-export function formatJournalDayLabel(
-  date: string,
-  now: Date = new Date(),
-): string {
-  if (isJournalDayToday(date, now)) return "today";
+/**
+ * The written-out date, never "today".
+ *
+ * The date pill prints both — "today · wed, sep 16" — so the reader can tell
+ * which day they are on without doing calendar arithmetic, which needs the
+ * calendar form on its own as well as the relative one.
+ */
+export function formatJournalDate(date: string): string {
   const [year, month, day] = date.split("-").map(Number);
   if (!year || !month || !day) return date;
   const local = new Date(year, month - 1, day, 12, 0, 0);
@@ -71,6 +73,15 @@ export function formatJournalDayLabel(
     month: "short",
     day: "numeric",
   });
+}
+
+/** "today" for the current day, otherwise a written-out date. */
+export function formatJournalDayLabel(
+  date: string,
+  now: Date = new Date(),
+): string {
+  if (isJournalDayToday(date, now)) return "today";
+  return formatJournalDate(date);
 }
 
 /** Minutes as a compact duration: `4h 12m`, `42m`, `0m`. Never a bare float. */
