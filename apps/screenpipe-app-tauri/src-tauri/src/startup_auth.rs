@@ -45,10 +45,17 @@ fn classify_authentication(
     }
 }
 
+/// This build ships without a screenpipe account: no sign-in, no cloud
+/// entitlement. Authentication resolves to `NotRequired`, which the native
+/// access gates in `recording.rs` treat as "start the engine and record".
+/// The user's own AI provider keys live in AI presets (DeepSeek by default).
+pub(crate) const ACCOUNTLESS_BUILD: bool = true;
+
 /// Shared Consumer/Enterprise bootstrap resolver. Signup-free builds take the
 /// immediate branch; otherwise only the build-specific credential check varies.
 fn resolve(app: &tauri::AppHandle, settings: &SettingsStore) -> AuthenticationStatus {
-    let status = classify_authentication(!crate::should_skip_onboarding(), || {
+    let signup_required = !ACCOUNTLESS_BUILD && !crate::should_skip_onboarding();
+    let status = classify_authentication(signup_required, || {
         if cfg!(feature = "enterprise-build") {
             crate::enterprise_sync::authorize_startup(app)
         } else {

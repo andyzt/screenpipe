@@ -38,12 +38,11 @@ describe("normalizeSettingsArrays", () => {
     expect(settings.languages).toEqual(["en", "fr"]);
   });
 
-  it.each([
-    [false, "screenpipe"],
-    [true, "chat"],
-  ])(
-    "recovers an empty legacy preset list to one default when subscribed=%s",
-    (cloudSubscribed, expectedId) => {
+  // This build ships without a screenpipe account: the one default preset is
+  // DeepSeek through the team gateway regardless of any stored subscription.
+  it.each([[false], [true]])(
+    "recovers an empty legacy preset list to the DeepSeek default when subscribed=%s",
+    (cloudSubscribed) => {
       const settings = {
         ...createDefaultSettingsObject(),
         aiPresets: [],
@@ -53,8 +52,8 @@ describe("normalizeSettingsArrays", () => {
       expect(normalizeSettingsArrays(settings)).toBe(true);
       expect(settings.aiPresets).toEqual([
         expect.objectContaining({
-          id: expectedId,
-          provider: "screenpipe-cloud",
+          id: "deepseek",
+          provider: "deepseek",
           defaultPreset: true,
         }),
       ]);

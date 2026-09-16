@@ -1261,6 +1261,39 @@ function createSettingsStore() {
 			needsUpdate = true;
 		}
 
+		// Migration: collapse duplicate DeepSeek presets. Before the native store
+		// learned the "deepseek" provider it rewrote it to "custom" on every load,
+		// and the seeding step below then added a fresh copy each time. Keep one
+		// canonical keyless gateway preset; keep any preset the user gave a key.
+		{
+			const presets: any[] = Array.isArray(settings.aiPresets) ? settings.aiPresets : [];
+			const isDeepSeekLike = (p: any) =>
+				p &&
+				(p.provider === "deepseek" ||
+					(p.provider === "custom" &&
+						typeof p.url === "string" &&
+						(p.url.startsWith(DEEPSEEK_API_URL) ||
+							p.url.startsWith("https://api.deepseek.com")) &&
+						typeof p.model === "string" &&
+						p.model.includes("deepseek")));
+			const keyless = presets.filter(
+				(p) => isDeepSeekLike(p) && !(p.apiKey && String(p.apiKey).trim())
+			);
+			if (keyless.length > 1 || keyless.some((p) => p.provider !== "deepseek")) {
+				const wasDefault = keyless.some((p) => p.defaultPreset === true);
+				const canonical = {
+					...DEFAULT_DEEPSEEK_PRESET,
+					defaultPreset: wasDefault,
+					prompt: keyless.find((p) => p.prompt)?.prompt ?? "",
+				};
+				const rest = presets.filter((p) => !keyless.includes(p));
+				const firstIndex = presets.findIndex((p) => keyless.includes(p));
+				rest.splice(Math.max(0, Math.min(firstIndex, rest.length)), 0, canonical as any);
+				settings.aiPresets = rest as any;
+				needsUpdate = true;
+			}
+		}
+
 		// Migration: add the DeepSeek preset for existing installs (without
 		// touching their existing presets). It becomes the default so a store that
 		// only ever had screenpipe-cloud presets (which now need no account but

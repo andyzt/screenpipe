@@ -185,6 +185,11 @@ pub(crate) fn server_access_allowed(app: &tauri::AppHandle, store: &SettingsStor
     {
         return false;
     }
+    // An accountless build resolves to `NotRequired`: there is no plan to
+    // verify, so the engine starts exactly as it does in dev builds.
+    if startup_authentication == crate::startup_auth::AuthenticationStatus::NotRequired {
+        return true;
+    }
 
     server_access_policy(
         cfg!(feature = "enterprise-build"),
@@ -199,7 +204,8 @@ pub(crate) fn server_access_allowed(app: &tauri::AppHandle, store: &SettingsStor
 /// Enterprise builds keep their native entitlement guard, and consumer builds
 /// still reject accounts that are required to use an enterprise binary.
 pub(crate) fn recording_access_allowed(app: &tauri::AppHandle, store: &SettingsStore) -> bool {
-    let trial_activation_paywall = !crate::should_skip_onboarding()
+    let trial_activation_paywall = !crate::startup_auth::ACCOUNTLESS_BUILD
+        && !crate::should_skip_onboarding()
         && OnboardingStore::get(app)
             .ok()
             .flatten()

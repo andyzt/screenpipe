@@ -2111,6 +2111,7 @@ impl SettingsStore {
                 "openai-chatgpt",
                 "native-ollama",
                 "custom",
+                "deepseek",
                 "screenpipe-cloud",
                 "acp",
                 "opencode",
