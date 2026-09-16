@@ -30,6 +30,7 @@ import {
   hexAlpha,
   percentOf,
 } from "@/lib/journal/format";
+import { categoryLabel, useLocale, useT } from "@/lib/i18n";
 import type { ActivityCard, JournalTotals } from "@/lib/journal/types";
 
 const DONUT_SIZE = 180;
@@ -67,6 +68,8 @@ function splitDuration(minutes: number): { hours: number; minutes: number } {
 }
 
 export function CategoryDonut({ totals }: { totals: JournalTotals }) {
+  const t = useT();
+  const locale = useLocale();
   const rows = [...(totals.by_category ?? [])]
     .filter((row) => row.minutes > 0)
     .sort((a, b) => b.minutes - a.minutes)
@@ -95,7 +98,7 @@ export function CategoryDonut({ totals }: { totals: JournalTotals }) {
     <Card data-testid="journal-category-donut">
       <CardHeader className="pb-2">
         <CardTitle className="text-sm font-medium normal-case tracking-normal text-muted-foreground">
-          Time by category
+          {t("overview.timeByCategory")}
         </CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col items-center gap-4">
@@ -108,7 +111,9 @@ export function CategoryDonut({ totals }: { totals: JournalTotals }) {
             height={DONUT_SIZE}
             viewBox={`0 0 ${DONUT_SIZE} ${DONUT_SIZE}`}
             role="img"
-            aria-label={`measured time by category, ${formatEstimate(totals.active_minutes)} active`}
+            aria-label={t("overview.donutAria", {
+              total: formatEstimate(totals.active_minutes, locale),
+            })}
           >
             <circle
               cx={center}
@@ -131,20 +136,27 @@ export function CategoryDonut({ totals }: { totals: JournalTotals }) {
           </svg>
           <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
             <span className="text-2xl font-bold tabular-nums tracking-tight text-foreground">
-              {active.hours}h {active.minutes}m
+              {formatMinutes(active.hours * 60 + active.minutes, locale)}
             </span>
-            <span className="text-xs text-muted-foreground">active est.</span>
+            <span className="text-xs text-muted-foreground">
+              {t("overview.activeEst")}
+            </span>
           </div>
         </div>
 
         {rows.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            No category has measured time on this day.
+            {t("overview.noCategoryTime")}
           </p>
         ) : (
+          // One row per category rather than two columns: a Russian category
+          // name plus a Russian duration ("Отвлечение" + "4 ч 25 мин") does not
+          // fit half of a 380px inspector, and a truncated legend entry is a
+          // legend that has stopped naming its colour. One column also matches
+          // the apps list directly below it.
           <ul
             data-testid="journal-category-bars"
-            className="grid w-full grid-cols-2 gap-x-4 gap-y-2"
+            className="flex w-full flex-col gap-2"
           >
             {rows.map((row) => (
               <li
@@ -158,10 +170,10 @@ export function CategoryDonut({ totals }: { totals: JournalTotals }) {
                   style={{ backgroundColor: row.fill }}
                 />
                 <span className="min-w-0 flex-1 truncate text-muted-foreground">
-                  {row.name}
+                  {categoryLabel(row.name, locale)}
                 </span>
                 <span className="shrink-0 tabular-nums font-medium text-foreground">
-                  {formatMinutes(row.minutes)}
+                  {formatMinutes(row.minutes, locale)}
                 </span>
               </li>
             ))}
@@ -170,8 +182,10 @@ export function CategoryDonut({ totals }: { totals: JournalTotals }) {
 
         {totals.idle_minutes > 0 || totals.unknown_minutes > 0 ? (
           <p className="w-full text-xs text-muted-foreground">
-            idle {formatEstimate(totals.idle_minutes)} · unclassified{" "}
-            {formatEstimate(totals.unknown_minutes)} — all figures estimated
+            {t("overview.idleUnclassified", {
+              idle: formatEstimate(totals.idle_minutes, locale),
+              unknown: formatEstimate(totals.unknown_minutes, locale),
+            })}
           </p>
         ) : null}
       </CardContent>
@@ -210,21 +224,28 @@ function Figure({
 
 /** The four figures that describe a day, two by two. */
 export function DayFigures({ totals }: { totals: JournalTotals }) {
+  const t = useT();
+  const locale = useLocale();
   return (
     <div data-testid="journal-day-figures" className="grid grid-cols-2 gap-3">
       <Figure
-        label="Active"
-        value={formatEstimate(totals.active_minutes)}
-        hint={`${formatMinutes(totals.wall_minutes)} wall clock`}
-      />
-      <Figure label="Focus" value={formatEstimate(totals.focus_minutes)} />
-      <Figure
-        label="Distraction"
-        value={formatEstimate(totals.distraction_minutes)}
+        label={t("overview.active")}
+        value={formatEstimate(totals.active_minutes, locale)}
+        hint={t("overview.wallClock", {
+          duration: formatMinutes(totals.wall_minutes, locale),
+        })}
       />
       <Figure
-        label="Longest focus"
-        value={formatEstimate(totals.longest_focus_block_minutes)}
+        label={t("overview.focus")}
+        value={formatEstimate(totals.focus_minutes, locale)}
+      />
+      <Figure
+        label={t("overview.distraction")}
+        value={formatEstimate(totals.distraction_minutes, locale)}
+      />
+      <Figure
+        label={t("overview.longestFocus")}
+        value={formatEstimate(totals.longest_focus_block_minutes, locale)}
       />
     </div>
   );
@@ -244,6 +265,8 @@ export function LongestFocusCard({
   totals: JournalTotals;
   activities: ActivityCard[];
 }) {
+  const t = useT();
+  const locale = useLocale();
   const focus = activities
     .filter(
       (card) =>
@@ -257,15 +280,18 @@ export function LongestFocusCard({
   );
 
   return (
-    <Card data-testid="journal-longest-focus" aria-label="longest focus">
+    <Card
+      data-testid="journal-longest-focus"
+      aria-label={t("overview.longestFocusAria")}
+    >
       <CardHeader className="p-3 pb-1">
         <CardTitle className="text-xs font-medium normal-case tracking-normal text-muted-foreground">
-          Longest focus duration
+          {t("overview.longestFocusDuration")}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-2 p-3 pt-0">
         <div className="text-xl font-bold tabular-nums tracking-tight text-foreground">
-          {formatEstimate(totals.longest_focus_block_minutes)}
+          {formatEstimate(totals.longest_focus_block_minutes, locale)}
         </div>
         {focus.length > 0 ? (
           <>
@@ -291,7 +317,7 @@ export function LongestFocusCard({
           </>
         ) : (
           <p className="text-xs text-muted-foreground">
-            No stretch on this day was judged as supporting an intention.
+            {t("overview.noFocusStretch")}
           </p>
         )}
       </CardContent>
@@ -301,18 +327,23 @@ export function LongestFocusCard({
 
 /** How much of the measured day went sideways, as a proportion you can see. */
 export function DistractionCard({ totals }: { totals: JournalTotals }) {
+  const t = useT();
+  const locale = useLocale();
   const share = percentOf(totals.distraction_minutes, totals.active_minutes || 1);
 
   return (
-    <Card data-testid="journal-distractions" aria-label="distractions">
+    <Card
+      data-testid="journal-distractions"
+      aria-label={t("overview.distractionsAria")}
+    >
       <CardHeader className="p-3 pb-1">
         <CardTitle className="text-xs font-medium normal-case tracking-normal text-muted-foreground">
-          Distractions
+          {t("overview.distractions")}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-2 p-3 pt-0">
         <div className="text-xl font-bold tabular-nums tracking-tight text-foreground">
-          {formatEstimate(totals.distraction_minutes)}
+          {formatEstimate(totals.distraction_minutes, locale)}
         </div>
         <div
           aria-hidden="true"
@@ -324,7 +355,10 @@ export function DistractionCard({ totals }: { totals: JournalTotals }) {
           />
         </div>
         <p className="text-xs text-muted-foreground">
-          {Math.round(share)}% of {formatEstimate(totals.active_minutes)} measured
+          {t("overview.distractionShare", {
+            percent: Math.round(share),
+            total: formatEstimate(totals.active_minutes, locale),
+          })}
         </p>
       </CardContent>
     </Card>
@@ -336,6 +370,8 @@ export function DistractionCard({ totals }: { totals: JournalTotals }) {
  * without the chart. The donut replaces it in the inspector.
  */
 export function CategoryBars({ totals }: { totals: JournalTotals }) {
+  const t = useT();
+  const locale = useLocale();
   const categories = [...(totals.by_category ?? [])]
     .filter((row) => row.minutes > 0)
     .sort((a, b) => b.minutes - a.minutes);
@@ -347,11 +383,11 @@ export function CategoryBars({ totals }: { totals: JournalTotals }) {
   return (
     <div data-testid="journal-category-bars" className="flex flex-col gap-2">
       <h3 className="text-xs text-muted-foreground">
-        by category — all figures estimated
+        {t("overview.byCategory")}
       </h3>
       {categories.length === 0 ? (
         <p className="text-sm text-muted-foreground">
-          No category has measured time on this day.
+          {t("overview.noCategoryTime")}
         </p>
       ) : (
         <ul className="flex flex-col gap-2">
@@ -367,7 +403,7 @@ export function CategoryBars({ totals }: { totals: JournalTotals }) {
                 style={{ backgroundColor: row.color_hex }}
               />
               <span className="w-20 shrink-0 truncate text-xs text-foreground">
-                {row.name}
+                {categoryLabel(row.name, locale)}
               </span>
               <span className="h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-muted">
                 <span
@@ -379,7 +415,7 @@ export function CategoryBars({ totals }: { totals: JournalTotals }) {
                 />
               </span>
               <span className="w-16 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
-                {formatEstimate(row.minutes)}
+                {formatEstimate(row.minutes, locale)}
               </span>
             </li>
           ))}
@@ -396,9 +432,10 @@ export function DayOverview({
   totals: JournalTotals;
   activities?: ActivityCard[];
 }) {
+  const t = useT();
   return (
     <section
-      aria-label="day overview"
+      aria-label={t("overview.aria")}
       data-testid="journal-day-overview"
       className="flex flex-col gap-3"
     >

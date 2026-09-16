@@ -27,6 +27,7 @@ import posthog from "posthog-js";
 import { useSettings } from "@/lib/hooks/use-settings";
 import { ROLE_PRESETS, type RolePresetId } from "@/lib/journal/category-presets";
 import { applyRolePreset } from "@/lib/journal/use-role-preset";
+import { useT } from "@/lib/i18n";
 
 interface RoleStepProps {
   handleNextSlide: () => void;
@@ -34,6 +35,7 @@ interface RoleStepProps {
 
 export default function RoleStep({ handleNextSlide }: RoleStepProps) {
   const { updateSettings } = useSettings();
+  const t = useT();
   const mountTimeRef = useRef(Date.now());
   const inFlight = useRef(false);
   const [pending, setPending] = useState<RolePresetId | null>(null);
@@ -56,7 +58,7 @@ export default function RoleStep({ handleNextSlide }: RoleStepProps) {
       });
     } catch (e) {
       console.error("failed to save the role choice:", e);
-      setError("Couldn't save that. Try again.");
+      setError(t("onboarding.role.error"));
       inFlight.current = false;
       setPending(null);
       return;
@@ -97,11 +99,10 @@ export default function RoleStep({ handleNextSlide }: RoleStepProps) {
         transition={{ delay: 0.1 }}
       >
         <h2 className="text-lg font-medium text-foreground">
-          What do you mostly do?
+          {t("onboarding.role.title")}
         </h2>
         <p className="mt-1 max-w-[340px] text-sm text-muted-foreground">
-          Your journal sorts each day into categories. Pick the closest match and
-          we will start from those.
+          {t("onboarding.role.subtitle")}
         </p>
       </motion.div>
 
@@ -128,10 +129,10 @@ export default function RoleStep({ handleNextSlide }: RoleStepProps) {
               {pending === preset.id ? (
                 <Loader className="h-3 w-3 animate-spin" />
               ) : null}
-              {preset.label}
+              {t(`role.preset.${preset.id}.label`)}
             </span>
             <span className="text-xs leading-snug text-muted-foreground">
-              {preset.description}
+              {t(`role.preset.${preset.id}.description`)}
             </span>
             <span className="mt-1 flex gap-1" aria-hidden="true">
               {preset.categories.map((category) => (
@@ -165,7 +166,7 @@ export default function RoleStep({ handleNextSlide }: RoleStepProps) {
         animate={{ opacity: 1 }}
         transition={{ delay: 0.35 }}
       >
-        Skip
+        {t("onboarding.role.skip")}
       </motion.button>
 
       <motion.p
@@ -174,7 +175,7 @@ export default function RoleStep({ handleNextSlide }: RoleStepProps) {
         animate={{ opacity: 1 }}
         transition={{ delay: 0.45 }}
       >
-        Not a forever choice — edit the categories anytime in settings.
+        {t("onboarding.role.footnote")}
       </motion.p>
     </motion.div>
   );

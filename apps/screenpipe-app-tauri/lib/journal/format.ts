@@ -16,6 +16,13 @@
  *    minutes reach the screen, so nothing can quietly render as exact.
  */
 
+import { DEFAULT_LOCALE, translate, type Locale } from "@/lib/i18n/dictionary";
+import {
+  formatClock as formatClockI18n,
+  formatDayLabel,
+  formatDuration,
+  formatEstimateDuration,
+} from "@/lib/i18n/format";
 import type { IntentionRelation, JournalDataStatus } from "./types";
 
 /** Local hour a journal day starts and ends on. */
@@ -64,53 +71,52 @@ export function canGoToNextJournalDay(
  * which day they are on without doing calendar arithmetic, which needs the
  * calendar form on its own as well as the relative one.
  */
-export function formatJournalDate(date: string): string {
-  const [year, month, day] = date.split("-").map(Number);
-  if (!year || !month || !day) return date;
-  const local = new Date(year, month - 1, day, 12, 0, 0);
-  return local.toLocaleDateString(undefined, {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-  });
+export function formatJournalDate(
+  date: string,
+  locale: Locale = DEFAULT_LOCALE,
+): string {
+  return formatDayLabel(date, locale);
 }
 
 /** "today" for the current day, otherwise a written-out date. */
 export function formatJournalDayLabel(
   date: string,
   now: Date = new Date(),
+  locale: Locale = DEFAULT_LOCALE,
 ): string {
-  if (isJournalDayToday(date, now)) return "today";
-  return formatJournalDate(date);
+  if (isJournalDayToday(date, now)) return translate(locale, "format.today");
+  return formatJournalDate(date, locale);
 }
 
 /** Minutes as a compact duration: `4h 12m`, `42m`, `0m`. Never a bare float. */
-export function formatMinutes(minutes: number): string {
-  if (!Number.isFinite(minutes) || minutes <= 0) return "0m";
-  const total = Math.round(minutes);
-  const hours = Math.floor(total / 60);
-  const rest = total % 60;
-  if (hours === 0) return `${rest}m`;
-  if (rest === 0) return `${hours}h`;
-  return `${hours}h ${rest}m`;
+export function formatMinutes(
+  minutes: number,
+  locale: Locale = DEFAULT_LOCALE,
+): string {
+  return formatDuration(minutes, locale);
 }
 
 /** Every duration the journal shows is a measurement estimate; say so. */
-export function formatEstimate(minutes: number): string {
-  return `${formatMinutes(minutes)} est.`;
+export function formatEstimate(
+  minutes: number,
+  locale: Locale = DEFAULT_LOCALE,
+): string {
+  return formatEstimateDuration(minutes, locale);
 }
 
-export function formatClock(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "--:--";
-  return date.toLocaleTimeString(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
-  });
+export function formatClock(
+  iso: string,
+  locale: Locale = DEFAULT_LOCALE,
+): string {
+  return formatClockI18n(iso, locale);
 }
 
-export function formatClockRange(startIso: string, endIso: string): string {
-  return `${formatClock(startIso)} – ${formatClock(endIso)}`;
+export function formatClockRange(
+  startIso: string,
+  endIso: string,
+  locale: Locale = DEFAULT_LOCALE,
+): string {
+  return `${formatClock(startIso, locale)} – ${formatClock(endIso, locale)}`;
 }
 
 /** Share of a total, clamped so a rounding artefact cannot overflow a bar. */
@@ -127,9 +133,13 @@ export const RELATION_LABELS: Record<IntentionRelation, string> = {
   unknown: "unknown",
 };
 
-export function relationLabel(relation: IntentionRelation | null): string | null {
+export function relationLabel(
+  relation: IntentionRelation | null,
+  locale: Locale = DEFAULT_LOCALE,
+): string | null {
   if (!relation) return null;
-  return RELATION_LABELS[relation] ?? RELATION_LABELS.unknown;
+  const known = relation in RELATION_LABELS ? relation : "unknown";
+  return translate(locale, `relation.${known}`);
 }
 
 /**
@@ -140,11 +150,14 @@ export function relationLabel(relation: IntentionRelation | null): string | null
  * unknown; everything between (the 0.7 alias case, and anything a future
  * engine tweak lands nearby) reads as guessed.
  */
-export function categoryConfidenceLabel(confidence: number): string | null {
+export function categoryConfidenceLabel(
+  confidence: number,
+  locale: Locale = DEFAULT_LOCALE,
+): string | null {
   if (!Number.isFinite(confidence)) return null;
   if (confidence >= 0.9) return null;
-  if (confidence <= 0.2) return "category unknown";
-  return "category guessed";
+  if (confidence <= 0.2) return translate(locale, "inspector.categoryUnknown");
+  return translate(locale, "inspector.categoryGuessed");
 }
 
 export type JournalEmptyCopy = { title: string; body: string };
@@ -153,35 +166,21 @@ export type JournalEmptyCopy = { title: string; body: string };
  * Plain language for each `data_status`. No status is phrased as a failure the
  * user caused, and each one says what the next state depends on.
  */
-export function dataStatusCopy(status: JournalDataStatus): JournalEmptyCopy {
-  switch (status) {
-    case "empty_but_recording":
-      return {
-        title: "nothing written yet",
-        body: "recording is on and this day has no finished cards yet. they appear as windows of work complete.",
-      };
-    case "no_capture_in_range":
-      return {
-        title: "no capture for this day",
-        body: "nothing was recorded between 4am and 4am, so there is nothing to write about.",
-      };
-    case "not_recording":
-      return {
-        title: "recording is off",
-        body: "the journal reads what screenpipe captured. turn recording on to fill the next day.",
-      };
-    case "unknown":
-      return {
-        title: "state unknown",
-        body: "the engine could not tell whether this day was captured. try again in a moment.",
-      };
-    case "ok":
-    default:
-      return {
-        title: "no cards for this day",
-        body: "the day was captured but produced no activity cards.",
-      };
-  }
+export function dataStatusCopy(
+  status: JournalDataStatus,
+  locale: Locale = DEFAULT_LOCALE,
+): JournalEmptyCopy {
+  const known =
+    status === "empty_but_recording" ||
+    status === "no_capture_in_range" ||
+    status === "not_recording" ||
+    status === "unknown"
+      ? status
+      : "ok";
+  return {
+    title: translate(locale, `status.${known}.title`),
+    body: translate(locale, `status.${known}.body`),
+  };
 }
 
 /** True while the day is still being written and phosphor may be shown. */

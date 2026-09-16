@@ -49,6 +49,15 @@ The journal is a time canvas with an inspector beside it. Adding
 selected, so the card-detail state can be screenshotted headlessly without
 driving a click. The id must be one of the mock's cards (4101–4109).
 
+The UI ships English and Russian (`lib/i18n`). The locale follows
+Settings → Appearance → *Language / Язык*, which defaults to `system`
+(`navigator.language`). In browser-dev builds only, `?lang=ru` (or `?lang=en`)
+on any page forces it, so the Russian UI can be screenshotted headlessly
+without writing to the mock settings store first — for example
+<http://127.0.0.1:1420/home?section=journal&lang=ru> or
+<http://127.0.0.1:1420/onboarding?step=role&lang=ru>. The parameter is read
+once on mount and is ignored in a packaged app.
+
 The default `ready` state also seeds a stateful Live View and canvas document.
 Edits such as changing the time range or layout mode are preserved for the
 current browser session, so Live View UI work does not need the Rust backend.

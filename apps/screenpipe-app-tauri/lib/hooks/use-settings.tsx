@@ -32,6 +32,7 @@ import type {
 	EnterpriseInstallMetadata,
 } from "@/lib/enterprise/app-update-policy";
 import { type FontSize, applyFontSize } from "@/lib/utils/font-size";
+import type { LocaleSetting } from "@/lib/i18n/dictionary";
 import {
 	applyManagedOverrides,
 	type ManagedSettingValue,
@@ -405,6 +406,10 @@ export type Settings = SettingsStore & {
 	connectionsSyncEnabled?: boolean;
 	/** Font size for the entire app UI */
 	fontSize?: FontSize;
+	/** Interface language. `system` follows `navigator.language`; anything
+	 *  starting with `ru` resolves to Russian. See `lib/i18n`. Rides the Rust
+	 *  `extra` map like the journal keys above. */
+	uiLanguage?: LocaleSetting;
 	/** OpenAI-compatible transcription endpoint URL */
 	openaiCompatibleEndpoint?: string;
 	/** OpenAI-compatible transcription API key */
@@ -905,6 +910,7 @@ let DEFAULT_SETTINGS: Settings = {
 			headless: false,
 			headlessRecordOnly: false,
 			fontSize: "16px",
+			uiLanguage: "system",
 		};
 
 export function createDefaultSettingsObject(): Settings {

@@ -19,6 +19,8 @@
  * stay renderers.
  */
 
+import { DEFAULT_LOCALE, type Locale } from "@/lib/i18n/dictionary";
+import { formatWeekRange, weekdayShortName } from "@/lib/i18n/format";
 import { JOURNAL_DAY_START_HOUR } from "./format";
 import type { CardApp } from "./types";
 
@@ -44,7 +46,6 @@ export const WEEK_SCROLL_ANCHOR_HOUR = 8;
 export const WEEK_PALETTE_SIZE = 8;
 
 const MINUTE_MS = 60_000;
-const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
 
 function toDateKey(date: Date): string {
   const year = date.getFullYear();
@@ -101,23 +102,21 @@ export function isCurrentWeek(start: string, now: Date = new Date()): boolean {
 }
 
 /** `Sep 14–20`, or `Sep 28 – Oct 4` when the week crosses a month. */
-export function weekRangeLabel(start: string): string {
+export function weekRangeLabel(
+  start: string,
+  locale: Locale = DEFAULT_LOCALE,
+): string {
   const days = weekDays(start);
-  const from = noon(days[0]);
-  const to = noon(days[6]);
-  const month = (date: Date) =>
-    date.toLocaleDateString(undefined, { month: "short" });
-  if (from.getMonth() === to.getMonth() && from.getFullYear() === to.getFullYear()) {
-    return `${month(from)} ${from.getDate()}–${to.getDate()}`;
-  }
-  return `${month(from)} ${from.getDate()} – ${month(to)} ${to.getDate()}`;
+  return formatWeekRange(days[0], days[6], locale);
 }
 
 /** `Mon 14` — the column header. Short by design: seven of them share a row. */
-export function weekDayHeader(date: string): { weekday: string; day: number } {
+export function weekDayHeader(
+  date: string,
+  locale: Locale = DEFAULT_LOCALE,
+): { weekday: string; day: number } {
   const local = noon(date);
-  const index = (local.getDay() + 6) % 7;
-  return { weekday: DAY_NAMES[index] ?? "", day: local.getDate() };
+  return { weekday: weekdayShortName(date, locale), day: local.getDate() };
 }
 
 /** Epoch ms of a journal day's 04:00 start, in the machine's own zone. */

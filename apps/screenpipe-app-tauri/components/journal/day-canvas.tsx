@@ -38,6 +38,7 @@ import {
   type PositionedBlock,
 } from "@/lib/journal/canvas-layout";
 import { formatClock, formatEstimate, hexAlpha } from "@/lib/journal/format";
+import { categoryLabel, useLocale, useT, type Locale, type TranslateFn } from "@/lib/i18n";
 import type {
   ActivityCard,
   ActivityDistraction,
@@ -61,14 +62,15 @@ function detourColorHex(day: JournalDay): string | undefined {
   return row?.color_hex;
 }
 
-function cardTooltip(card: ActivityCard): string {
+function cardTooltip(card: ActivityCard, t: TranslateFn, locale: Locale): string {
   const parts = [
-    `${formatClock(card.start_at)}–${formatClock(card.end_at)}`,
-    card.title || (card.category.is_idle ? "idle" : "untitled"),
-    formatEstimate(card.active_minutes),
-    card.category.name,
+    `${formatClock(card.start_at, locale)}–${formatClock(card.end_at, locale)}`,
+    card.title ||
+      (card.category.is_idle ? t("canvas.idleLower") : t("canvas.untitled")),
+    formatEstimate(card.active_minutes, locale),
+    categoryLabel(card.category.name, locale),
   ];
-  if (card.state === "provisional") parts.push("draft");
+  if (card.state === "provisional") parts.push(t("canvas.draft"));
   return parts.join(" · ");
 }
 
@@ -81,6 +83,8 @@ function DetourInsets({
   blockHeightPx: number;
   colorHex: string | undefined;
 }) {
+  const t = useT();
+  const locale = useLocale();
   const startMs = toMs(card.start_at);
   if (!Number.isFinite(startMs)) return null;
   return (
@@ -100,7 +104,7 @@ function DetourInsets({
             key={`${detour.start_at}-${detour.title}`}
             aria-hidden="true"
             data-testid="journal-canvas-detour"
-            title={`Detour · ${formatClock(detour.start_at)}–${formatClock(detour.end_at)} · ${detour.title}`}
+            title={`${t("canvas.detour")} · ${formatClock(detour.start_at, locale)}–${formatClock(detour.end_at, locale)} · ${detour.title}`}
             // A detour is an inset pill inside its parent block, not a block of
             // its own: same colour language, visibly subordinate.
             className="pointer-events-auto absolute right-2 w-10 rounded-sm border"
@@ -128,6 +132,8 @@ function CanvasBlock({
   detourColor: string | undefined;
   onSelect: (id: number) => void;
 }) {
+  const t = useT();
+  const locale = useLocale();
   const card = block.item;
   const idle = card.category.is_idle;
   const widthPct = 100 / block.columnCount;
@@ -142,8 +148,8 @@ function CanvasBlock({
       data-tier={block.tier}
       data-selected={selected ? "true" : "false"}
       aria-pressed={selected}
-      aria-label={cardTooltip(card)}
-      title={cardTooltip(card)}
+      aria-label={cardTooltip(card, t, locale)}
+      title={cardTooltip(card, t, locale)}
       onClick={() => onSelect(card.id)}
       className={cn(
         // A shadcn Card on the canvas: the colour lives in the left border, so
@@ -171,7 +177,7 @@ function CanvasBlock({
           )}
           data-testid="journal-canvas-block-title"
         >
-          {idle ? "Idle" : card.title}
+          {idle ? t("canvas.idle") : card.title}
         </span>
       ) : null}
       {block.tier === "full" ? (
@@ -180,15 +186,16 @@ function CanvasBlock({
           data-testid="journal-canvas-block-meta"
         >
           <span className="truncate">
-            {formatClock(card.start_at)}–{formatClock(card.end_at)} ·{" "}
-            {formatEstimate(card.active_minutes)}
+            {formatClock(card.start_at, locale)}–
+            {formatClock(card.end_at, locale)} ·{" "}
+            {formatEstimate(card.active_minutes, locale)}
           </span>
           <Badge variant="outline" className="shrink-0 px-1.5 py-0 text-[10px] font-normal">
-            {card.category.name}
+            {categoryLabel(card.category.name, locale)}
           </Badge>
           {card.state === "provisional" ? (
             <Badge variant="secondary" className="shrink-0 px-1.5 py-0 text-[10px] font-normal">
-              draft
+              {t("canvas.draft")}
             </Badge>
           ) : null}
         </span>
@@ -213,6 +220,8 @@ function NowLine({
   generating: boolean;
   pendingWindows: number;
 }) {
+  const t = useT();
+  const locale = useLocale();
   return (
     <div
       data-testid="journal-now-line"
@@ -227,21 +236,21 @@ function NowLine({
       {/* Opaque: the now clock sits in the gutter and has to cover whatever
           hour label it lands on, not blend with it. */}
       <span className="absolute -top-2.5 left-1 rounded bg-card px-1 text-xs font-medium text-foreground">
-        {formatClock(new Date(nowMs).toISOString())}
+        {formatClock(new Date(nowMs).toISOString(), locale)}
       </span>
       {generating ? (
         <Badge
           data-testid="journal-generating"
           className="absolute -top-[11px] right-2 font-normal"
         >
-          writing {pendingWindows || 1} window{pendingWindows === 1 ? "" : "s"}
+          {t("canvas.writing", { count: pendingWindows || 1 })}
         </Badge>
       ) : (
         <span
           data-testid="journal-now-mark"
           className="absolute -top-2.5 right-2 rounded bg-card px-1 text-xs font-medium text-foreground"
         >
-          now
+          {t("canvas.now")}
         </span>
       )}
     </div>
@@ -262,6 +271,7 @@ export function DayCanvas({
   onSelect: (id: number | null) => void;
   generating: boolean;
 }) {
+  const t = useT();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const scrolledForRef = useRef<string | null>(null);
 
@@ -355,7 +365,7 @@ export function DayCanvas({
     <div
       ref={scrollRef}
       data-testid="journal-canvas"
-      aria-label="day canvas"
+      aria-label={t("canvas.aria")}
       className="journal-scroll relative h-[calc(100vh-8rem)] min-h-[420px] w-full min-w-0 flex-1 overflow-y-auto rounded-lg border border-border bg-card shadow-sm"
     >
       <div
@@ -395,8 +405,8 @@ export function DayCanvas({
               data-testid="journal-canvas-projection"
               title={
                 recordingOk
-                  ? "recording — this stretch is not written yet"
-                  : "capture stalled — nothing is arriving for this stretch"
+                  ? t("canvas.recordingTitle")
+                  : t("canvas.stalledTitle")
               }
               className={cn(
                 "absolute left-2 right-2 rounded-lg border bg-muted/50",
@@ -411,7 +421,7 @@ export function DayCanvas({
                   stretch the top of the block is scrolled out of view, and the
                   live edge is where the reader is looking. */}
               <span className="absolute bottom-1.5 left-3 text-xs text-muted-foreground">
-                {recordingOk ? "recording…" : "capture stalled"}
+                {recordingOk ? t("canvas.recording") : t("canvas.stalled")}
               </span>
             </div>
           ) : null}

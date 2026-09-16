@@ -18,12 +18,15 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { fetchFocusStatus, overrideFocusState } from "@/lib/journal/api";
-import { formatMinutes, relationLabel } from "@/lib/journal/format";
+import { formatEstimate, relationLabel } from "@/lib/journal/format";
+import { useLocale, useT } from "@/lib/i18n";
 import type { FocusOverrideRelation, FocusStatus } from "@/lib/journal/types";
 
 const POLL_MS = 30_000;
 
 export function NowStrip({ refreshToken = 0 }: { refreshToken?: number }) {
+  const t = useT();
+  const locale = useLocale();
   const [status, setStatus] = useState<FocusStatus | null>(null);
   const [failed, setFailed] = useState(false);
   const [overriding, setOverriding] = useState<FocusOverrideRelation | null>(
@@ -83,9 +86,9 @@ export function NowStrip({ refreshToken = 0 }: { refreshToken?: number }) {
   const stalled = status ? !status.evidence_ok : false;
   const relation = status
     ? stalled
-      ? "unknown, capture stalled"
-      : relationLabel(status.relation)
-    : "reading the last few minutes…";
+      ? t("now.stalledRelation")
+      : relationLabel(status.relation, locale)
+    : t("now.reading");
   // The override only makes sense while there is a stated intention to
   // diverge from, and only while the detector is actually flagging a
   // divergence — offering it on "supports your intention" would just be
@@ -100,12 +103,12 @@ export function NowStrip({ refreshToken = 0 }: { refreshToken?: number }) {
   // the surface, so it gets a surface of its own rather than a colour.
   return (
     <section
-      aria-label="focus right now"
+      aria-label={t("now.aria")}
       data-testid="journal-now-strip"
       className="flex flex-wrap items-baseline gap-x-3 gap-y-1 rounded-lg border border-border bg-muted/50 px-3 py-2.5"
     >
       <Badge variant="outline" className="bg-background font-normal">
-        Now
+        {t("now.badge")}
       </Badge>
       <span
         className="text-sm font-medium text-foreground"
@@ -121,13 +124,15 @@ export function NowStrip({ refreshToken = 0 }: { refreshToken?: number }) {
       ) : null}
       {status && !stalled && status.divergence_minutes > 0 ? (
         <span className="text-xs text-muted-foreground" data-testid="journal-now-divergence">
-          away {formatMinutes(status.divergence_minutes)} est.
+          {t("now.away", {
+            duration: formatEstimate(status.divergence_minutes, locale),
+          })}
         </span>
       ) : null}
       {status?.reason ? (
         <span className="w-full text-xs leading-5 text-muted-foreground">
           {stalled
-            ? "no fresh capture in the last few minutes, so the relation is not judged."
+            ? t("now.stalledReason")
             : status.reason}
         </span>
       ) : null}
@@ -140,7 +145,7 @@ export function NowStrip({ refreshToken = 0 }: { refreshToken?: number }) {
             disabled={overriding !== null}
             onClick={() => void handleOverride("other_work")}
           >
-            This is fine
+            {t("now.overrideOtherWork")}
           </Button>
           <Button
             size="sm"
@@ -149,7 +154,7 @@ export function NowStrip({ refreshToken = 0 }: { refreshToken?: number }) {
             disabled={overriding !== null}
             onClick={() => void handleOverride("break")}
           >
-            Take a break
+            {t("now.overrideBreak")}
           </Button>
         </div>
       ) : null}

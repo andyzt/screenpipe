@@ -33,6 +33,7 @@ import {
   weekDayHeader,
   weekHourRows,
 } from "@/lib/journal/week-layout";
+import { useLocale, useT } from "@/lib/i18n";
 import type { JournalDay } from "@/lib/journal/types";
 import { cn } from "@/lib/utils";
 import { WeekBlock, type WeekColorMode } from "./week-block";
@@ -120,6 +121,8 @@ export function WeekGrid({
   onSelectCard: (date: string, id: number) => void;
   onOpenDay: (date: string) => void;
 }) {
+  const t = useT();
+  const locale = useLocale();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const anchoredForRef = useRef<string | null>(null);
   const hours = useMemo(() => weekHourRows(), []);
@@ -139,13 +142,13 @@ export function WeekGrid({
   return (
     <div
       data-testid="journal-week-grid"
-      aria-label="week calendar"
+      aria-label={t("week.gridAria")}
       className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-lg border border-border bg-card shadow-sm"
     >
       <div className="flex border-b border-border bg-card">
         <div className="shrink-0 border-r border-border" style={{ width: WEEK_GUTTER_PX }} />
         {days.map((day) => {
-          const header = weekDayHeader(day.date);
+          const header = weekDayHeader(day.date, locale);
           const today = isJournalDayToday(day.date, now);
           return (
             <button

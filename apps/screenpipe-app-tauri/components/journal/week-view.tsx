@@ -39,6 +39,14 @@ import {
   weekDayHeader,
   weekRangeLabel,
 } from "@/lib/journal/week-layout";
+import {
+  categoryLabel,
+  intlLocale,
+  translate,
+  useLocale,
+  useT,
+  type Locale,
+} from "@/lib/i18n";
 import type { JournalWeek } from "@/lib/journal/types";
 import { cn } from "@/lib/utils";
 import { AppsBreakdown } from "./apps-breakdown";
@@ -95,10 +103,12 @@ export function SegmentedToggle<T extends string>({
 /** Half of an outline button group, matching the day view's date chevrons. */
 function WeekChevron({
   direction,
+  label,
   disabled,
   onClick,
 }: {
   direction: "previous" | "next";
+  label: string;
   disabled?: boolean;
   onClick: () => void;
 }) {
@@ -106,7 +116,7 @@ function WeekChevron({
   return (
     <button
       type="button"
-      aria-label={`${direction} week`}
+      aria-label={label}
       data-testid={direction === "previous" ? "journal-prev-week" : "journal-next-week"}
       disabled={disabled}
       onClick={onClick}
@@ -135,6 +145,7 @@ function LegendChip({
   minutes?: number;
   icon?: React.ReactNode;
 }) {
+  const locale = useLocale();
   return (
     <span
       data-testid="journal-week-legend-chip"
@@ -151,7 +162,7 @@ function LegendChip({
       <span className="truncate">{name}</span>
       {minutes !== undefined ? (
         <span className="tabular-nums text-muted-foreground">
-          {formatMinutes(minutes)}
+          {formatMinutes(minutes, locale)}
         </span>
       ) : null}
     </span>
@@ -165,21 +176,32 @@ function LegendChip({
  * truncates to "5h 4…" in this row, and a truncated number is worse than a
  * rounded one. One decimal hour keeps the comparison the row exists for.
  */
-function compactHours(minutes: number): string {
+function compactHours(minutes: number, locale: Locale): string {
+  const unit = (key: string) =>
+    locale === "ru" ? `\u00a0${translate(locale, key)}` : translate(locale, key);
   if (!Number.isFinite(minutes) || minutes <= 0) return "0";
-  if (minutes < 60) return `${Math.round(minutes)}m`;
-  return `${(minutes / 60).toFixed(1)}h`;
+  if (minutes < 60) {
+    return `${Math.round(minutes)}${unit("format.unit.minutes")}`;
+  }
+  // `toFixed` always gives a dot; Russian writes a decimal comma.
+  const hours = (minutes / 60).toLocaleString(intlLocale(locale), {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  });
+  return `${hours}${unit("format.unit.hours")}`;
 }
 
 /** The seven day totals under the app list — the week at a glance, in numbers. */
 function PerDayTotals({ week }: { week: JournalWeek }) {
+  const t = useT();
+  const locale = useLocale();
   return (
     <div
       data-testid="journal-week-per-day"
       className="grid grid-cols-7 gap-1 border-t border-border pt-3"
     >
       {week.days.map((day) => {
-        const header = weekDayHeader(day.date);
+        const header = weekDayHeader(day.date, locale);
         return (
           <div key={day.date} className="min-w-0 text-center">
             <div className="text-[10px] uppercase text-muted-foreground">
@@ -187,9 +209,11 @@ function PerDayTotals({ week }: { week: JournalWeek }) {
             </div>
             <div
               className="truncate text-xs tabular-nums text-foreground"
-              title={`${formatMinutes(day.totals.active_minutes)} active est.`}
+              title={t("week.dayTotalTitle", {
+                duration: formatMinutes(day.totals.active_minutes, locale),
+              })}
             >
-              {compactHours(day.totals.active_minutes)}
+              {compactHours(day.totals.active_minutes, locale)}
             </div>
           </div>
         );
@@ -213,6 +237,8 @@ export function WeekView({
   onSelectCard: (date: string, id: number) => void;
   onOpenDay: (date: string) => void;
 }) {
+  const t = useT();
+  const locale = useLocale();
   const [mode, setMode] = useState<WeekColorMode>("category");
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
   const [reloadToken, setReloadToken] = useState(0);
@@ -287,7 +313,7 @@ export function WeekView({
       .map((row) => (
         <LegendChip
           key={row.category_id}
-          name={row.name}
+          name={categoryLabel(row.name, locale)}
           minutes={row.minutes}
           color={row.color_hex}
           fill={tint(row.color_hex, categoryTintAmount({ name: row.name, id: row.category_id }))}
@@ -298,7 +324,7 @@ export function WeekView({
       chips.push(
         <LegendChip
           key="unclassified"
-          name="Unclassified"
+          name={t("week.unclassified")}
           minutes={unclassified}
           color="hsl(var(--border))"
           fill={UNCLASSIFIED_COLOR}
@@ -306,7 +332,7 @@ export function WeekView({
       );
     }
     return chips;
-  }, [mode, palette, week]);
+  }, [locale, mode, palette, t, week]);
 
   return (
     <div className="flex flex-col gap-3" data-testid="journal-week-view">
@@ -315,8 +341,10 @@ export function WeekView({
           data-testid="journal-week-total"
           className="text-2xl font-semibold tracking-tight text-foreground"
         >
-          Focused for{" "}
-          <span className="tabular-nums">{formatMinutes(focusMinutes)}</span>
+          {t("week.focusedFor")}{" "}
+          <span className="tabular-nums">
+            {formatMinutes(focusMinutes, locale)}
+          </span>
         </h1>
 
         <div className="ml-auto flex flex-wrap items-center gap-2">
@@ -324,11 +352,12 @@ export function WeekView({
             data-testid="journal-week-range"
             className="text-sm font-medium tabular-nums text-muted-foreground"
           >
-            {weekRangeLabel(weekStart)}
+            {weekRangeLabel(weekStart, locale)}
           </span>
           <div className="flex items-center">
             <WeekChevron
               direction="previous"
+              label={t("week.prevWeek")}
               onClick={() => goToWeek(shiftWeek(weekStart, -1))}
             />
             <button
@@ -342,31 +371,35 @@ export function WeekView({
                 "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
               )}
             >
-              This week
+              {t("week.thisWeek")}
             </button>
             <WeekChevron
               direction="next"
+              label={t("week.nextWeek")}
               disabled={!canGoForward}
               onClick={() => goToWeek(shiftWeek(weekStart, 1))}
             />
           </div>
           <SegmentedToggle
-            label="journal view"
+            label={t("journal.viewLabel")}
             testId="journal-view-toggle"
             value="week"
             options={[
-              { value: "day", label: "Day" },
-              { value: "week", label: "Week" },
+              { value: "day", label: t("journal.view.day") },
+              { value: "week", label: t("journal.view.week") },
             ]}
             onChange={(next) => onViewChange(next as JournalViewMode)}
           />
           <SegmentedToggle
-            label="colour by"
+            label={t("week.colorByLabel")}
             testId="journal-color-mode"
             value={mode}
             options={[
-              { value: "category" as WeekColorMode, label: "Category" },
-              { value: "apps" as WeekColorMode, label: "Apps" },
+              {
+                value: "category" as WeekColorMode,
+                label: t("week.mode.category"),
+              },
+              { value: "apps" as WeekColorMode, label: t("week.mode.apps") },
             ]}
             onChange={setMode}
           />
@@ -380,7 +413,7 @@ export function WeekView({
           className="rounded-lg border border-border bg-card px-4 py-3"
         >
           <p className="text-sm font-medium text-foreground">
-            The week could not be read
+            {t("week.error.title")}
           </p>
           <p className="mt-1 text-sm text-muted-foreground">{error}</p>
           <Button
@@ -390,7 +423,7 @@ export function WeekView({
             data-testid="journal-week-retry"
             onClick={() => setReloadToken((token) => token + 1)}
           >
-            Retry
+            {t("journal.retry")}
           </Button>
         </div>
       ) : null}
@@ -409,7 +442,7 @@ export function WeekView({
           data-testid="journal-week-loading"
           className="h-[calc(100vh-12rem)] min-h-[420px] rounded-lg border border-border bg-card p-4 text-sm text-muted-foreground shadow-sm"
         >
-          Reading the week…
+          {t("week.loading")}
         </div>
       ) : null}
 
@@ -429,7 +462,7 @@ export function WeekView({
           <div className="w-full shrink-0 min-[1280px]:w-[320px]">
             <AppsBreakdown
               apps={week.totals.by_app}
-              title="Apps this week"
+              title={t("apps.weekTitle")}
               palette={palette}
               className="min-[1280px]:h-[calc(100vh-13rem)] min-[1280px]:overflow-y-auto"
             >

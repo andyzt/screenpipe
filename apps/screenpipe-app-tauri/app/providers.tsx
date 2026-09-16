@@ -10,6 +10,7 @@ import { PostHogProvider } from "posthog-js/react";
 import { useEffect, useState, Suspense } from "react";
 import { ChangelogDialogProvider } from "@/lib/hooks/use-changelog-dialog";
 import { SettingsProvider } from "@/lib/hooks/use-settings";
+import { LocaleProvider } from "@/lib/i18n";
 import { ManagedPolicyProvider } from "@/lib/hooks/use-managed-policy";
 import { ThemeProvider } from "@/components/theme-provider";
 import { PermissionMonitorProvider } from "@/lib/hooks/use-permission-monitor";
@@ -133,6 +134,7 @@ export const Providers = forwardRef<
         <NuqsAdapter>
           <QueryClientProvider client={queryClient}>
             <SettingsProvider>
+              <LocaleProvider>
               <ManagedPolicyProvider>
                   <ThemeProvider
                     defaultTheme="system"
@@ -157,6 +159,7 @@ export const Providers = forwardRef<
                     </PostHogProvider>
                   </ThemeProvider>
               </ManagedPolicyProvider>
+              </LocaleProvider>
             </SettingsProvider>
           </QueryClientProvider>
         </NuqsAdapter>

@@ -32,6 +32,7 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { useLocale, useT } from "@/lib/i18n";
 import { DayCanvas } from "./day-canvas";
 import { DayInspector } from "./day-inspector";
 import { IntentionBar } from "./intention-bar";
@@ -64,10 +65,12 @@ function isTypingTarget(target: EventTarget | null): boolean {
 
 function DateChevron({
   direction,
+  label,
   disabled,
   onClick,
 }: {
   direction: "previous" | "next";
+  label: string;
   disabled?: boolean;
   onClick: () => void;
 }) {
@@ -75,7 +78,7 @@ function DateChevron({
   return (
     <button
       type="button"
-      aria-label={`${direction} day`}
+      aria-label={label}
       data-testid={direction === "previous" ? "journal-prev-day" : "journal-next-day"}
       disabled={disabled}
       onClick={onClick}
@@ -131,6 +134,8 @@ export function JournalView({
   // A role picked during onboarding, before the engine was listening, reaches
   // the engine here: this view is the first thing most people open.
   useRolePreset();
+  const t = useT();
+  const locale = useLocale();
 
   const [date, setDate] = useState<string>(() => journalDayToday());
   const [localView, setLocalView] = useState<JournalViewMode>(view ?? "day");
@@ -300,8 +305,8 @@ export function JournalView({
   }, [handleKeyDown]);
 
   const dateLabel = today
-    ? `Today · ${formatJournalDate(date)}`
-    : formatJournalDate(date);
+    ? t("journal.datePill", { date: formatJournalDate(date, locale) })
+    : formatJournalDate(date, locale);
 
   if (activeView === "week") {
     return (
@@ -321,7 +326,7 @@ export function JournalView({
     <div className="flex flex-col gap-4" data-testid="section-journal">
       <header className="flex flex-wrap items-center gap-3">
         <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-          Journal
+          {t("journal.title")}
         </h1>
 
         <div
@@ -330,6 +335,7 @@ export function JournalView({
         >
           <DateChevron
             direction="previous"
+            label={t("journal.prevDay")}
             onClick={() => goToDate((current) => shiftJournalDay(current, -1))}
           />
           <span
@@ -340,6 +346,7 @@ export function JournalView({
           </span>
           <DateChevron
             direction="next"
+            label={t("journal.nextDay")}
             disabled={!canGoForward}
             onClick={() => goToDate((current) => shiftJournalDay(current, 1))}
           />
@@ -352,16 +359,16 @@ export function JournalView({
           disabled={today}
           onClick={() => goToDate(journalDayToday())}
         >
-          Today
+          {t("journal.today")}
         </Button>
 
         <SegmentedToggle
-          label="journal view"
+          label={t("journal.viewLabel")}
           testId="journal-view-toggle"
           value="day"
           options={[
-            { value: "day", label: "Day" },
-            { value: "week", label: "Week" },
+            { value: "day", label: t("journal.view.day") },
+            { value: "week", label: t("journal.view.week") },
           ]}
           onChange={(next) => {
             if (next === "week") setWeek(mondayOf(date));
@@ -387,7 +394,7 @@ export function JournalView({
           className="rounded-lg border border-border bg-card px-4 py-3"
         >
           <p className="text-sm font-medium text-foreground">
-            The journal could not be read
+            {t("journal.error.title")}
           </p>
           <p className="mt-1 text-sm text-muted-foreground">{error}</p>
           <Button
@@ -397,7 +404,7 @@ export function JournalView({
             data-testid="journal-retry"
             onClick={() => setReloadToken((token) => token + 1)}
           >
-            Retry
+            {t("journal.retry")}
           </Button>
         </div>
       ) : null}
@@ -409,7 +416,9 @@ export function JournalView({
         >
           <div className="h-[calc(100vh-8rem)] min-h-[420px] w-full min-w-0 flex-1 rounded-lg border border-border bg-card shadow-sm">
             <p className="p-4 text-sm text-muted-foreground" data-testid="journal-loading-copy">
-              {waitingForEngine ? "Waiting for the recording engine to start…" : "Reading the day…"}
+              {waitingForEngine
+                ? t("journal.waitingForEngine")
+                : t("journal.loading")}
             </p>
           </div>
           <div className="h-40 w-full shrink-0 rounded-lg border border-border bg-card shadow-sm min-[1100px]:h-[calc(100vh-8rem)] min-[1100px]:w-[380px]" />

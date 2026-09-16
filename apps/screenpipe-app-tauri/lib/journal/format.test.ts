@@ -8,7 +8,9 @@ import {
   canGoToNextJournalDay,
   categoryConfidenceLabel,
   dataStatusCopy,
+  formatClock,
   formatEstimate,
+  formatJournalDate,
   formatJournalDayLabel,
   formatMinutes,
   isGenerationRunning,
@@ -109,5 +111,39 @@ describe("isGenerationRunning", () => {
     expect(isGenerationRunning({ processing: true, pending_windows: 0 })).toBe(true);
     expect(isGenerationRunning({ processing: false, pending_windows: 2 })).toBe(true);
     expect(isGenerationRunning({ processing: false, pending_windows: 0 })).toBe(false);
+  });
+});
+
+/**
+ * The journal helpers keep their names and their English output; the locale is
+ * an optional last argument that routes them through `lib/i18n`. These cases
+ * prove the routing, not the formatting — `lib/i18n/i18n.test.ts` owns that.
+ */
+describe("locale routing", () => {
+  it("keeps every default English", () => {
+    expect(formatMinutes(312.5)).toBe("5h 13m");
+    expect(formatEstimate(90)).toBe("1h 30m est.");
+    expect(formatJournalDate("2026-09-16")).toBe("Wed, Sep 16");
+    expect(relationLabel("break")).toBe("break");
+    expect(dataStatusCopy("not_recording").title).toBe("recording is off");
+  });
+
+  it("answers in Russian when asked", () => {
+    expect(formatMinutes(312.5, "ru")).toBe("5\u00a0ч 13\u00a0мин");
+    expect(formatEstimate(90, "ru")).toBe("~1\u00a0ч 30\u00a0мин");
+    expect(formatJournalDate("2026-09-16", "ru")).toContain("16 сентября");
+    expect(formatClock("2026-09-16T12:04:00", "ru")).toBe("12:04");
+    expect(relationLabel("break", "ru")).toBe("перерыв");
+    expect(relationLabel("possible_distraction", "ru")).toBe(
+      "возможно, отвлечение",
+    );
+    expect(dataStatusCopy("not_recording", "ru").title).toBe("Запись выключена");
+    expect(categoryConfidenceLabel(0.7, "ru")).toBe("категория неточная");
+  });
+
+  it("says today in the reader's language", () => {
+    const now = new Date(2026, 8, 16, 10, 0, 0);
+    expect(formatJournalDayLabel("2026-09-16", now)).toBe("today");
+    expect(formatJournalDayLabel("2026-09-16", now, "ru")).toBe("сегодня");
   });
 });

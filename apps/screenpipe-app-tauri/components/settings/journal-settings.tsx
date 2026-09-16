@@ -64,6 +64,7 @@ import type {
   JournalStatus,
   JournalWorkProfile,
 } from "@/lib/journal/types";
+import { categoryLabel, useLocale, useT, type TranslateFn } from "@/lib/i18n";
 import type { SettingsField } from "./settings-search";
 
 export const searchIndex: SettingsField[] = [
@@ -112,6 +113,7 @@ function WorkProfileEditor({
   profile: JournalWorkProfile;
   onChange: (next: JournalWorkProfile) => void;
 }) {
+  const t = useT();
   return (
     <div className="space-y-3 px-4 py-3">
       <div>
@@ -119,13 +121,13 @@ function WorkProfileEditor({
           htmlFor="journal-profile-role"
           className="font-mono text-[10px] lowercase tracking-wide text-muted-foreground"
         >
-          role
+          {t("settings.journal.profile.role")}
         </label>
         <Input
           id="journal-profile-role"
           data-testid="journal-profile-role"
           value={profile.role}
-          placeholder="what you do, in your own words"
+          placeholder={t("settings.journal.profile.rolePlaceholder")}
           onChange={(event) => onChange({ ...profile, role: event.target.value })}
           className="mt-1 h-9"
         />
@@ -133,15 +135,17 @@ function WorkProfileEditor({
 
       <div>
         <span className="font-mono text-[10px] lowercase tracking-wide text-muted-foreground">
-          projects
+          {t("settings.journal.profile.projects")}
         </span>
         <ul className="mt-1 flex flex-col gap-2">
           {profile.projects.map((project, index) => (
             <li key={`project-${index}`} className="flex items-center gap-2">
               <Input
-                aria-label={`project ${index + 1} name`}
+                aria-label={t("settings.journal.profile.projectName", {
+                  index: index + 1,
+                })}
                 value={project.name}
-                placeholder="project"
+                placeholder={t("settings.journal.profile.projectPlaceholder")}
                 className="h-9 w-40"
                 onChange={(event) => {
                   const projects = [...profile.projects];
@@ -150,9 +154,11 @@ function WorkProfileEditor({
                 }}
               />
               <Input
-                aria-label={`project ${index + 1} keywords`}
+                aria-label={t("settings.journal.profile.projectKeywords", {
+                  index: index + 1,
+                })}
                 value={project.keywords.join(", ")}
-                placeholder="keywords, comma separated"
+                placeholder={t("settings.journal.profile.keywordsPlaceholder")}
                 className="h-9 min-w-0 flex-1"
                 onChange={(event) => {
                   const projects = [...profile.projects];
@@ -169,7 +175,9 @@ function WorkProfileEditor({
               <Button
                 size="sm"
                 variant="ghost"
-                aria-label={`remove project ${index + 1}`}
+                aria-label={t("settings.journal.profile.removeProject", {
+                  index: index + 1,
+                })}
                 onClick={() =>
                   onChange({
                     ...profile,
@@ -194,7 +202,8 @@ function WorkProfileEditor({
             })
           }
         >
-          <Plus className="mr-1 h-3.5 w-3.5" /> Add project
+          <Plus className="mr-1 h-3.5 w-3.5" />{" "}
+          {t("settings.journal.profile.addProject")}
         </Button>
       </div>
 
@@ -203,14 +212,14 @@ function WorkProfileEditor({
           htmlFor="journal-profile-notes"
           className="font-mono text-[10px] lowercase tracking-wide text-muted-foreground"
         >
-          notes
+          {t("settings.journal.profile.notes")}
         </label>
         <Textarea
           id="journal-profile-notes"
           data-testid="journal-profile-notes"
           value={profile.notes}
           rows={3}
-          placeholder="anything the writer should know about your days"
+          placeholder={t("settings.journal.profile.notesPlaceholder")}
           onChange={(event) => onChange({ ...profile, notes: event.target.value })}
           className="mt-1"
         />
@@ -234,6 +243,8 @@ function RolePresetPicker({
   onApplied: (next: JournalCategory[]) => void;
 }) {
   const { updateSettings } = useSettings();
+  const t = useT();
+  const locale = useLocale();
   const [pending, setPending] = useState<RolePreset | null>(null);
   const [applying, setApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -273,21 +284,25 @@ function RolePresetPicker({
           onValueChange={(value) => setPending(findRolePreset(value))}
         >
           <SelectTrigger
-            aria-label="Start from a role"
+            aria-label={t("settings.journal.preset.placeholder")}
             data-testid="journal-role-preset-trigger"
             className="h-9 w-64"
           >
-            <SelectValue placeholder="Start from a role">
-              {matchedPreset?.label}
+            <SelectValue placeholder={t("settings.journal.preset.placeholder")}>
+              {matchedPreset
+                ? t(`role.preset.${matchedPreset.id}.label`)
+                : undefined}
             </SelectValue>
           </SelectTrigger>
           <SelectContent>
             {ROLE_PRESETS.map((preset) => (
               <SelectItem key={preset.id} value={preset.id}>
                 <span className="flex flex-col gap-0.5 py-0.5">
-                  <span className="text-sm text-foreground">{preset.label}</span>
+                  <span className="text-sm text-foreground">
+                    {t(`role.preset.${preset.id}.label`)}
+                  </span>
                   <span className="text-xs text-muted-foreground">
-                    {preset.description}
+                    {t(`role.preset.${preset.id}.description`)}
                   </span>
                 </span>
               </SelectItem>
@@ -301,11 +316,11 @@ function RolePresetPicker({
         className="text-xs text-muted-foreground"
         data-testid="journal-role-preset-match"
       >
-        {matchedPreset ? (
-          <>Your list matches the {matchedPreset.label} preset.</>
-        ) : (
-          <>This list is your own. Picking a role replaces it.</>
-        )}
+        {matchedPreset
+          ? t("settings.journal.preset.matched", {
+              preset: t(`role.preset.${matchedPreset.id}.label`),
+            })
+          : t("settings.journal.preset.custom")}
       </p>
 
       <AlertDialog
@@ -316,11 +331,14 @@ function RolePresetPicker({
       >
         <AlertDialogContent data-testid="journal-role-preset-confirm">
           <AlertDialogHeader>
-            <AlertDialogTitle>Replace your categories?</AlertDialogTitle>
+            <AlertDialogTitle>
+              {t("settings.journal.preset.confirmTitle")}
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              This replaces the {replacedCount} editable categories you have now
-              with the {pending?.categories.length} below. Idle and other system
-              rows are kept. Past cards keep the category they were written with.
+              {t("settings.journal.preset.confirmBody", {
+                current: replacedCount,
+                next: pending?.categories.length ?? 0,
+              })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <ul className="flex flex-col gap-2" data-testid="journal-role-preset-preview">
@@ -332,7 +350,9 @@ function RolePresetPicker({
                   style={{ borderColor: row.color_hex, backgroundColor: row.color_hex }}
                 />
                 <span className="min-w-0">
-                  <span className="block text-sm text-foreground">{row.name}</span>
+                  <span className="block text-sm text-foreground">
+                    {categoryLabel(row.name, locale)}
+                  </span>
                   <span className="block text-xs text-muted-foreground">
                     {row.description}
                   </span>
@@ -346,7 +366,9 @@ function RolePresetPicker({
             </p>
           ) : null}
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={applying}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={applying}>
+              {t("settings.journal.preset.cancel")}
+            </AlertDialogCancel>
             <AlertDialogAction
               data-testid="journal-role-preset-apply"
               disabled={applying}
@@ -358,7 +380,7 @@ function RolePresetPicker({
                 if (pending) void apply(pending);
               }}
             >
-              Use these categories
+              {t("settings.journal.preset.apply")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -368,6 +390,8 @@ function RolePresetPicker({
 }
 
 function CategoriesEditor({ reloadKey = 0 }: { reloadKey?: number }) {
+  const t = useT();
+  const locale = useLocale();
   const [categories, setCategories] = useState<JournalCategory[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -419,10 +443,11 @@ function CategoriesEditor({ reloadKey = 0 }: { reloadKey?: number }) {
 
   return (
     <div className="px-4 py-3" data-testid="journal-categories">
-      <h3 className="text-sm font-medium text-foreground">Categories</h3>
+      <h3 className="text-sm font-medium text-foreground">
+        {t("settings.journal.categories.title")}
+      </h3>
       <p className="mt-0.5 text-xs text-muted-foreground">
-        The list the writer classifies each card against. System rows cannot be
-        renamed or removed.
+        {t("settings.journal.categories.description")}
       </p>
 
       {categories ? (
@@ -443,7 +468,7 @@ function CategoriesEditor({ reloadKey = 0 }: { reloadKey?: number }) {
 
       {categories === null && !error ? (
         <p className="mt-2 font-mono text-xs text-muted-foreground">
-          loading categories…
+          {t("settings.journal.categories.loading")}
         </p>
       ) : null}
 
@@ -456,7 +481,9 @@ function CategoriesEditor({ reloadKey = 0 }: { reloadKey?: number }) {
               data-testid={`journal-category-${category.id}`}
             >
               <Input
-                aria-label={`${category.id} name`}
+                aria-label={t("settings.journal.categories.nameAria", {
+                  id: category.id,
+                })}
                 value={category.name}
                 disabled={category.is_system}
                 className="h-9 w-32"
@@ -465,7 +492,9 @@ function CategoriesEditor({ reloadKey = 0 }: { reloadKey?: number }) {
                 }
               />
               <Input
-                aria-label={`${category.id} description`}
+                aria-label={t("settings.journal.categories.descriptionAria", {
+                  id: category.id,
+                })}
                 value={category.description}
                 disabled={category.is_system}
                 className="h-9 min-w-0 flex-1"
@@ -474,7 +503,9 @@ function CategoriesEditor({ reloadKey = 0 }: { reloadKey?: number }) {
                 }
               />
               <Input
-                aria-label={`${category.id} color`}
+                aria-label={t("settings.journal.categories.colorAria", {
+                  id: category.id,
+                })}
                 value={category.color_hex}
                 disabled={category.is_system}
                 className="h-9 w-24 font-mono"
@@ -489,13 +520,15 @@ function CategoriesEditor({ reloadKey = 0 }: { reloadKey?: number }) {
               />
               {category.is_system ? (
                 <span className="font-mono text-[10px] lowercase text-muted-foreground">
-                  system
+                  {t("settings.journal.categories.system")}
                 </span>
               ) : (
                 <Button
                   size="sm"
                   variant="ghost"
-                  aria-label={`remove ${category.name}`}
+                  aria-label={t("settings.journal.categories.remove", {
+                    name: categoryLabel(category.name, locale),
+                  })}
                   onClick={() => {
                     setSaved(false);
                     setCategories((rows) =>
@@ -543,7 +576,8 @@ function CategoriesEditor({ reloadKey = 0 }: { reloadKey?: number }) {
               });
             }}
           >
-            <Plus className="mr-1 h-3.5 w-3.5" /> Add category
+            <Plus className="mr-1 h-3.5 w-3.5" />{" "}
+            {t("settings.journal.categories.add")}
           </Button>
           <Button
             size="sm"
@@ -552,11 +586,11 @@ function CategoriesEditor({ reloadKey = 0 }: { reloadKey?: number }) {
             onClick={() => void save()}
           >
             {saving ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : null}
-            Save categories
+            {t("settings.journal.categories.save")}
           </Button>
           {saved ? (
             <span className="font-mono text-[10px] lowercase text-muted-foreground">
-              saved
+              {t("settings.journal.categories.saved")}
             </span>
           ) : null}
         </div>
@@ -567,6 +601,7 @@ function CategoriesEditor({ reloadKey = 0 }: { reloadKey?: number }) {
 
 export function JournalSettings() {
   const { settings, updateSettings } = useSettings();
+  const t = useT();
   // A role picked during onboarding before the engine was listening is applied
   // here, on the first settings open that finds it reachable.
   const rolePresetStatus = useRolePreset();
@@ -592,13 +627,15 @@ export function JournalSettings() {
     return () => controller.abort();
   }, []);
 
-  const regenerate = useCallback(async () => {
+  const regenerate = useCallback(async (translateFn: TranslateFn) => {
     setRegenerating(true);
     setRegenerateMessage(null);
     try {
       const result = await regenerateJournalDay(journalDayToday());
       setRegenerateMessage(
-        `${result.reset_windows} window${result.reset_windows === 1 ? "" : "s"} queued for rewrite.`,
+        translateFn("settings.journal.regenerate.queued", {
+          count: result.reset_windows,
+        }),
       );
     } catch (reason) {
       setRegenerateMessage(
@@ -612,19 +649,18 @@ export function JournalSettings() {
   return (
     <div className="space-y-5" data-testid="section-settings-journal">
       <p className="text-sm text-muted-foreground">
-        The journal writes a read-only day from what screenpipe captured. It runs
-        locally and calls whichever model preset you pick below.
+        {t("settings.journal.intro")}
       </p>
 
       <div className="border border-border bg-card">
         <SettingRow
-          title="Enable journal"
-          description="Turn the background writer on or off. Existing days stay readable."
+          title={t("settings.journal.enabled.title")}
+          description={t("settings.journal.enabled.description")}
         >
           <Switch
             data-testid="journal-enabled-toggle"
             checked={enabled}
-            aria-label="Enable journal"
+            aria-label={t("settings.journal.enabled.title")}
             onCheckedChange={(checked) =>
               void updateSettings({ journalEnabled: checked })
             }
@@ -632,16 +668,16 @@ export function JournalSettings() {
         </SettingRow>
 
         <SettingRow
-          title="Journal model"
-          description="The AI preset used to write cards. Local presets keep every call on this machine."
+          title={t("settings.journal.model.title")}
+          description={t("settings.journal.model.description")}
         >
           <div className="flex flex-col items-end gap-1">
             <AIPresetsSelector
               compact
               allowNone
-              noneLabel="use default preset"
+              noneLabel={t("settings.journal.model.none")}
               controlledPresetId={settings.journalAiPresetId ?? null}
-              triggerAriaLabel="Journal model"
+              triggerAriaLabel={t("settings.journal.model.title")}
               onControlledSelect={(preset) =>
                 void updateSettings({ journalAiPresetId: preset?.id ?? undefined })
               }
@@ -651,7 +687,10 @@ export function JournalSettings() {
                 data-testid="journal-status-model"
                 className="font-mono text-[10px] lowercase text-muted-foreground"
               >
-                using {journalStatus.preset.provider} · {journalStatus.preset.model}
+                {t("settings.journal.model.using", {
+                  provider: journalStatus.preset.provider,
+                  model: journalStatus.preset.model,
+                })}
               </span>
             ) : null}
           </div>
@@ -660,10 +699,11 @@ export function JournalSettings() {
 
       <div className="border border-border bg-card">
         <div className="border-b border-border px-4 py-3">
-          <h3 className="text-sm font-medium text-foreground">Work profile</h3>
+          <h3 className="text-sm font-medium text-foreground">
+            {t("settings.journal.profile.title")}
+          </h3>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            Given to the writer so it can name your projects instead of guessing.
-            Stored on this device.
+            {t("settings.journal.profile.description")}
           </p>
         </div>
         <WorkProfileEditor
@@ -678,24 +718,24 @@ export function JournalSettings() {
 
       <div className="border border-border bg-card">
         <SettingRow
-          title="Focus nudges"
-          description="Notify when work has diverged from your stated intention. Off by default."
+          title={t("settings.journal.nudges.title")}
+          description={t("settings.journal.nudges.description")}
         >
           <Switch
             data-testid="journal-nudges-toggle"
             checked={nudgesEnabled}
-            aria-label="Focus nudges"
+            aria-label={t("settings.journal.nudges.title")}
             onCheckedChange={(checked) =>
               void updateSettings({ focusNudgesEnabled: checked })
             }
           />
         </SettingRow>
         <SettingRow
-          title="Grace period"
-          description="How long a divergence must last before it is classified at all."
+          title={t("settings.journal.grace.title")}
+          description={t("settings.journal.grace.description")}
         >
           <select
-            aria-label="Grace period"
+            aria-label={t("settings.journal.grace.title")}
             data-testid="journal-grace-minutes"
             value={graceMinutes}
             onChange={(event) =>
@@ -705,10 +745,11 @@ export function JournalSettings() {
             }
             className="h-9 min-w-40 border border-border bg-background px-3 font-mono text-xs text-foreground outline-none transition-colors focus:border-foreground"
           >
-            <option value={5}>5 minutes</option>
-            <option value={10}>10 minutes</option>
-            <option value={20}>20 minutes</option>
-            <option value={30}>30 minutes</option>
+            {[5, 10, 20, 30].map((minutes) => (
+              <option key={minutes} value={minutes}>
+                {t("settings.journal.grace.option", { count: minutes })}
+              </option>
+            ))}
           </select>
         </SettingRow>
       </div>
@@ -717,11 +758,10 @@ export function JournalSettings() {
         <div className="flex items-center justify-between gap-6">
           <div className="min-w-0">
             <h3 className="text-sm font-medium text-foreground">
-              Regenerate today
+              {t("settings.journal.regenerate.title")}
             </h3>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              Queue today&apos;s windows to be written again. Cards are replaced as
-              each window finishes.
+              {t("settings.journal.regenerate.description")}
             </p>
           </div>
           <Button
@@ -729,12 +769,12 @@ export function JournalSettings() {
             variant="outline"
             data-testid="journal-regenerate"
             disabled={regenerating}
-            onClick={() => void regenerate()}
+            onClick={() => void regenerate(t)}
           >
             {regenerating ? (
               <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
             ) : null}
-            Regenerate today
+            {t("settings.journal.regenerate.title")}
           </Button>
         </div>
         {regenerateMessage ? (

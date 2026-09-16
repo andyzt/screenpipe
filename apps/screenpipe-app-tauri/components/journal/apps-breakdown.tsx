@@ -22,19 +22,21 @@ import React from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatMinutes, percentOf } from "@/lib/journal/format";
 import { appColor } from "@/lib/journal/week-layout";
+import { useLocale, useT } from "@/lib/i18n";
 import type { CardApp } from "@/lib/journal/types";
 import { cn } from "@/lib/utils";
 import { AppIcon } from "./app-icon";
 
 export function AppsBreakdown({
   apps,
-  title = "Apps",
+  title,
   palette,
   limit = 12,
   className,
   children,
 }: {
   apps: CardApp[];
+  /** Defaults to the localized "Apps". */
   title?: string;
   /** Week mode: colour the bars the same way the grid colours the blocks. */
   palette?: Map<string, string>;
@@ -43,6 +45,8 @@ export function AppsBreakdown({
   /** The week panel's per-day row, rendered under the list. */
   children?: React.ReactNode;
 }) {
+  const t = useT();
+  const locale = useLocale();
   const rows = [...(apps ?? [])]
     .filter((app) => app && app.minutes > 0)
     .sort((a, b) => b.minutes - a.minutes)
@@ -53,7 +57,7 @@ export function AppsBreakdown({
     <Card data-testid="journal-apps-breakdown" className={className}>
       <CardHeader className="pb-2">
         <CardTitle className="text-sm font-medium normal-case tracking-normal text-muted-foreground">
-          {title}
+          {title ?? t("apps.title")}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -62,7 +66,7 @@ export function AppsBreakdown({
             data-testid="journal-apps-empty"
             className="text-sm text-muted-foreground"
           >
-            No app has measured time here yet.
+            {t("apps.empty")}
           </p>
         ) : (
           <ul className="flex flex-col gap-2">
@@ -80,7 +84,7 @@ export function AppsBreakdown({
                       {app.name}
                     </span>
                     <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-                      {formatMinutes(app.minutes)}
+                      {formatMinutes(app.minutes, locale)}
                     </span>
                   </span>
                   <span
@@ -106,7 +110,9 @@ export function AppsBreakdown({
           </ul>
         )}
         {children}
-        <p className="text-xs text-muted-foreground">All figures estimated.</p>
+        <p className="text-xs text-muted-foreground">
+          {t("apps.allEstimated")}
+        </p>
       </CardContent>
     </Card>
   );

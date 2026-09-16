@@ -23,6 +23,7 @@ import {
   platform as osPlatform,
 } from "@tauri-apps/plugin-os";
 import { ParticleStream, ProgressSteps } from "./particle-stream";
+import { useT } from "@/lib/i18n";
 import { screenpipeWebBase } from "@/lib/web-url";
 import { onboardingFunnel } from "@/lib/analytics/onboarding-funnel";
 
@@ -146,6 +147,7 @@ async function readEngineHealth(
 }
 
 export default function EngineStartup({ handleNextSlide }: EngineStartupProps) {
+  const t = useT();
   const [state, setState] = useState<StartupState>("starting");
   const [serverStarted, setServerStarted] = useState(false);
   const [audioReady, setAudioReady] = useState(false);
@@ -737,14 +739,18 @@ export default function EngineStartup({ handleNextSlide }: EngineStartupProps) {
   };
 
   const progressSteps = [
-    { label: "engine", done: serverStarted, active: !serverStarted },
     {
-      label: "audio",
+      label: t("onboarding.engine.step.engine"),
+      done: serverStarted,
+      active: !serverStarted,
+    },
+    {
+      label: t("onboarding.engine.step.audio"),
       done: audioReady,
       active: serverStarted && !audioReady,
     },
     {
-      label: "vision",
+      label: t("onboarding.engine.step.vision"),
       done: visionReady,
       active: serverStarted && !visionReady && audioReady,
     },
@@ -793,7 +799,7 @@ export default function EngineStartup({ handleNextSlide }: EngineStartupProps) {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
             >
-              {bootPhase?.message ?? "starting engine..."}
+              {bootPhase?.message ?? t("onboarding.engine.starting")}
             </motion.p>
           )}
         </AnimatePresence>
@@ -803,8 +809,7 @@ export default function EngineStartup({ handleNextSlide }: EngineStartupProps) {
             reports it via the boot-phase snapshot. */}
         {bootPhase?.cpuCompatMode && (
           <p className="font-mono text-[10px] text-muted-foreground/60 mt-2 max-w-[360px] text-center">
-            compatibility mode: this CPU lacks AVX2 — local whisper
-            transcription is unavailable (cloud + parakeet engines still work)
+            {t("onboarding.engine.cpuCompat")}
           </p>
         )}
 
@@ -822,7 +827,7 @@ export default function EngineStartup({ handleNextSlide }: EngineStartupProps) {
               {spawnErrorKind === "port_conflict" ? (
                 <>
                   <p className="font-mono text-sm text-foreground text-center">
-                    port conflict — cannot start recording.
+                    {t("onboarding.engine.portConflict")}
                   </p>
                   <p className="font-mono text-[11px] text-muted-foreground text-center leading-relaxed break-words">
                     {spawnError}
@@ -855,7 +860,7 @@ export default function EngineStartup({ handleNextSlide }: EngineStartupProps) {
                       }}
                       className="font-mono text-xs h-8 px-3"
                     >
-                      retry
+                      {t("onboarding.engine.retry")}
                     </Button>
                     <Button
                       variant="outline"
@@ -863,7 +868,7 @@ export default function EngineStartup({ handleNextSlide }: EngineStartupProps) {
                       onClick={handleContinueWithoutRecording}
                       className="font-mono text-xs h-8 px-3"
                     >
-                      continue without recording
+                      {t("onboarding.engine.continueWithout")}
                     </Button>
                   </div>
                   <div className="flex items-center gap-3">
@@ -873,7 +878,7 @@ export default function EngineStartup({ handleNextSlide }: EngineStartupProps) {
                       onClick={openLogsFolder}
                       className="font-mono text-[10px] h-7 px-2"
                     >
-                      logs
+                      {t("onboarding.engine.logs")}
                     </Button>
                     <Button
                       variant="outline"
@@ -883,24 +888,22 @@ export default function EngineStartup({ handleNextSlide }: EngineStartupProps) {
                       }
                       className="font-mono text-[10px] h-7 px-2"
                     >
-                      <Calendar className="w-3 h-3 mr-1" /> help
+                      <Calendar className="w-3 h-3 mr-1" />{" "}
+                      {t("onboarding.engine.help")}
                     </Button>
                   </div>
                 </>
               ) : spawnErrorKind === "permission" ? (
                 <>
                   <p className="font-mono text-sm text-foreground text-center">
-                    screen recording permission is required.
+                    {t("onboarding.engine.permissionRequired")}
                   </p>
                   <p className="font-mono text-[11px] text-muted-foreground text-center leading-relaxed">
-                    macOS tracks this permission per app signature. if you
-                    switched between prod / beta / dev builds, your previous
-                    grant doesn&apos;t carry over — each bundle id has its own
-                    record.
+                    {t("onboarding.engine.permissionBody")}
                   </p>
                   {bundleId && (
                     <p className="font-mono text-[10px] text-muted-foreground/60 text-center">
-                      currently running as:{" "}
+                      {t("onboarding.engine.runningAsCurrent")}{" "}
                       <span className="text-foreground/80">{bundleId}</span>
                     </p>
                   )}
@@ -912,7 +915,7 @@ export default function EngineStartup({ handleNextSlide }: EngineStartupProps) {
                       }
                       className="font-mono text-xs h-8 px-3"
                     >
-                      open system settings →
+                      {t("onboarding.engine.openSystemSettings")}
                     </Button>
                     <Button
                       variant="outline"
@@ -924,7 +927,7 @@ export default function EngineStartup({ handleNextSlide }: EngineStartupProps) {
                       {isResettingPerm ? (
                         <Loader className="w-3 h-3 animate-spin" />
                       ) : (
-                        "reset & re-request"
+                        t("onboarding.engine.resetPermission")
                       )}
                     </Button>
                   </div>
@@ -934,21 +937,21 @@ export default function EngineStartup({ handleNextSlide }: EngineStartupProps) {
                     }
                     className="font-mono text-[10px] text-muted-foreground hover:text-foreground transition-colors underline underline-offset-4"
                   >
-                    troubleshooting guide ↗
+                    {t("onboarding.engine.troubleshooting")}
                   </button>
                 </>
               ) : (
                 spawnError && (
                   <>
                     <p className="font-mono text-sm text-foreground text-center">
-                      engine failed to start.
+                      {t("onboarding.engine.failed")}
                     </p>
                     <p className="font-mono text-[11px] text-muted-foreground text-center leading-relaxed break-words">
                       {spawnError}
                     </p>
                     {bundleId && (
                       <p className="font-mono text-[10px] text-muted-foreground/60 text-center">
-                        running as:{" "}
+                        {t("onboarding.engine.runningAs")}{" "}
                         <span className="text-foreground/80">{bundleId}</span>
                       </p>
                     )}
@@ -960,7 +963,7 @@ export default function EngineStartup({ handleNextSlide }: EngineStartupProps) {
                 data-testid="onboarding-startup-skip"
                 className="font-mono text-xs text-muted-foreground hover:text-foreground transition-colors underline underline-offset-4"
               >
-                continue without recording →
+                {t("onboarding.engine.continueWithoutArrow")}
               </button>
               <div className="flex items-center gap-3">
                 <Button
@@ -969,7 +972,7 @@ export default function EngineStartup({ handleNextSlide }: EngineStartupProps) {
                   onClick={openLogsFolder}
                   className="font-mono text-[10px] h-7 px-2"
                 >
-                  logs
+                  {t("onboarding.engine.logs")}
                 </Button>
                 <Button
                   variant="outline"
@@ -982,11 +985,13 @@ export default function EngineStartup({ handleNextSlide }: EngineStartupProps) {
                     <Loader className="w-3 h-3 animate-spin" />
                   ) : logsSent ? (
                     <>
-                      <Check className="w-3 h-3 mr-1" /> sent
+                      <Check className="w-3 h-3 mr-1" />{" "}
+                      {t("onboarding.engine.logsSent")}
                     </>
                   ) : (
                     <>
-                      <Upload className="w-3 h-3 mr-1" /> send logs
+                      <Upload className="w-3 h-3 mr-1" />{" "}
+                      {t("onboarding.engine.sendLogs")}
                     </>
                   )}
                 </Button>
@@ -998,7 +1003,8 @@ export default function EngineStartup({ handleNextSlide }: EngineStartupProps) {
                   }
                   className="font-mono text-[10px] h-7 px-2"
                 >
-                  <Calendar className="w-3 h-3 mr-1" /> help
+                  <Calendar className="w-3 h-3 mr-1" />{" "}
+                  {t("onboarding.engine.help")}
                 </Button>
               </div>
             </motion.div>

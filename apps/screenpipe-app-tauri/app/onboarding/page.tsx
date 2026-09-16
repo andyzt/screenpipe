@@ -33,6 +33,7 @@ import {
   TRIAL_ACTIVATION_UNLOCKED_STEP,
 } from "@/lib/first-run/trial-activation";
 import { readOnboardingCheckoutStatus } from "@/lib/onboarding-checkout-navigation";
+import { useT } from "@/lib/i18n";
 
 // "login" is gone: this build has no screenpipe account. Saved installs that
 // stopped on it resume at acquisition.
@@ -248,13 +249,13 @@ const EndowedProgress = ({
   step: number;
   total: number;
   sub?: { done: number; total: number } | null;
-}) => (
+}) => {
+  const t = useT();
+  return (
   <div className="w-full max-w-sm mx-auto mb-[22px]">
     <div className="flex justify-between font-mono text-[9px] lowercase tracking-[0.04em] text-muted-foreground mb-[5px]">
-      <span>setup</span>
-      <span>
-        {step} of {total}
-      </span>
+      <span>{t("onboarding.setup")}</span>
+      <span>{t("onboarding.stepOf", { step, total })}</span>
     </div>
     <div className="flex gap-[3px]">
       {Array.from({ length: total }, (_, i) =>
@@ -288,7 +289,8 @@ const EndowedProgress = ({
       )}
     </div>
   </div>
-);
+  );
+};
 
 // Corrective only: Rust already builds the window at this size. It still runs
 // so a window left at an old per-slide size — an install that upgraded midway
@@ -303,6 +305,7 @@ const applyOnboardingWindowSize = async () => {
 };
 
 export default function OnboardingPage() {
+  const t = useT();
   const router = useRouter();
   const { toast } = useToast();
   const [checkoutReturnStatus] = useState(() =>
@@ -812,7 +815,7 @@ export default function OnboardingPage() {
         >
           <div className="h-6 w-6 animate-spin rounded-full border border-foreground border-t-transparent" />
           <p className="font-mono text-[11px] text-muted-foreground">
-            preparing your setup
+            {t("onboarding.preparing")}
           </p>
         </div>
       </div>

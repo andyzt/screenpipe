@@ -30,14 +30,16 @@ import React from "react";
 import { MonitorPlay, NotebookPen, Plug, Settings as SettingsIcon } from "lucide-react";
 
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useT } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { RAIL_SECTIONS, type RailSectionId } from "@/lib/journal-shell";
 import type { SidebarNavId } from "@/lib/utils/sidebar-nav-layout";
 
-const RAIL_DEFS: Record<RailSectionId, { label: string; icon: React.ReactNode }> = {
-  journal: { label: "Journal", icon: <NotebookPen className="size-4" /> },
-  timeline: { label: "Timeline", icon: <MonitorPlay className="size-4" /> },
-  connections: { label: "Connections", icon: <Plug className="size-4" /> },
+/** Icon per destination; the label is looked up per render, under `rail.*`. */
+const RAIL_DEFS: Record<RailSectionId, { icon: React.ReactNode }> = {
+  journal: { icon: <NotebookPen className="size-4" /> },
+  timeline: { icon: <MonitorPlay className="size-4" /> },
+  connections: { icon: <Plug className="size-4" /> },
 };
 
 function RailButton({
@@ -102,11 +104,12 @@ export function JournalRail({
   /** Recording status and anything else that belongs at the foot. */
   trailing?: React.ReactNode;
 }) {
+  const t = useT();
   const items = RAIL_SECTIONS.filter((id) => visibleIds.includes(id));
 
   return (
     <nav
-      aria-label="sections"
+      aria-label={t("rail.sections")}
       data-testid="journal-rail"
       // `pt-10` clears the macOS traffic lights, which this build no longer
       // covers with a floating chrome strip.
@@ -117,7 +120,7 @@ export function JournalRail({
           <RailButton
             key={id}
             id={id}
-            label={RAIL_DEFS[id].label}
+            label={t(`rail.${id}`)}
             icon={RAIL_DEFS[id].icon}
             active={activeSection === id}
             onClick={() => onSelect(id)}
@@ -131,7 +134,7 @@ export function JournalRail({
         {trailing}
         <RailButton
           id="settings"
-          label="Settings"
+          label={t("rail.settings")}
           icon={<SettingsIcon className="size-4" />}
           active={settingsActive}
           onClick={onOpenSettings}

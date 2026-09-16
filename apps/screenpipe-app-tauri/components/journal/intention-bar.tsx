@@ -22,6 +22,7 @@ import {
   fetchActiveIntention,
 } from "@/lib/journal/api";
 import { formatClock } from "@/lib/journal/format";
+import { useLocale, useT } from "@/lib/i18n";
 import type { Intention } from "@/lib/journal/types";
 
 export function IntentionBar({
@@ -35,6 +36,8 @@ export function IntentionBar({
   focusRequest?: boolean;
   onFocusRequestHandled?: () => void;
 }) {
+  const t = useT();
+  const locale = useLocale();
   const [intention, setIntention] = useState<Intention | null>(null);
   const [title, setTitle] = useState("");
   const [project, setProject] = useState("");
@@ -120,12 +123,14 @@ export function IntentionBar({
 
   return (
     <section
-      aria-label="current intention"
+      aria-label={t("intention.aria")}
       data-testid="journal-intention-bar"
     >
       {intention ? (
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-sm text-muted-foreground">Working on</span>
+          <span className="text-sm text-muted-foreground">
+            {t("intention.workingOn")}
+          </span>
           <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
             {intention.title}
             {intention.project ? (
@@ -136,7 +141,9 @@ export function IntentionBar({
             ) : null}
           </span>
           <span className="text-xs tabular-nums text-muted-foreground">
-            since {formatClock(intention.started_at)}
+            {t("intention.since", {
+              time: formatClock(intention.started_at, locale),
+            })}
           </span>
           <Button
             size="sm"
@@ -144,7 +151,7 @@ export function IntentionBar({
             disabled={busy}
             onClick={() => void end()}
           >
-            End
+            {t("intention.end")}
           </Button>
         </div>
       ) : (
@@ -156,7 +163,7 @@ export function IntentionBar({
             htmlFor="journal-intention-title"
             className="text-sm text-muted-foreground"
           >
-            Working on
+            {t("intention.workingOn")}
           </label>
           <Input
             ref={titleRef}
@@ -164,15 +171,15 @@ export function IntentionBar({
             data-testid="journal-intention-title"
             value={title}
             onChange={(event) => setTitle(event.target.value)}
-            placeholder="what are you working on"
+            placeholder={t("intention.titlePlaceholder")}
             className="h-9 min-w-0 flex-1"
           />
           <Input
-            aria-label="project"
+            aria-label={t("intention.projectAria")}
             data-testid="journal-intention-project"
             value={project}
             onChange={(event) => setProject(event.target.value)}
-            placeholder="project (optional)"
+            placeholder={t("intention.projectPlaceholder")}
             className="h-9 w-36"
           />
           <Button
@@ -181,7 +188,7 @@ export function IntentionBar({
             data-testid="journal-intention-set"
             disabled={busy || title.trim().length === 0}
           >
-            Set
+            {t("intention.set")}
           </Button>
         </form>
       )}

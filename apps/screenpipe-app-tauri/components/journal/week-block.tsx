@@ -26,6 +26,12 @@ import {
   tint,
   type WeekBlockGeometry,
 } from "@/lib/journal/week-layout";
+import {
+  categoryLabel,
+  translate,
+  useLocale,
+  type Locale,
+} from "@/lib/i18n";
 import type { ActivityCard } from "@/lib/journal/types";
 import { cn } from "@/lib/utils";
 import { AppIcon } from "./app-icon";
@@ -35,12 +41,19 @@ export type WeekColorMode = "category" | "apps";
 /** Horizontal breathing room, so two columns of blocks never touch. */
 const BLOCK_INSET_PX = 3;
 
-export function weekBlockTooltip(card: ActivityCard): string {
+export function weekBlockTooltip(
+  card: ActivityCard,
+  locale: Locale = "en",
+): string {
   const parts = [
-    `${formatClock(card.start_at)}–${formatClock(card.end_at)}`,
-    card.title || (card.category.is_idle ? "Idle" : "Untitled"),
-    formatEstimate(card.active_minutes),
-    card.category.name,
+    `${formatClock(card.start_at, locale)}–${formatClock(card.end_at, locale)}`,
+    card.title ||
+      translate(
+        locale,
+        card.category.is_idle ? "inspector.idle" : "inspector.untitled",
+      ),
+    formatEstimate(card.active_minutes, locale),
+    categoryLabel(card.category.name, locale),
   ];
   const apps = (card.apps ?? []).map((app) => app.name).join(", ");
   if (apps) parts.push(apps);
@@ -85,13 +98,14 @@ export function WeekBlock({
   palette: Map<string, string>;
   onSelect: (id: number) => void;
 }) {
+  const locale = useLocale();
   const colors = weekBlockColors(card, mode, palette);
   const widthPct = 100 / Math.max(1, columnCount);
   const leftPct = widthPct * column;
   const apps = card.apps ?? [];
   const shown = apps.slice(0, WEEK_MAX_BLOCK_ICONS);
   const overflow = apps.length - shown.length;
-  const tooltip = weekBlockTooltip(card);
+  const tooltip = weekBlockTooltip(card, locale);
 
   return (
     <button
@@ -140,7 +154,7 @@ export function WeekBlock({
       ) : null}
       {geometry.tier !== "bar" && shown.length === 0 ? (
         <span className="block truncate text-[11px] leading-[18px] text-muted-foreground">
-          {card.category.is_idle ? "Idle" : card.title}
+          {card.category.is_idle ? translate(locale, "canvas.idle") : card.title}
         </span>
       ) : null}
       {geometry.tier === "full" ? (
@@ -148,7 +162,8 @@ export function WeekBlock({
           data-testid="journal-week-block-clock"
           className="mt-[2px] block truncate text-[10px] leading-[13px] tabular-nums text-muted-foreground"
         >
-          {formatClock(card.start_at)}–{formatClock(card.end_at)}
+          {formatClock(card.start_at, locale)}–
+          {formatClock(card.end_at, locale)}
         </span>
       ) : null}
     </button>

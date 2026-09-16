@@ -9,7 +9,15 @@ import { commands } from "@/lib/utils/tauri";
 import { useTheme } from "@/components/theme-provider";
 import { Switch } from "@/components/ui/switch";
 import { Card, CardContent } from "@/components/ui/card";
-import { Moon, Sun, Monitor, Layers, MessageSquare, PanelLeft, Maximize2, EyeOff, MinusSquare, Type, CalendarClock } from "lucide-react";
+import { Moon, Sun, Monitor, Layers, MessageSquare, PanelLeft, Maximize2, EyeOff, MinusSquare, Type, CalendarClock, Languages } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { LOCALE_SETTINGS, useT, type LocaleSetting } from "@/lib/i18n";
 import { usePlatform } from "@/lib/hooks/use-platform";
 import { HelpTooltip } from "@/components/ui/help-tooltip";
 import { useToast } from "@/components/ui/use-toast";
@@ -31,6 +39,7 @@ import {
 /** Settings search index for this section. Co-located with the component so adding a field here means updating one file. See `SettingsField` in `./settings-search` for the schema. */
 export const searchIndex: SettingsField[] = [
   { label: "Theme", keywords: ["dark", "light", "appearance"] },
+  { label: "Language / Язык", keywords: ["language", "locale", "russian", "русский", "язык", "english"] },
   { label: "Font Size" },
   { label: "Chat Always on Top", keywords: ["pin", "window"] },
   { label: "Shortcut Reminder", keywords: ["overlay", "pill", "pin", "drag", "position"] },
@@ -41,11 +50,50 @@ export const searchIndex: SettingsField[] = [
   { label: "Meetings in Sidebar", keywords: ["meeting", "meetings", "sidebar", "toolbar", "nav", "navigation", "icon", "reorder", "customize"] },
 ];
 
+/**
+ * The one language control, shared by Settings → Appearance and the corner of
+ * the first onboarding step.
+ *
+ * It writes `settings.uiLanguage` and nothing else: `LocaleProvider` reads that
+ * key, so the whole tree re-renders in the new language on the next commit —
+ * no reload, no restart.
+ */
+export function LanguageSelect({ compact = false }: { compact?: boolean }) {
+  const { settings, updateSettings } = useSettings();
+  const t = useT();
+  const value: LocaleSetting = settings?.uiLanguage ?? "system";
+
+  return (
+    <Select
+      value={value}
+      onValueChange={(next) =>
+        void updateSettings({ uiLanguage: next as LocaleSetting })
+      }
+    >
+      <SelectTrigger
+        aria-label={t("settings.appearance.language")}
+        data-testid="ui-language-select"
+        className={compact ? "h-7 w-[136px] text-xs" : "h-9 w-48"}
+      >
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {LOCALE_SETTINGS.map((option) => (
+          <SelectItem key={option} value={option}>
+            {t(`settings.language.${option}`)}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
 export function DisplaySection() {
   const { settings, updateSettings } = useSettings();
   const { theme, setTheme } = useTheme();
   const { toast } = useToast();
   const { isMac, isWindows } = usePlatform();
+  const t = useT();
   // Guards the Disable-Timeline toggle against double-invoke (rapid toggle /
   // re-render) so we never fire two overlapping screenpipe restarts.
   const timelineRestartingRef = React.useRef(false);
@@ -116,6 +164,29 @@ export function DisplaySection() {
                     </label>
                   );
                 })}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Language sits directly under Theme: both are "how the app looks to
+            me", and a Russian speaker who cannot read the section needs the
+            picker where the eye lands first. The English label carries «Язык»
+            so it is findable before the switch has been made. */}
+        <Card className="border-border bg-card">
+          <CardContent className="px-3 py-2.5">
+            <div className="space-y-2.5">
+              <div className="flex items-center space-x-2.5">
+                <Languages className="h-4 w-4 text-muted-foreground shrink-0" />
+                <h3 className="text-sm font-medium text-foreground">
+                  {t("settings.appearance.language")}
+                </h3>
+              </div>
+              <div className="ml-[26px] flex items-center gap-3">
+                <LanguageSelect />
+                <span className="text-xs text-muted-foreground">
+                  {t("settings.appearance.languageHint")}
+                </span>
               </div>
             </div>
           </CardContent>

@@ -37,6 +37,7 @@ import {
   formatEstimate,
   relationLabel,
 } from "@/lib/journal/format";
+import { categoryLabel, useLocale, useT } from "@/lib/i18n";
 import type { ActivityCard, JournalDay } from "@/lib/journal/types";
 
 function openJournalSettings() {
@@ -63,8 +64,10 @@ function CardDetail({
   card: ActivityCard;
   onClose: () => void;
 }) {
-  const relation = relationLabel(card.intention_relation);
-  const confidence = categoryConfidenceLabel(card.category_confidence);
+  const t = useT();
+  const locale = useLocale();
+  const relation = relationLabel(card.intention_relation, locale);
+  const confidence = categoryConfidenceLabel(card.category_confidence, locale);
   const apps = [card.app_primary, card.app_secondary].filter(Boolean).join(" · ");
 
   return (
@@ -76,11 +79,14 @@ function CardDetail({
       <CardHeader className="flex-row items-start justify-between gap-2 space-y-0 p-0">
         <div className="min-w-0 space-y-1.5">
           <CardTitle className="text-lg font-semibold normal-case tracking-tight">
-            {card.title || (card.category.is_idle ? "Idle" : "Untitled")}
+            {card.title ||
+              (card.category.is_idle
+                ? t("inspector.idle")
+                : t("inspector.untitled"))}
           </CardTitle>
           <CardDescription>
-            {formatClockRange(card.start_at, card.end_at)} ·{" "}
-            {formatEstimate(card.active_minutes)}
+            {formatClockRange(card.start_at, card.end_at, locale)} ·{" "}
+            {formatEstimate(card.active_minutes, locale)}
           </CardDescription>
         </div>
         <Button
@@ -89,7 +95,7 @@ function CardDetail({
           data-testid="journal-inspector-close"
           onClick={onClose}
         >
-          Close
+          {t("inspector.close")}
         </Button>
       </CardHeader>
 
@@ -107,7 +113,7 @@ function CardDetail({
             className="size-2 shrink-0 rounded-full"
             style={{ backgroundColor: card.category.color_hex }}
           />
-          {card.category.name}
+          {categoryLabel(card.category.name, locale)}
           {confidence ? (
             <span
               data-testid="journal-card-category-confidence"
@@ -122,24 +128,26 @@ function CardDetail({
           data-testid="journal-card-state"
           className="font-normal text-muted-foreground"
         >
-          {card.state === "provisional" ? "draft — still being revised" : "final"}
+          {card.state === "provisional"
+            ? t("inspector.stateDraft")
+            : t("inspector.stateFinal")}
         </Badge>
       </div>
 
       {card.summary ? (
-        <Line label="Summary">
+        <Line label={t("inspector.summary")}>
           <p>{card.summary}</p>
         </Line>
       ) : null}
 
       {card.detailed_summary ? (
-        <Line label="Detailed summary">
+        <Line label={t("inspector.detailedSummary")}>
           <p className="whitespace-pre-wrap">{card.detailed_summary}</p>
         </Line>
       ) : null}
 
       {relation ? (
-        <Line label="Against your intention">
+        <Line label={t("inspector.againstIntention")}>
           <Badge
             variant="secondary"
             data-testid="journal-card-relation"
@@ -155,13 +163,13 @@ function CardDetail({
       ) : null}
 
       {apps ? (
-        <Line label="Apps">
+        <Line label={t("inspector.apps")}>
           <span>{apps}</span>
         </Line>
       ) : null}
 
       {card.distractions.length > 0 ? (
-        <Line label="Detours">
+        <Line label={t("inspector.detours")}>
           <ul
             data-testid="journal-card-distractions"
             className="flex flex-col gap-1.5"
@@ -169,7 +177,7 @@ function CardDetail({
             {card.distractions.map((detour) => (
               <li key={`${detour.start_at}-${detour.title}`} className="text-sm">
                 <span className="tabular-nums text-muted-foreground">
-                  {formatClockRange(detour.start_at, detour.end_at)}
+                  {formatClockRange(detour.start_at, detour.end_at, locale)}
                 </span>{" "}
                 <span className="text-foreground">{detour.title}</span>
                 {detour.summary ? <span> — {detour.summary}</span> : null}
@@ -195,6 +203,8 @@ function DaySummary({
   showNow: boolean;
   nowRefreshToken: number;
 }) {
+  const t = useT();
+  const locale = useLocale();
   const provisional = day.activities.filter(
     (card) => card.state === "provisional",
   ).length;
@@ -206,10 +216,10 @@ function DaySummary({
       {day.activities.length === 0 ? (
         <div data-testid="journal-empty" className="flex flex-col gap-1">
           <p className="text-sm font-medium text-foreground">
-            {dataStatusCopy(day.data_status).title}
+            {dataStatusCopy(day.data_status, locale).title}
           </p>
           <p className="text-sm text-muted-foreground">
-            {dataStatusCopy(day.data_status).body}
+            {dataStatusCopy(day.data_status, locale).body}
           </p>
         </div>
       ) : null}
@@ -218,7 +228,7 @@ function DaySummary({
 
       {provisional > 0 ? (
         <p data-testid="journal-provisional-count" className="text-xs text-muted-foreground">
-          provisional cards: {provisional} — still inside the rewrite horizon
+          {t("inspector.provisional", { count: provisional })}
         </p>
       ) : null}
 
@@ -228,11 +238,10 @@ function DaySummary({
           className="flex flex-col items-start gap-2 rounded-lg border border-border p-3"
         >
           <p className="text-sm font-medium text-foreground">
-            No model is configured for the journal
+            {t("inspector.noPreset.title")}
           </p>
           <p className="text-sm text-muted-foreground">
-            {day.generation.provider_message ??
-              "pick an ai preset the journal can use. until then the day shows only what was measured, without written cards."}
+            {day.generation.provider_message ?? t("inspector.noPreset.body")}
           </p>
           <Button
             size="sm"
@@ -240,14 +249,14 @@ function DaySummary({
             data-testid="journal-open-settings"
             onClick={openJournalSettings}
           >
-            Open journal settings
+            {t("inspector.openJournalSettings")}
           </Button>
         </div>
       ) : null}
 
       {day.generation.last_error ? (
         <p className="text-xs text-muted-foreground">
-          last generation error: {day.generation.last_error}
+          {t("inspector.lastError", { error: day.generation.last_error })}
         </p>
       ) : null}
     </div>
@@ -269,10 +278,11 @@ export function DayInspector({
   /** Bumped when the intention changes, so the strip re-reads immediately. */
   nowRefreshToken?: number;
 }) {
+  const t = useT();
   return (
     <aside
       data-testid="journal-inspector"
-      aria-label={selected ? "selected card" : "day summary"}
+      aria-label={selected ? t("inspector.cardAria") : t("inspector.dayAria")}
       className="journal-scroll w-full shrink-0 overflow-y-auto rounded-lg border border-border bg-card p-4 text-card-foreground shadow-sm min-[1100px]:h-[calc(100vh-8rem)] min-[1100px]:min-h-[420px] min-[1100px]:w-[380px]"
     >
       {selected ? (
