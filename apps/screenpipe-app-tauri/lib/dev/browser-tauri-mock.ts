@@ -156,6 +156,7 @@ const BROWSER_DEV_TEMPLATE_KITS: BrainViewTemplateKit[] = [
 const NOOP_COMMANDS = new Set([
   "close_window",
   "complete_onboarding",
+  "set_onboarding_step",
   "confirm_browser_cookie_access_for_session",
   "ensure_webview_focus",
   "open_login_window",
@@ -937,6 +938,23 @@ export function createBrowserIpcMock(options: BrowserIpcMockOptions) {
       case "is_enterprise_build_cmd":
       case "is_capture_paused":
         return false;
+      // Onboarding in the browser mock: a fresh, unfinished record. Without
+      // it the page waits forever on a status that never arrives, so
+      // `/onboarding` could not be opened at all in the mock loop.
+      case "get_onboarding_status":
+        return {
+          isCompleted: false,
+          completedAt: null,
+          currentStep: null,
+          firstRunSummaryPhase: "idle",
+          firstRunSummaryStartedAt: null,
+          firstRunSummaryChatId: null,
+          firstRunSummaryNotificationSentAt: null,
+          firstRunSummaryNotificationId: null,
+          firstRunSummaryError: null,
+          firstRunSummaryTelemetryVersion: 0,
+          trialActivationFreshInstall: false,
+        };
       case "do_permissions_check":
         return {
           screenRecording: "granted",

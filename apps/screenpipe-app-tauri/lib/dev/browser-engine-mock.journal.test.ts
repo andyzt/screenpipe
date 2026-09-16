@@ -15,6 +15,7 @@ import {
   type BrowserDevScenario,
 } from "./browser-engine-mock";
 import { mondayOf, weekDays } from "@/lib/journal/week-layout";
+import { applyPreset, findRolePreset } from "@/lib/journal/category-presets";
 
 /** The journal's own today, honouring the 04:00 boundary the mock uses. */
 function today(): string {
@@ -315,5 +316,51 @@ describe("browser mock journal routes", () => {
   it("fails every journal route in the backend-error scenario", () => {
     expect(get("/journal/day", "backend-error").status).toBe(503);
     expect(get("/focus/status", "backend-error").status).toBe(503);
+  });
+
+  // Settings and onboarding both replace the whole editable list with a role
+  // preset. The mock has to answer that the way the engine does, or the
+  // preset UI looks like it worked while the day below it keeps the old
+  // colours.
+  it("echoes a role preset and recolours the day from it", async () => {
+    const preset = findRolePreset("software-engineer")!;
+    const before = await json<any>(get("/journal/categories"));
+    const response = mockLocalApiResponse(
+      new URL("http://localhost:3030/journal/categories"),
+      {
+        method: "PUT",
+        body: JSON.stringify({
+          categories: applyPreset(before.categories, preset),
+        }),
+      },
+      "ready",
+    );
+
+    const after = await json<any>(response);
+    expect(after.categories.map((c: any) => c.name)).toEqual([
+      ...preset.categories.map((row) => row.name),
+      "Idle",
+    ]);
+    expect(after.categories.map((c: any) => c.sort_order)).toEqual(
+      after.categories.map((_: unknown, index: number) => index),
+    );
+    // A re-read returns the same list, not the seed.
+    const reread = await json<any>(get("/journal/categories"));
+    expect(reread.categories).toEqual(after.categories);
+
+    const colours = new Map<string, string>(
+      after.categories.map((c: any) => [c.id, c.color_hex]),
+    );
+    const day = await json<any>(get("/journal/day"));
+    expect(day.totals.by_category.length).toBeGreaterThan(0);
+    for (const row of day.totals.by_category) {
+      expect(colours.get(row.category_id)).toBe(row.color_hex);
+    }
+    for (const card of day.activities) {
+      expect(colours.get(card.category.id)).toBe(card.category.color_hex);
+    }
+    expect(
+      day.totals.by_category.some((row: any) => row.name === "Coding / Debugging"),
+    ).toBe(true);
   });
 });

@@ -10,6 +10,7 @@ import { useToast } from "@/components/ui/use-toast";
 import AcquisitionStep from "@/components/onboarding/acquisition-step";
 import PermissionsStep from "@/components/onboarding/permissions-step";
 import TimelineChoice from "@/components/onboarding/timeline-choice";
+import RoleStep from "@/components/onboarding/role-step";
 import EngineStartup from "@/components/onboarding/engine-startup";
 import PlanSelectionStep from "@/components/onboarding/plan-selection-step";
 import FinalSetupStep from "@/components/onboarding/final-setup-step";
@@ -39,6 +40,7 @@ type SlideKey =
   | "acquisition"
   | "permissions"
   | "timeline"
+  | "role"
   | "engine"
   | "plan"
   | "recommended-setup";
@@ -210,10 +212,14 @@ function TrialActivationFlagAssignment({
 
 // When shown, the timeline choice sits before "engine" so disableTimeline is
 // persisted before the engine spawns and reads it — no restart needed.
+// "role" sits after the capture questions and before the engine: it only
+// writes settings, and the journal categories it implies are applied later by
+// `lib/journal/use-role-preset.ts` once the engine this step precedes is up.
 const SLIDE_ORDER: SlideKey[] = [
   "acquisition",
   "permissions",
   "timeline",
+  "role",
   "engine",
   "plan",
   "recommended-setup",
@@ -308,8 +314,19 @@ export default function OnboardingPage() {
     if (!checkoutReturnStatus) return;
     window.sessionStorage.removeItem(TRIAL_ACTIVATION_CHECKOUT_STATE_KEY);
   }, [checkoutReturnStatus]);
-  const [currentSlide, setCurrentSlide] = useState<SlideKey>(() =>
-    checkoutReturnStatus ? "plan" : "acquisition",
+  // Development-only, browser mock builds: `/onboarding?step=role` opens on
+  // that slide so one step can be screenshotted without driving the whole
+  // flow. Read once, and never in a packaged app.
+  const [devStepRequest] = useState<SlideKey | null>(() => {
+    if (!process.env.NEXT_PUBLIC_SCREENPIPE_WEB_DEV) return null;
+    if (typeof window === "undefined") return null;
+    const requested = new URLSearchParams(window.location.search).get("step");
+    return SLIDE_ORDER.includes(requested as SlideKey)
+      ? (requested as SlideKey)
+      : null;
+  });
+  const [currentSlide, setCurrentSlide] = useState<SlideKey>(
+    () => devStepRequest ?? (checkoutReturnStatus ? "plan" : "acquisition"),
   );
   const [isVisible, setIsVisible] = useState(true);
   const [isTransitioning, setIsTransitioning] = useState(false);
@@ -447,6 +464,9 @@ export default function OnboardingPage() {
     const init = async () => {
       const { loadOnboardingStatus } = useOnboarding.getState();
       await loadOnboardingStatus();
+      // The dev step request owns the slide; the status above still has to be
+      // loaded, because the page waits on it before rendering anything.
+      if (devStepRequest) return;
       const { onboardingData } = useOnboarding.getState();
       const returnsToTrialActivation =
         onboardingData.currentStep === TRIAL_ACTIVATION_PAYWALL_STEP;
@@ -481,6 +501,7 @@ export default function OnboardingPage() {
           acquisition: "acquisition",
           permissions: "permissions",
           timeline: "timeline",
+          role: "role",
           engine: "engine",
           plan: "plan",
           "recommended-setup": "recommended-setup",
@@ -527,6 +548,7 @@ export default function OnboardingPage() {
     init();
   }, [
     checkoutReturnStatus,
+    devStepRequest,
     isManagedDeployment,
     isManagedDeploymentResolved,
     isSettingsLoaded,
@@ -829,6 +851,9 @@ export default function OnboardingPage() {
           )}
           {currentSlide === "timeline" && (
             <TimelineChoice handleNextSlide={handleNextSlide} />
+          )}
+          {currentSlide === "role" && (
+            <RoleStep handleNextSlide={handleNextSlide} />
           )}
           {currentSlide === "engine" && (
             <EngineStartup handleNextSlide={handleNextSlide} />

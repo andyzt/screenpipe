@@ -38,6 +38,7 @@ import { IntentionBar } from "./intention-bar";
 import { SegmentedToggle, WeekView, type JournalViewMode } from "./week-view";
 import { mondayOf } from "@/lib/journal/week-layout";
 import { fetchJournalDay } from "@/lib/journal/api";
+import { useRolePreset } from "@/lib/journal/use-role-preset";
 import { withEngineWait } from "@/lib/journal/engine-wait";
 import {
   canGoToNextJournalDay,
@@ -127,6 +128,10 @@ export function JournalView({
   weekStart?: string;
   onWeekStartChange?: (next: string) => void;
 } = {}) {
+  // A role picked during onboarding, before the engine was listening, reaches
+  // the engine here: this view is the first thing most people open.
+  useRolePreset();
+
   const [date, setDate] = useState<string>(() => journalDayToday());
   const [localView, setLocalView] = useState<JournalViewMode>(view ?? "day");
   const [localWeek, setLocalWeek] = useState<string>(

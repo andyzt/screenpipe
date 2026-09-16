@@ -16,6 +16,12 @@ vi.mock("@/lib/journal/api", () => ({
   fetchJournalWeek: (...args: unknown[]) => fetchJournalWeek(...args),
 }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
+// The view reconciles a role preset picked during onboarding; with no preset
+// pending the hook is inert, and this keeps the settings context out of a test
+// about the day itself.
+vi.mock("@/lib/hooks/use-settings", () => ({
+  useSettings: () => ({ settings: {}, updateSettings: vi.fn() }),
+}));
 vi.mock("@tauri-apps/api/event", () => ({ emit: vi.fn() }));
 vi.mock("@/lib/hooks/use-timeline-store", () => ({
   useTimelineStore: (selector: (state: unknown) => unknown) =>

@@ -4,7 +4,17 @@
 
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+
+// Radix's Select and AlertDialog use pointer capture and scrollIntoView, which
+// jsdom does not implement. These stubs are what lets the real shadcn
+// components run here instead of being mocked away.
+beforeEach(() => {
+  Element.prototype.scrollIntoView = vi.fn();
+  Element.prototype.hasPointerCapture = vi.fn(() => false);
+  Element.prototype.setPointerCapture = vi.fn();
+  Element.prototype.releasePointerCapture = vi.fn();
+});
 
 const updateSettings = vi.fn();
 let mockSettings: Record<string, unknown> = {};
@@ -57,6 +67,7 @@ const READY_JOURNAL_STATUS = {
 
 import { JournalSettings, searchIndex } from "./journal-settings";
 import { journalDayToday } from "@/lib/journal/format";
+import { applyPreset, findRolePreset } from "@/lib/journal/category-presets";
 
 const CATEGORIES = [
   {
@@ -220,6 +231,175 @@ describe("JournalSettings", () => {
         "using deepseek · deepseek/deepseek-v4-flash-vision-exp",
       ),
     );
+  });
+
+  it("says the list is the user's own until it matches a preset", async () => {
+    render(<JournalSettings />);
+    await waitFor(() =>
+      expect(screen.getByTestId("journal-role-preset-match")).toHaveTextContent(
+        "This list is your own. Picking a role replaces it.",
+      ),
+    );
+  });
+
+  it("names the preset the current list matches", async () => {
+    const designer = findRolePreset("designer")!;
+    fetchJournalCategories.mockResolvedValue(applyPreset(CATEGORIES, designer));
+    render(<JournalSettings />);
+    await waitFor(() =>
+      expect(screen.getByTestId("journal-role-preset-match")).toHaveTextContent(
+        "Your list matches the Designer preset.",
+      ),
+    );
+  });
+
+  it("offers every role with its one-line description", async () => {
+    render(<JournalSettings />);
+    await waitFor(() =>
+      expect(screen.getByTestId("journal-category-work")).toBeInTheDocument(),
+    );
+    fireEvent.keyDown(screen.getByTestId("journal-role-preset-trigger"), {
+      key: "ArrowDown",
+    });
+    const options = await screen.findAllByRole("option");
+    expect(options).toHaveLength(7);
+    expect(options[0]).toHaveTextContent("Software engineer");
+    expect(options[0]).toHaveTextContent(
+      "Coding, code review, research and communication",
+    );
+    expect(options[6]).toHaveTextContent("Something else");
+  });
+
+  it("previews the preset and only writes it once the person confirms", async () => {
+    render(<JournalSettings />);
+    await waitFor(() =>
+      expect(screen.getByTestId("journal-category-work")).toBeInTheDocument(),
+    );
+    fireEvent.keyDown(screen.getByTestId("journal-role-preset-trigger"), {
+      key: "ArrowDown",
+    });
+    fireEvent.keyDown(
+      await screen.findByRole("option", { name: /Software engineer/ }),
+      { key: "Enter" },
+    );
+
+    const dialog = await screen.findByTestId("journal-role-preset-confirm");
+    const preview = within(dialog).getByTestId("journal-role-preset-preview");
+    expect(within(preview).getAllByRole("listitem")).toHaveLength(6);
+    expect(preview).toHaveTextContent("Coding / Debugging");
+    expect(preview).toHaveTextContent("Distraction");
+    expect(preview).toHaveTextContent("Personal");
+    // Nothing is written by opening the dialog.
+    expect(saveJournalCategories).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId("journal-role-preset-apply"));
+    await waitFor(() => expect(saveJournalCategories).toHaveBeenCalledTimes(1));
+    const saved = saveJournalCategories.mock.calls[0][0];
+    expect(saved.map((row: { name: string }) => row.name)).toEqual([
+      "Coding / Debugging",
+      "Code Review",
+      "Research",
+      "Communication",
+      "Distraction",
+      "Personal",
+      "Idle",
+    ]);
+    expect(saved.at(-1)).toMatchObject({ id: "idle", is_system: true });
+    expect(updateSettings).toHaveBeenCalledWith({
+      journalRolePreset: "software-engineer",
+      journalRolePresetApplied: true,
+    });
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("journal-category-coding-debugging"),
+      ).toBeInTheDocument(),
+    );
+  });
+
+  it("writes nothing when the confirmation is cancelled", async () => {
+    render(<JournalSettings />);
+    await waitFor(() =>
+      expect(screen.getByTestId("journal-category-work")).toBeInTheDocument(),
+    );
+    fireEvent.keyDown(screen.getByTestId("journal-role-preset-trigger"), {
+      key: "ArrowDown",
+    });
+    fireEvent.keyDown(await screen.findByRole("option", { name: /Student/ }), {
+      key: "Enter",
+    });
+    await screen.findByTestId("journal-role-preset-confirm");
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() =>
+      expect(screen.queryByTestId("journal-role-preset-confirm")).toBeNull(),
+    );
+    expect(saveJournalCategories).not.toHaveBeenCalled();
+    expect(screen.getByTestId("journal-category-work")).toBeInTheDocument();
+  });
+
+  it("keeps the dialog open and shows why a failed write did not land", async () => {
+    saveJournalCategories.mockRejectedValueOnce(new Error("engine is down"));
+    render(<JournalSettings />);
+    await waitFor(() =>
+      expect(screen.getByTestId("journal-category-work")).toBeInTheDocument(),
+    );
+    fireEvent.keyDown(screen.getByTestId("journal-role-preset-trigger"), {
+      key: "ArrowDown",
+    });
+    fireEvent.keyDown(await screen.findByRole("option", { name: /Designer/ }), {
+      key: "Enter",
+    });
+    fireEvent.click(await screen.findByTestId("journal-role-preset-apply"));
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent("engine is down"),
+    );
+    expect(screen.getByTestId("journal-role-preset-confirm")).toBeInTheDocument();
+  });
+
+  it("applies a role picked during onboarding that never reached the engine", async () => {
+    mockSettings = { journalRolePreset: "student" };
+    // A miniature engine: what was last PUT is what the next GET returns.
+    let stored: unknown[] = CATEGORIES;
+    fetchJournalCategories.mockImplementation(async () => stored);
+    saveJournalCategories.mockImplementation(async (rows: unknown[]) => {
+      stored = rows;
+      return rows;
+    });
+    render(<JournalSettings />);
+
+    await waitFor(() => expect(saveJournalCategories).toHaveBeenCalledTimes(1));
+    expect(
+      saveJournalCategories.mock.calls[0][0].map((row: { name: string }) => row.name),
+    ).toEqual([
+      "Studying",
+      "Assignments",
+      "Communication",
+      "Distraction",
+      "Personal",
+      "Idle",
+    ]);
+    await waitFor(() =>
+      expect(updateSettings).toHaveBeenCalledWith({
+        journalRolePresetApplied: true,
+      }),
+    );
+    // The editor re-reads the list the reconciliation just wrote.
+    expect(
+      await screen.findByTestId("journal-category-studying"),
+    ).toBeInTheDocument();
+  });
+
+  it("leaves an already applied role alone", async () => {
+    mockSettings = {
+      journalRolePreset: "student",
+      journalRolePresetApplied: true,
+    };
+    render(<JournalSettings />);
+    await waitFor(() =>
+      expect(screen.getByTestId("journal-category-work")).toBeInTheDocument(),
+    );
+    expect(saveJournalCategories).not.toHaveBeenCalled();
   });
 
   it("omits the model line when the status has no preset yet", async () => {

@@ -58,6 +58,7 @@ import {
 	type SidebarNavLayout,
 } from "@/lib/utils/sidebar-nav-layout";
 import type { JournalWorkProfile } from "@/lib/journal/types";
+import type { RolePresetId } from "@/lib/journal/category-presets";
 export type VadSensitivity = "low" | "medium" | "high";
 
 export type AIProviderType =
@@ -316,7 +317,7 @@ export type Settings = SettingsStore & {
 	/** Next native Activity generation run as an ISO timestamp. */
 	activitiesNextRunAt?: string;
 	/** Run the background daily-journal writer. Default true.
-	 *  Frontend-only today: these five keys ride the Rust `extra` map
+	 *  Frontend-only today: these seven keys ride the Rust `extra` map
 	 *  (`SettingsStore.extra`) so a Rust save round-trips them untouched.
 	 *  Contract: `docs/JOURNAL_API_CONTRACT.md` § Settings. */
 	journalEnabled?: boolean;
@@ -324,6 +325,14 @@ export type Settings = SettingsStore & {
 	journalAiPresetId?: string;
 	/** Role, projects and free notes fed to the journal prompts. */
 	journalWorkProfile?: JournalWorkProfile;
+	/** Role picked during onboarding, used to seed the journal categories.
+	 *  Kept after it has been applied so Settings can say which preset the
+	 *  current list came from. */
+	journalRolePreset?: RolePresetId;
+	/** True once `journalRolePreset` has reached the engine through
+	 *  `PUT /journal/categories`. Unset means the choice is still pending and
+	 *  `lib/journal/use-role-preset.ts` retries it on the next journal mount. */
+	journalRolePresetApplied?: boolean;
 	/** Notification layer for focus divergence. Default false. */
 	focusNudgesEnabled?: boolean;
 	/** How long a divergence must persist before it is classified. Default 10. */

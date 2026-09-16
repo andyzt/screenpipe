@@ -138,6 +138,14 @@ vi.mock("@/components/onboarding/permissions-step", () => ({
 vi.mock("@/components/onboarding/timeline-choice", () => ({
   default: () => <div>timeline choice</div>,
 }));
+vi.mock("@/components/onboarding/role-step", () => ({
+  default: ({ handleNextSlide }: { handleNextSlide: () => void }) => (
+    <div>
+      <span>role step</span>
+      <button onClick={handleNextSlide}>skip role</button>
+    </div>
+  ),
+}));
 vi.mock("@/components/onboarding/engine-startup", () => ({
   default: ({ handleNextSlide }: { handleNextSlide: () => void }) => (
     <div>
@@ -1074,9 +1082,9 @@ describe("timeline slide sequencing", () => {
       );
 
       await waitFor(() =>
-        expect(mocks.setOnboardingStep).toHaveBeenCalledWith("engine"),
+        expect(mocks.setOnboardingStep).toHaveBeenCalledWith("role"),
       );
-      expect(await screen.findByText("engine")).toBeInTheDocument();
+      expect(await screen.findByText("role step")).toBeInTheDocument();
       expect(screen.queryByText("timeline choice")).not.toBeInTheDocument();
       expect(mocks.capture).toHaveBeenCalledWith(
         "onboarding_device_tier_evaluated",
@@ -1103,9 +1111,9 @@ describe("timeline slide sequencing", () => {
     );
 
     await waitFor(() =>
-      expect(mocks.setOnboardingStep).toHaveBeenCalledWith("engine"),
+      expect(mocks.setOnboardingStep).toHaveBeenCalledWith("role"),
     );
-    expect(await screen.findByText("engine")).toBeInTheDocument();
+    expect(await screen.findByText("role step")).toBeInTheDocument();
     expect(screen.queryByText("timeline choice")).not.toBeInTheDocument();
     expect(mocks.capture).toHaveBeenCalledWith(
       "onboarding_device_tier_evaluated",
@@ -1131,9 +1139,9 @@ describe("timeline slide sequencing", () => {
     );
 
     await waitFor(() =>
-      expect(mocks.setOnboardingStep).toHaveBeenCalledWith("engine"),
+      expect(mocks.setOnboardingStep).toHaveBeenCalledWith("role"),
     );
-    expect(await screen.findByText("engine")).toBeInTheDocument();
+    expect(await screen.findByText("role step")).toBeInTheDocument();
     expect(screen.queryByText("timeline choice")).not.toBeInTheDocument();
   });
 
@@ -1186,4 +1194,62 @@ describe("timeline slide sequencing", () => {
       expect(screen.queryByText("timeline choice")).not.toBeInTheDocument();
     },
   );
+});
+
+// The role question seeds the journal's categories. It sits after the capture
+// questions and before the engine, because it only writes settings — the
+// categories themselves are applied by lib/journal/use-role-preset.ts once the
+// engine this step precedes is listening.
+describe("role slide sequencing", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.enterprisePolicy = {
+      isManagedDeployment: false,
+      isManagedDeploymentResolved: true,
+      authenticationState: "choice",
+      authenticationError: null,
+      isManagedAuthenticated: false,
+    };
+    onboardingData.currentStep = "permissions";
+    onboardingData.isCompleted = false;
+    mocks.applyEnterpriseUiVisibility.mockResolvedValue(false);
+    mocks.isSettingLocked.mockImplementation(() => false);
+    mocks.settings.deviceTier = "high";
+    mocks.settings.user = null;
+    mocks.isSettingsLoaded = true;
+  });
+
+  it("asks the role between the capture questions and the engine", async () => {
+    render(<OnboardingPage />);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: /finish permissions/i }),
+    );
+    expect(await screen.findByText("role step")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "skip role" }));
+    await waitFor(() =>
+      expect(mocks.setOnboardingStep).toHaveBeenCalledWith("engine"),
+    );
+    expect(await screen.findByText("engine")).toBeInTheDocument();
+  });
+
+  it("resumes an install that stopped on the role question", async () => {
+    onboardingData.currentStep = "role";
+
+    render(<OnboardingPage />);
+
+    expect(await screen.findByText("role step")).toBeInTheDocument();
+  });
+
+  it("counts the role question in the setup progress", async () => {
+    onboardingData.currentStep = "role";
+
+    render(<OnboardingPage />);
+
+    await screen.findByText("role step");
+    // acquisition, permissions, role, engine — timeline is skipped on this
+    // device tier and the plan/final steps are out of the flow.
+    expect(screen.getByText("3 of 4")).toBeInTheDocument();
+  });
 });

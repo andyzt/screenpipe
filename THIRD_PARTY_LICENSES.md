@@ -5,7 +5,9 @@
 Portions of the journal pipeline in `crates/screenpipe-engine/src/journal/`
 (card-generation prompt text, output validation rules, lenient JSON-extraction
 behaviour, idle-classification thresholds, daily-recap wording, and
-table-driven test cases) are derived from
+table-driven test cases) and the role category presets in
+`apps/screenpipe-app-tauri/lib/journal/category-presets.ts` (category names,
+colours, and one-line descriptions per role) are derived from
 Dayflow, https://github.com/JerryZLiu/Dayflow, used under the MIT License.
 
 ```

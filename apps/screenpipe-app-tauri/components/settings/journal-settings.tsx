@@ -20,8 +20,25 @@ import React, { useCallback, useEffect, useState } from "react";
 import { Loader2, Plus, Trash2 } from "lucide-react";
 
 import { AIPresetsSelector } from "@/components/rewind/ai-presets-selector";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { useSettings } from "@/lib/hooks/use-settings";
@@ -31,6 +48,16 @@ import {
   regenerateJournalDay,
   saveJournalCategories,
 } from "@/lib/journal/api";
+import {
+  ROLE_PRESETS,
+  applyPreset,
+  detectPreset,
+  findRolePreset,
+  slugifyCategoryName,
+  type RolePreset,
+  type RolePresetId,
+} from "@/lib/journal/category-presets";
+import { useRolePreset } from "@/lib/journal/use-role-preset";
 import { journalDayToday } from "@/lib/journal/format";
 import type {
   JournalCategory,
@@ -44,6 +71,7 @@ export const searchIndex: SettingsField[] = [
   { label: "Journal model", keywords: ["preset", "ai", "model", "provider"] },
   { label: "Work profile", keywords: ["role", "projects", "keywords", "context"] },
   { label: "Categories", keywords: ["category", "work", "personal", "distraction"] },
+  { label: "Start from a role", keywords: ["role", "preset", "template", "categories"] },
   { label: "Focus nudges", keywords: ["nudge", "notification", "distraction", "focus"] },
   { label: "Grace period", keywords: ["grace", "minutes", "divergence", "delay"] },
   { label: "Regenerate today", keywords: ["regenerate", "rebuild", "reprocess"] },
@@ -56,15 +84,6 @@ const DEFAULT_WORK_PROFILE: JournalWorkProfile = {
 };
 
 const DEFAULT_GRACE_MINUTES = 10;
-
-function slugify(value: string): string {
-  return (
-    value
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/(^-|-$)/g, "") || "category"
-  );
-}
 
 function SettingRow({
   title,
@@ -200,7 +219,155 @@ function WorkProfileEditor({
   );
 }
 
-function CategoriesEditor() {
+/**
+ * "Start from a role": one pick that replaces the whole editable list.
+ *
+ * Destructive by definition — it throws away whatever categories are there —
+ * so the chosen preset is shown in full before anything is written, and the
+ * write only happens from the dialog's own button.
+ */
+function RolePresetPicker({
+  categories,
+  onApplied,
+}: {
+  categories: JournalCategory[];
+  onApplied: (next: JournalCategory[]) => void;
+}) {
+  const { updateSettings } = useSettings();
+  const [pending, setPending] = useState<RolePreset | null>(null);
+  const [applying, setApplying] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const matched = detectPreset(categories);
+  const matchedPreset = findRolePreset(matched);
+  const replacedCount = categories.filter((row) => !row.is_system).length;
+
+  const apply = useCallback(
+    async (preset: RolePreset) => {
+      setApplying(true);
+      setError(null);
+      try {
+        const next = await saveJournalCategories(applyPreset(categories, preset));
+        onApplied(next);
+        setPending(null);
+        void updateSettings({
+          journalRolePreset: preset.id,
+          journalRolePresetApplied: true,
+        });
+      } catch (reason) {
+        setError(reason instanceof Error ? reason.message : String(reason));
+      } finally {
+        setApplying(false);
+      }
+    },
+    [categories, onApplied, updateSettings],
+  );
+
+  return (
+    <div className="mt-3 flex flex-col gap-1.5" data-testid="journal-role-preset">
+      <div className="flex flex-wrap items-center gap-2">
+        <Select
+          // Controlled from the first render: "" is Radix's own empty value,
+          // and switching a Select from uncontrolled to controlled tears its
+          // portal down mid-commit.
+          value={matched ?? ""}
+          onValueChange={(value) => setPending(findRolePreset(value))}
+        >
+          <SelectTrigger
+            aria-label="Start from a role"
+            data-testid="journal-role-preset-trigger"
+            className="h-9 w-64"
+          >
+            <SelectValue placeholder="Start from a role">
+              {matchedPreset?.label}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            {ROLE_PRESETS.map((preset) => (
+              <SelectItem key={preset.id} value={preset.id}>
+                <span className="flex flex-col gap-0.5 py-0.5">
+                  <span className="text-sm text-foreground">{preset.label}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {preset.description}
+                  </span>
+                </span>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {applying ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+      </div>
+
+      <p
+        className="text-xs text-muted-foreground"
+        data-testid="journal-role-preset-match"
+      >
+        {matchedPreset ? (
+          <>Your list matches the {matchedPreset.label} preset.</>
+        ) : (
+          <>This list is your own. Picking a role replaces it.</>
+        )}
+      </p>
+
+      <AlertDialog
+        open={pending !== null}
+        onOpenChange={(open) => {
+          if (!open && !applying) setPending(null);
+        }}
+      >
+        <AlertDialogContent data-testid="journal-role-preset-confirm">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Replace your categories?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This replaces the {replacedCount} editable categories you have now
+              with the {pending?.categories.length} below. Idle and other system
+              rows are kept. Past cards keep the category they were written with.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <ul className="flex flex-col gap-2" data-testid="journal-role-preset-preview">
+            {(pending?.categories ?? []).map((row) => (
+              <li key={row.id} className="flex items-start gap-2">
+                <span
+                  aria-hidden="true"
+                  className="mt-1 h-3 w-3 shrink-0 border"
+                  style={{ borderColor: row.color_hex, backgroundColor: row.color_hex }}
+                />
+                <span className="min-w-0">
+                  <span className="block text-sm text-foreground">{row.name}</span>
+                  <span className="block text-xs text-muted-foreground">
+                    {row.description}
+                  </span>
+                </span>
+              </li>
+            ))}
+          </ul>
+          {error ? (
+            <p role="alert" className="text-xs text-foreground">
+              {error}
+            </p>
+          ) : null}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={applying}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              data-testid="journal-role-preset-apply"
+              disabled={applying}
+              onClick={(event) => {
+                // The dialog must stay open until the PUT answers, so the
+                // person sees the failure instead of a list that silently
+                // did not change.
+                event.preventDefault();
+                if (pending) void apply(pending);
+              }}
+            >
+              Use these categories
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}
+
+function CategoriesEditor({ reloadKey = 0 }: { reloadKey?: number }) {
   const [categories, setCategories] = useState<JournalCategory[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -219,7 +386,9 @@ function CategoriesEditor() {
         setError(reason instanceof Error ? reason.message : String(reason));
       });
     return () => controller.abort();
-  }, []);
+    // A role preset applied elsewhere (the onboarding choice reconciling on
+    // first load) rewrites this list behind us; re-read it when that lands.
+  }, [reloadKey]);
 
   const update = useCallback(
     (id: string, patch: Partial<JournalCategory>) => {
@@ -252,9 +421,19 @@ function CategoriesEditor() {
     <div className="px-4 py-3" data-testid="journal-categories">
       <h3 className="text-sm font-medium text-foreground">Categories</h3>
       <p className="mt-0.5 text-xs text-muted-foreground">
-        the list the writer classifies each card against. system rows cannot be
+        The list the writer classifies each card against. System rows cannot be
         renamed or removed.
       </p>
+
+      {categories ? (
+        <RolePresetPicker
+          categories={categories}
+          onApplied={(next) => {
+            setSaved(false);
+            setCategories(next);
+          }}
+        />
+      ) : null}
 
       {error ? (
         <p role="alert" className="mt-2 text-xs text-foreground">
@@ -343,10 +522,10 @@ function CategoriesEditor() {
               setCategories((rows) => {
                 const list = rows ?? [];
                 const base = "new category";
-                let id = slugify(base);
+                let id = slugifyCategoryName(base);
                 let n = 2;
                 while (list.some((row) => row.id === id)) {
-                  id = `${slugify(base)}-${n}`;
+                  id = `${slugifyCategoryName(base)}-${n}`;
                   n += 1;
                 }
                 return [
@@ -388,6 +567,9 @@ function CategoriesEditor() {
 
 export function JournalSettings() {
   const { settings, updateSettings } = useSettings();
+  // A role picked during onboarding before the engine was listening is applied
+  // here, on the first settings open that finds it reachable.
+  const rolePresetStatus = useRolePreset();
   const enabled = settings.journalEnabled ?? true;
   const profile = settings.journalWorkProfile ?? DEFAULT_WORK_PROFILE;
   const nudgesEnabled = settings.focusNudgesEnabled ?? false;
@@ -491,7 +673,7 @@ export function JournalSettings() {
       </div>
 
       <div className="border border-border bg-card">
-        <CategoriesEditor />
+        <CategoriesEditor reloadKey={rolePresetStatus === "applied" ? 1 : 0} />
       </div>
 
       <div className="border border-border bg-card">
