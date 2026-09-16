@@ -459,7 +459,9 @@ mod audio;
 mod display_layout;
 mod elements;
 mod feedback;
+mod focus;
 mod frames;
+mod journal;
 mod maintenance;
 mod meetings;
 mod memories;
@@ -476,6 +478,15 @@ mod write_ops;
 pub use self::activity_ledger::{
     ActivityActionDraft, ActivityActionRecord, ActivityEvidenceDraft, ActivityEvidenceRecord,
     ActivityIntervalDraft, ActivityIntervalRecord, ActivityLedgerObservation, ActivityTaskDraft,
+};
+pub use self::focus::{
+    FocusIntention, FocusStateDraft, FocusStateRecord, NewFocusIntention,
+};
+pub use self::journal::{
+    evenly_spaced_indices, JournalActivity, JournalActivityDraft, JournalCategory,
+    JournalCategoryDraft, JournalDistraction, JournalDistractionDraft, JournalEvidence,
+    JournalEvidenceDraft, JournalFrameSample, JournalLedgerInterval, JournalRun, JournalRunDraft,
+    JournalWindow, JournalWindowCounts, JOURNAL_STATE_PRODUCER,
 };
 pub use self::semantic::{
     SemanticActor, SemanticActorAlias, SemanticActorReference, SemanticAttachResult,

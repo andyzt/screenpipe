@@ -1,0 +1,44 @@
+{
+  "window_start": "2026-09-16T16:00:00Z",
+  "window_end": "2026-09-16T16:15:00Z",
+  "context_start": "2026-09-16T15:15:00Z",
+  "active_minutes": 32.0,
+  "intervals": [
+    {
+      "interval_key": "cg-1",
+      "task_key": "task-standup",
+      "title": "Weekly sync",
+      "app": "zoom.us",
+      "window_title": "Zoom Meeting — Weekly sync",
+      "host": null,
+      "document": null,
+      "start_at": "2026-09-16T15:20:00Z",
+      "end_at": "2026-09-16T15:48:00Z",
+      "active_minutes": 27.0,
+      "click_count": 6,
+      "text_event_count": 12,
+      "audio_segments": 14,
+      "text_snippets": [
+        "Weekly sync — 5 participants — screen share: roadmap board"
+      ]
+    },
+    {
+      "interval_key": "cg-2",
+      "task_key": "task-inbox",
+      "title": "Inbox",
+      "app": "Arc",
+      "window_title": "Inbox (3) — Gmail",
+      "host": "mail.google.com",
+      "document": null,
+      "start_at": "2026-09-16T16:03:00Z",
+      "end_at": "2026-09-16T16:15:00Z",
+      "active_minutes": 11.0,
+      "click_count": 29,
+      "text_event_count": 210,
+      "audio_segments": 0,
+      "text_snippets": [
+        "Re: notarization ticket — Apple replied, the build passed on the second submission"
+      ]
+    }
+  ]
+}

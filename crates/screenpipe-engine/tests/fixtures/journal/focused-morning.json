@@ -1,0 +1,64 @@
+{
+  "window_start": "2026-09-16T08:15:00Z",
+  "window_end": "2026-09-16T08:30:00Z",
+  "context_start": "2026-09-16T07:30:00Z",
+  "active_minutes": 44.0,
+  "intervals": [
+    {
+      "interval_key": "fm-1",
+      "task_key": "task-auth-rs",
+      "title": "auth.rs — screenpipe",
+      "app": "Code",
+      "window_title": "auth.rs — screenpipe",
+      "host": null,
+      "document": "/Users/dev/screenpipe/crates/auth/src/auth.rs",
+      "start_at": "2026-09-16T07:45:00Z",
+      "end_at": "2026-09-16T08:05:00Z",
+      "active_minutes": 19.5,
+      "click_count": 34,
+      "text_event_count": 612,
+      "audio_segments": 0,
+      "text_snippets": [
+        "fn refresh_token(&self, session: &Session) -> Result<Token> { let attempt = self.retries",
+        "test refresh_token_retries_on_timeout ... FAILED  assertion failed: token.is_some()"
+      ]
+    },
+    {
+      "interval_key": "fm-2",
+      "task_key": "task-ci-run",
+      "title": "screenpipe/pull/6961 — checks",
+      "app": "Arc",
+      "window_title": "screenpipe/pull/6961 · checks failed",
+      "host": "github.com",
+      "document": null,
+      "start_at": "2026-09-16T08:05:00Z",
+      "end_at": "2026-09-16T08:12:00Z",
+      "active_minutes": 6.5,
+      "click_count": 18,
+      "text_event_count": 24,
+      "audio_segments": 0,
+      "text_snippets": [
+        "auth / test (macos-14) failed in 4m 12s — refresh_token_retries_on_timeout"
+      ]
+    },
+    {
+      "interval_key": "fm-3",
+      "task_key": "task-auth-rs",
+      "title": "session_store.rs — screenpipe",
+      "app": "Code",
+      "window_title": "session_store.rs — screenpipe",
+      "host": null,
+      "document": "/Users/dev/screenpipe/crates/auth/src/session_store.rs",
+      "start_at": "2026-09-16T08:12:00Z",
+      "end_at": "2026-09-16T08:30:00Z",
+      "active_minutes": 17.5,
+      "click_count": 27,
+      "text_event_count": 830,
+      "audio_segments": 0,
+      "text_snippets": [
+        "impl SessionStore { fn put(&self, session: Session) { self.inner.write().insert(",
+        "cargo test -p auth session_store ... ok. 14 passed; 0 failed"
+      ]
+    }
+  ]
+}

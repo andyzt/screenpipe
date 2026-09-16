@@ -1,0 +1,63 @@
+{
+  "window_start": "2026-09-16T13:15:00Z",
+  "window_end": "2026-09-16T13:30:00Z",
+  "context_start": "2026-09-16T12:30:00Z",
+  "active_minutes": 41.0,
+  "intervals": [
+    {
+      "interval_key": "sa-1",
+      "task_key": "task-launch-doc",
+      "title": "Q4 launch plan",
+      "app": "Arc",
+      "window_title": "Q4 launch plan — Notion",
+      "host": "notion.so",
+      "document": null,
+      "start_at": "2026-09-16T12:45:00Z",
+      "end_at": "2026-09-16T13:05:00Z",
+      "active_minutes": 19.0,
+      "click_count": 41,
+      "text_event_count": 470,
+      "audio_segments": 0,
+      "text_snippets": [
+        "Q4 launch plan — risks: onboarding drop-off, provider cost per day, notarization window",
+        "Owner: me. Target: Oct 14. Open question: do we gate the journal behind a setting?"
+      ]
+    },
+    {
+      "interval_key": "sa-2",
+      "task_key": "task-feed",
+      "title": "Home / X",
+      "app": "Arc",
+      "window_title": "Home / X",
+      "host": "x.com",
+      "document": null,
+      "start_at": "2026-09-16T13:05:00Z",
+      "end_at": "2026-09-16T13:08:00Z",
+      "active_minutes": 3.0,
+      "click_count": 22,
+      "text_event_count": 0,
+      "audio_segments": 0,
+      "text_snippets": [
+        "For you — posts about a keynote, a benchmark thread, a screenshot of a terminal"
+      ]
+    },
+    {
+      "interval_key": "sa-3",
+      "task_key": "task-launch-doc",
+      "title": "Q4 launch plan",
+      "app": "Arc",
+      "window_title": "Q4 launch plan — Notion",
+      "host": "notion.so",
+      "document": null,
+      "start_at": "2026-09-16T13:08:00Z",
+      "end_at": "2026-09-16T13:30:00Z",
+      "active_minutes": 21.0,
+      "click_count": 33,
+      "text_event_count": 690,
+      "audio_segments": 0,
+      "text_snippets": [
+        "Rollout: beta channel first, then the public build once crash-free sessions hold at 99.5%"
+      ]
+    }
+  ]
+}

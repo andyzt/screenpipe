@@ -19,7 +19,9 @@ use std::path::Path;
 use tracing::debug;
 
 pub const ACTIVITY_LEDGER_PRODUCER: &str = "deterministic-v1";
-const UNOBSERVED_GAP: ChronoDuration = ChronoDuration::minutes(5);
+/// Shared with `/activity-summary` and the journal through `journal::time`, so
+/// "the screen went quiet" means the same number of minutes everywhere.
+use crate::journal::time::IDLE_GAP as UNOBSERVED_GAP;
 const LIVE_TAIL: ChronoDuration = ChronoDuration::minutes(1);
 const FINALIZATION_DELAY: ChronoDuration = ChronoDuration::minutes(5);
 
