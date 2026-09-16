@@ -31,7 +31,17 @@ Useful mock states:
 ```bash
 SCREENPIPE_WEB_SCENARIO=empty bun run dev:web
 SCREENPIPE_WEB_SCENARIO=backend-error bun run dev:web
+SCREENPIPE_WEB_SCENARIO=journal-generating bun run dev:web
+SCREENPIPE_WEB_SCENARIO=journal-no-preset bun run dev:web
 ```
+
+The journal landing view (<http://127.0.0.1:1420/home?section=journal>) and
+its settings section (`/settings?section=journal`) are fully mocked: the
+`ready` state seeds a day of cards with one idle card, one detour and an
+active intention; `journal-generating` shows pending windows; and
+`journal-no-preset` shows the state when no OpenAI-compatible preset is
+configured. Setting and ending an intention mutates the mock, so the focus
+strip follows it.
 
 The default `ready` state also seeds a stateful Live View and canvas document.
 Edits such as changing the time range or layout mode are preserved for the
