@@ -24,6 +24,8 @@ import { saveScreenshot } from "../helpers/screenshot-utils.js";
  *   - nav-home, nav-meetings, nav-activity, nav-brain, nav-pipes (must be absent by default)
  *   - journal-intention-bar, journal-intention-title, journal-intention-set,
  *     journal-intention-end                           (intention-bar.tsx)
+ *   - journal-rail, journal-view-toggle, journal-view-toggle-day,
+ *     journal-view-toggle-week, journal-week-grid     (journal-rail.tsx, week-view.tsx, week-grid.tsx)
  */
 
 const INTENTION_TITLE = "e2e journal landing check";
@@ -118,5 +120,39 @@ describe("Journal landing", () => {
 
     const endedFilepath = await saveScreenshot("journal-landing-intention-ended");
     expect(existsSync(endedFilepath)).toBe(true);
+  });
+
+  it("switches to the week grid via the Day|Week toggle and back", async () => {
+    const dayLabel = await waitForTestId("journal-date-label", 10_000);
+    expect(await dayLabel.isExisting()).toBe(true);
+
+    const weekOption = await $('[data-testid="journal-view-toggle-week"]');
+    await weekOption.waitForExist({ timeout: t(5_000) });
+    await weekOption.click();
+
+    const weekGrid = await waitForTestId("journal-week-grid", 10_000);
+    expect(await weekGrid.isExisting()).toBe(true);
+    expect(await $('[data-testid="journal-date-label"]').then((el) => el.isExisting())).toBe(
+      false,
+    );
+
+    const weekFilepath = await saveScreenshot("journal-landing-week-view");
+    expect(existsSync(weekFilepath)).toBe(true);
+
+    const dayOption = await $('[data-testid="journal-view-toggle-day"]');
+    await dayOption.waitForExist({ timeout: t(5_000) });
+    await dayOption.click();
+
+    const dayLabelAgain = await waitForTestId("journal-date-label", 10_000);
+    expect(await dayLabelAgain.isExisting()).toBe(true);
+    expect(await $('[data-testid="journal-week-grid"]').then((el) => el.isExisting())).toBe(
+      false,
+    );
+  });
+
+  it("has no sidebar-options button on the rail", async () => {
+    const rail = await waitForTestId("journal-rail", 10_000);
+    expect(await rail.isExisting()).toBe(true);
+    expect(await $('[data-testid="sidebar-options"]').then((el) => el.isExisting())).toBe(false);
   });
 });

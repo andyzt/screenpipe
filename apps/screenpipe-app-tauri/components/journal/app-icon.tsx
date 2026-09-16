@@ -18,14 +18,17 @@
  * browser mock it ends on the broken glyph this component exists to avoid.
  */
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 
 import { getFaviconUrl } from "@/components/rewind/timeline/favicon-utils";
-import { appIconUrl } from "@/lib/first-run/recent-activity";
+import { getAppServerBaseUrl } from "@/lib/notifications/app-server";
 import { cn } from "@/lib/utils";
 import type { CardApp } from "@/lib/journal/types";
 
 type Stage = "favicon" | "app" | "monogram";
+
+/** Resolved once per webview; see `getAppServerBaseUrl`. */
+let resolvedAppServerBase: string | null = null;
 
 function monogram(name: string): string {
   const trimmed = name.trim();
@@ -45,6 +48,21 @@ export function AppIcon({
   // Callers key this by `app.name`, so a different app is a different element
   // and starts its own chain — no effect needed to reset a failed one.
   const [stage, setStage] = useState<Stage>(app.host ? "favicon" : "app");
+  // The app-icon server runs on a per-profile port (11435 in production,
+  // 11535 for dev builds), so the base URL is asked from the native side once
+  // and cached; until it resolves the favicon stage still works.
+  const [appServerBase, setAppServerBase] = useState<string | null>(resolvedAppServerBase);
+  useEffect(() => {
+    if (appServerBase) return;
+    let cancelled = false;
+    void getAppServerBaseUrl().then((base) => {
+      resolvedAppServerBase = base;
+      if (!cancelled) setAppServerBase(base);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [appServerBase]);
 
   if (stage === "monogram") {
     return (
@@ -64,10 +82,24 @@ export function AppIcon({
     );
   }
 
+  if (stage === "app" && !appServerBase) {
+    // Base URL not known yet: hold a same-sized placeholder instead of firing
+    // a request at the wrong port, which would lock the chain into a monogram.
+    return (
+      <span
+        data-testid="journal-app-icon"
+        data-app={app.name}
+        aria-hidden="true"
+        className={cn("inline-block shrink-0 rounded-sm bg-secondary", className)}
+        style={{ width: size, height: size }}
+      />
+    );
+  }
+
   const src =
     stage === "favicon" && app.host
       ? getFaviconUrl(app.host)
-      : appIconUrl(app.name);
+      : `${appServerBase}/app-icon?name=${encodeURIComponent(app.name)}`;
 
   return (
     // eslint-disable-next-line @next/next/no-img-element
