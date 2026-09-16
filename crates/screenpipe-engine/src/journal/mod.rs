@@ -13,9 +13,10 @@
 //! - [`idle`] — the gate that answers "was anyone there?" without a provider.
 //! - [`compile`] — the bounded, serializable observation set a generator reads.
 //! - [`generator`] — the seam. [`CardGenerator`] is what an LLM implements.
-//! - [`prompt`], [`schema`], [`validate`], [`json`], [`llm`] — the provider
-//!   side of that seam: the versioned prompt, the output contract, the rules
-//!   the output must satisfy, lenient JSON extraction, and the client.
+//! - [`prompt`], [`schema`], [`repair`], [`validate`], [`json`], [`llm`] — the
+//!   provider side of that seam: the versioned prompt, the output contract,
+//!   the deterministic geometry repair, the rules the output must satisfy,
+//!   lenient JSON extraction, and the client.
 //! - [`worker`] — the tick that runs the stages in order and persists once.
 //! - [`day`] — the API shapes and the day arithmetic behind `/journal/day`.
 //! - [`settings`] — the journal's slice of the desktop settings store.
@@ -35,6 +36,7 @@ pub mod idle;
 pub mod json;
 pub mod llm;
 pub mod prompt;
+pub mod repair;
 pub mod schema;
 pub mod settings;
 #[cfg(test)]
@@ -58,6 +60,7 @@ pub use generator::{
 };
 pub use llm::{ChatClient, LlmGenerator, LLM_PRODUCER};
 pub use prompt::PROMPT_VERSION;
+pub use repair::{repair_cards, RepairKind, RepairNote};
 pub use settings::JournalSettings;
 pub use time::{active_minutes, day_bounds, day_of, IDLE_CAP_SECS, IDLE_GAP};
 pub use worker::{spawn_journal_worker, TickReport};

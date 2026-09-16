@@ -1133,6 +1133,7 @@ mod tests {
                         latency_ms: 4_000,
                         ok: false,
                         error: Some("DURATION ERROR: card 1 is 4.0 minutes".to_string()),
+                        repairs: Vec::new(),
                     },
                     GenerationAttempt {
                         request_chars: 11_000,
@@ -1140,6 +1141,7 @@ mod tests {
                         latency_ms: 5_000,
                         ok: true,
                         error: None,
+                        repairs: vec!["source gap: 'Session' split".to_string()],
                     },
                 ]
             }

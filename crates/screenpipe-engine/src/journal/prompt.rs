@@ -39,7 +39,7 @@ use super::validate::CardIssue;
 
 /// Prompt identity. Stored on cards and windows; a bump makes previously
 /// generated windows eligible for regeneration the next time they are touched.
-pub const PROMPT_VERSION: &str = "journal-cards-v1";
+pub const PROMPT_VERSION: &str = "journal-cards-v2";
 
 /// Guard rail on the *evidence* half of the prompt: the rendered observations
 /// plus the previous cards. The instruction blocks are a fixed ~11k characters
@@ -210,11 +210,13 @@ Your output cards must cover the same total time range as the previous cards plu
 - Don't drop time segments that were previously covered.
 - If the new observations extend beyond the previous range, add cards to cover the new time.
 - Preserve genuine gaps in the observations.
+- A card must NEVER span a gap of more than five minutes in the observations. Where the observations stop for longer than that, the person was away: end the card at the last observation before the gap, and start the next card at the first observation after it. The gap itself stays uncovered.
+- Extend or re-date a previous card only when the observations run into the new ones without such a gap. If the last previous card ends before a gap longer than five minutes, leave its end time where it is and open a new card after the gap.
 
 Before generating output, review the previous cards and ask:
 - Could any two adjacent previous cards be the same activity session?
-- Does your first new card continue the last previous card's work?
-If yes to either, merge them in your output."#;
+- Does your first new card continue the last previous card's work, with no gap longer than five minutes between them?
+If yes to both, merge them in your output."#;
 
 const ONGOING_BLOCK: &str = r#"<ongoing_segmentation>
 Rewrite the full connected span from the supplied evidence. Previous cards preserve content only; their boundaries, titles and categories are provisional.
@@ -620,6 +622,10 @@ pub fn render_correction(issues: &[CardIssue], mode: SegmentMode) -> String {
          - Preserve exactly the source-supported coverage. Keep genuine source gaps uncovered; \
          never bridge them. Cards may be separated only where the observations have a real gap. No \
          overlaps.\n\
+         - No card may span a gap of more than five minutes in the observations. End the card at \
+         the last observation before such a gap and start the next card at the first observation \
+         after it. Extend a previous card only when the observations continue into the new ones \
+         without such a gap.\n\
          - Change the timestamps that caused the validation error; do not return the same invalid \
          boundaries. If the issue says the cards do not cover all supplied observations, find every \
          gap between consecutive cards and close it by extending an adjacent card. If one card ends \
@@ -833,7 +839,7 @@ mod tests {
 
     #[test]
     fn the_prompt_version_is_the_one_stored_on_cards() {
-        assert_eq!(PROMPT_VERSION, "journal-cards-v1");
+        assert_eq!(PROMPT_VERSION, "journal-cards-v2");
         assert_eq!(CONNECTED_GAP, Duration::minutes(5));
         assert!(SYSTEM_PROMPT.contains("Return only the requested JSON"));
         assert!(at("2026-09-16T08:00:00Z") < at("2026-09-16T08:15:00Z"));

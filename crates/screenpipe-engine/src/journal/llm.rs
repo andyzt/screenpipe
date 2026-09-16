@@ -49,6 +49,7 @@ use super::json::extract_json;
 use super::prompt::{self, PROMPT_VERSION, SYSTEM_PROMPT};
 use super::schema::{self, response_schema};
 use super::settings::JournalSettings;
+use super::repair::{repair_cards, RepairNote};
 use super::validate::{validate_cards, CardIssue, EvidenceBounds, Span};
 
 /// Producer stamped on cards written by a provider.
@@ -581,6 +582,7 @@ impl CardGenerator for LlmGenerator {
                         latency_ms,
                         ok: false,
                         error: Some(error.to_string()),
+                        repairs: Vec::new(),
                     });
                     return Err(anyhow::Error::new(error));
                 }
@@ -597,6 +599,19 @@ impl CardGenerator for LlmGenerator {
             let parsed = extract_json(&content)
                 .and_then(schema::parse_cards)
                 .and_then(|cards| schema::to_drafts(&cards, compiled, ctx));
+            // Geometry first: a card written across a gap where the machine
+            // was off, or one minute over the ceiling, is repairable from the
+            // evidence alone. Spending a round trip on it is how a correctly
+            // described sixteen minutes ends up as a `system` card.
+            let mut repairs: Vec<String> = Vec::new();
+            let parsed = parsed.map(|drafts| {
+                let (drafts, notes) = repair_cards(drafts, &bounds, &compiled.intervals);
+                repairs = notes.iter().map(RepairNote::to_string).collect();
+                if !repairs.is_empty() {
+                    debug!(attempt, repairs = %repairs.join("; "), "journal: repaired card geometry");
+                }
+                drafts
+            });
             let issues = match parsed {
                 Ok(drafts) => {
                     let issues = validate_cards(&drafts, &bounds);
@@ -607,6 +622,7 @@ impl CardGenerator for LlmGenerator {
                             latency_ms,
                             ok: true,
                             error: None,
+                            repairs,
                         });
                         return Ok(drafts);
                     }
@@ -626,6 +642,7 @@ impl CardGenerator for LlmGenerator {
                 latency_ms,
                 ok: false,
                 error: Some(summary.clone()),
+                repairs,
             });
             warn!(attempt, issues = %summary, "journal: provider output failed validation");
 
@@ -698,7 +715,7 @@ mod tests {
     }
 
     use super::*;
-    use crate::journal::test_support::{compiled_fixture, context, load_fixture, previous_card};
+    use crate::journal::test_support::{at, compiled_fixture, context, interval, load_fixture, previous_card};
     use wiremock::matchers::{body_string_contains, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -827,7 +844,7 @@ mod tests {
             Some("deepseek"),
         );
         assert_eq!(generator.producer(), "llm-v1");
-        assert_eq!(generator.prompt_version().as_deref(), Some("journal-cards-v1"));
+        assert_eq!(generator.prompt_version().as_deref(), Some("journal-cards-v2"));
         assert_eq!(generator.model().as_deref(), Some("deepseek/deepseek-v4-flash"));
     }
 
@@ -963,6 +980,61 @@ mod tests {
         assert!(generator.drain_attempts().is_empty(), "draining is destructive");
     }
 
+    /// The live 21:23–21:39 window, end to end: the model described the work
+    /// correctly and drew one card across the minutes the app was quit. That
+    /// used to cost three provider calls and end as a `system` card; the
+    /// geometry is repaired from the evidence on the first answer.
+    #[tokio::test]
+    async fn a_card_written_across_a_source_gap_is_repaired_without_a_correction_round() {
+        let compiled = CompiledWindow {
+            window_start: at("2026-09-16T08:25:00Z"),
+            window_end: at("2026-09-16T08:45:00Z"),
+            context_start: at("2026-09-16T07:40:00Z"),
+            active_minutes: 35.0,
+            intervals: vec![
+                interval("i1", "2026-09-16T08:00:00Z", "2026-09-16T08:15:00Z", "Code", "auth.rs"),
+                interval("i2", "2026-09-16T08:25:00Z", "2026-09-16T08:45:00Z", "Code", "auth.rs"),
+            ],
+        };
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(answer(json!([
+                card("2026-09-16T08:00:00Z", "2026-09-16T08:45:00Z", "Fixed the refresh-token retry")
+            ]))))
+            .mount(&server)
+            .await;
+
+        let generator = LlmGenerator::with_client(ChatClient::new(
+            format!("{}/v1/chat/completions", server.uri()),
+            None,
+            "m".to_string(),
+            true,
+        ));
+        let drafts = generator.generate(&compiled, &[], &context(None)).await.unwrap();
+
+        assert_eq!(
+            server.received_requests().await.unwrap().len(),
+            1,
+            "the repair replaces the correction round trip"
+        );
+        assert_eq!(drafts.len(), 2);
+        assert_eq!(drafts[0].start_at, at("2026-09-16T08:00:00Z"));
+        assert_eq!(drafts[0].end_at, at("2026-09-16T08:15:00Z"));
+        assert_eq!(drafts[1].start_at, at("2026-09-16T08:25:00Z"));
+        assert_eq!(drafts[1].end_at, at("2026-09-16T08:45:00Z"));
+        assert_eq!(drafts[0].title, drafts[1].title, "the model's words are untouched");
+        assert_eq!(drafts[0].interval_keys, vec!["i1"]);
+        assert_eq!(drafts[1].interval_keys, vec!["i2"]);
+        assert!(drafts[0].detailed_summary.is_some());
+        assert_eq!(drafts[1].detailed_summary, None);
+
+        let attempts = generator.drain_attempts();
+        assert_eq!(attempts.len(), 1);
+        assert!(attempts[0].ok);
+        assert_eq!(attempts[0].repairs.len(), 1, "{:?}", attempts[0].repairs);
+        assert!(attempts[0].repairs[0].starts_with("source gap: "), "{:?}", attempts[0].repairs);
+    }
+
     #[tokio::test]
     async fn output_that_never_validates_fails_the_window_after_three_attempts() {
         let server = MockServer::start().await;
@@ -1071,6 +1143,7 @@ mod tests {
 mod live {
     use super::*;
     use crate::journal::schema;
+    use crate::journal::repair::repair_cards;
     use crate::journal::test_support::{context, load_fixture};
     use crate::journal::validate::validate_cards;
 
@@ -1110,7 +1183,10 @@ mod live {
             .and_then(schema::parse_cards)
             .expect("the answer decodes");
         let drafts = schema::to_drafts(&cards, &compiled, &ctx).expect("the cards map to drafts");
-        let issues = validate_cards(&drafts, &evidence_bounds(&compiled, &[]));
+        let bounds = evidence_bounds(&compiled, &[]);
+        // Same order as the generator: geometry first, then the rules.
+        let (drafts, repairs) = repair_cards(drafts, &bounds, &compiled.intervals);
+        let issues = validate_cards(&drafts, &bounds);
 
         println!("--- journal live smoke ---");
         println!("model: {}", client.model());
@@ -1130,6 +1206,10 @@ mod live {
                 draft.category_id,
                 draft.intention_relation
             );
+        }
+        println!("repairs: {}", repairs.len());
+        for repair in &repairs {
+            println!("  {repair}");
         }
         println!("validation issues: {}", issues.len());
         for issue in &issues {

@@ -121,6 +121,11 @@ pub struct GenerationAttempt {
     pub latency_ms: i64,
     pub ok: bool,
     pub error: Option<String>,
+    /// Geometry the pipeline fixed itself before validating this answer, one
+    /// line per repair. An answer can be `ok` and still have repairs: that is
+    /// the interesting row, because it is the one that would otherwise have
+    /// cost two more provider calls and a `system` card.
+    pub repairs: Vec<String>,
 }
 
 #[async_trait]
