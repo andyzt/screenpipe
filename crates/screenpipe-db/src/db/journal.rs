@@ -310,6 +310,19 @@ struct RawLedgerInterval {
 }
 
 #[derive(FromRow)]
+struct RawActivityLedgerInterval {
+    activity_id: i64,
+    interval_key: String,
+    task_key: String,
+    kind: String,
+    title: String,
+    parent_title: Option<String>,
+    app_name: Option<String>,
+    start_at: String,
+    end_at: String,
+}
+
+#[derive(FromRow)]
 struct RawFrameSample {
     id: i64,
     occurred_at_ms: i64,
@@ -908,6 +921,57 @@ impl DatabaseManager {
                 })
             })
             .collect())
+    }
+
+    /// Every ledger interval linked to a card of the range, grouped by card.
+    ///
+    /// One query for the whole day rather than one per card: the week view
+    /// asks for seven days at once, and an N+1 over a few hundred cards on the
+    /// same SQLite connection the capture writer uses is not acceptable.
+    /// Intervals are joined by `interval_key`, the same key
+    /// `journal_activity_intervals` stores, so a `reconcile_range` that
+    /// rewrote interval ids does not orphan the link.
+    pub async fn list_journal_activity_intervals(
+        &self,
+        start_at: DateTime<Utc>,
+        end_at: DateTime<Utc>,
+    ) -> Result<HashMap<i64, Vec<JournalLedgerInterval>>, SqlxError> {
+        let rows = sqlx::query_as::<_, RawActivityLedgerInterval>(
+            r#"SELECT l.activity_id, i.interval_key, t.task_key, t.kind, t.title,
+                      parent.title AS parent_title, t.app_name, i.start_at, i.end_at
+               FROM journal_activity_intervals l
+               JOIN journal_activities a ON a.id = l.activity_id
+               JOIN activity_intervals i ON i.interval_key = l.interval_key
+               JOIN activity_tasks t ON t.id = i.task_id
+               LEFT JOIN activity_tasks parent ON parent.id = t.parent_task_id
+               WHERE a.deleted_at IS NULL AND a.end_at > ?1 AND a.start_at < ?2
+               ORDER BY l.activity_id, i.start_at, i.end_at, i.id"#,
+        )
+        .bind(start_at.to_rfc3339())
+        .bind(end_at.to_rfc3339())
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut by_activity: HashMap<i64, Vec<JournalLedgerInterval>> = HashMap::new();
+        for row in rows {
+            let (Some(start), Some(end)) = (parse_ts(&row.start_at), parse_ts(&row.end_at)) else {
+                continue;
+            };
+            by_activity
+                .entry(row.activity_id)
+                .or_default()
+                .push(JournalLedgerInterval {
+                    interval_key: row.interval_key,
+                    task_key: row.task_key,
+                    kind: row.kind,
+                    title: row.title,
+                    parent_title: row.parent_title,
+                    app_name: row.app_name,
+                    start_at: start,
+                    end_at: end,
+                });
+        }
+        Ok(by_activity)
     }
 
     /// Frame metadata in a range, ascending, deliberately WITHOUT text. One
@@ -1566,6 +1630,94 @@ mod tests {
         let run = db.last_journal_run().await.unwrap().unwrap();
         assert!(run.ok);
         assert_eq!(run.kind, "cards");
+    }
+
+    #[tokio::test]
+    async fn linked_ledger_intervals_come_back_grouped_by_card() {
+        let (db, _dir) = test_db().await;
+        let ids = db
+            .replace_activities_in_range(
+                at("2026-09-16T08:00:00Z"),
+                at("2026-09-16T09:00:00Z"),
+                &[{
+                    let mut card = draft("linked", "2026-09-16T08:00:00Z", "2026-09-16T08:40:00Z");
+                    card.interval_keys =
+                        vec!["ledger-code".to_string(), "ledger-site".to_string()];
+                    card
+                }],
+            )
+            .await
+            .unwrap();
+
+        for statement in [
+            "INSERT INTO activity_tasks \
+               (task_key, kind, title, app_name, confidence, producer) \
+             VALUES ('parent-code', 'category', 'Code', 'Code', 0.8, 'deterministic-v1')",
+            "INSERT INTO activity_tasks \
+               (task_key, parent_task_id, kind, title, app_name, confidence, producer) \
+             VALUES ('task-code', \
+                     (SELECT id FROM activity_tasks WHERE task_key = 'parent-code'), \
+                     'task', 'auth.rs - screenpipe', 'Code', 0.8, 'deterministic-v1')",
+            "INSERT INTO activity_tasks \
+               (task_key, parent_task_id, kind, title, app_name, confidence, producer) \
+             VALUES ('task-site', \
+                     (SELECT id FROM activity_tasks WHERE task_key = 'parent-code'), \
+                     'task', 'github.com', 'Chrome', 0.7, 'deterministic-v1')",
+            "INSERT INTO activity_intervals \
+               (interval_key, task_id, start_at, end_at, state, confidence, producer) \
+             VALUES ('ledger-code', \
+                     (SELECT id FROM activity_tasks WHERE task_key = 'task-code'), \
+                     '2026-09-16T08:00:00Z', '2026-09-16T08:30:00Z', 'final', 0.8, \
+                     'deterministic-v1')",
+            "INSERT INTO activity_intervals \
+               (interval_key, task_id, start_at, end_at, state, confidence, producer) \
+             VALUES ('ledger-site', \
+                     (SELECT id FROM activity_tasks WHERE task_key = 'task-site'), \
+                     '2026-09-16T08:30:00Z', '2026-09-16T08:50:00Z', 'final', 0.7, \
+                     'deterministic-v1')",
+        ] {
+            db.execute_raw_sql_write(statement).await.unwrap();
+        }
+
+        let by_activity = db
+            .list_journal_activity_intervals(
+                at("2026-09-16T00:00:00Z"),
+                at("2026-09-17T00:00:00Z"),
+            )
+            .await
+            .unwrap();
+        let intervals = by_activity.get(&ids[0]).unwrap();
+        assert_eq!(intervals.len(), 2);
+        // Ascending by start, with the task and parent titles resolved.
+        assert_eq!(intervals[0].interval_key, "ledger-code");
+        assert_eq!(intervals[0].app_name.as_deref(), Some("Code"));
+        assert_eq!(intervals[0].parent_title.as_deref(), Some("Code"));
+        assert_eq!(intervals[0].end_at, at("2026-09-16T08:30:00Z"));
+        assert_eq!(intervals[1].title, "github.com");
+        assert_eq!(intervals[1].app_name.as_deref(), Some("Chrome"));
+
+        // A link whose interval was reconciled away simply does not join.
+        db.execute_raw_sql_write("DELETE FROM activity_intervals WHERE interval_key = 'ledger-site'")
+            .await
+            .unwrap();
+        let by_activity = db
+            .list_journal_activity_intervals(
+                at("2026-09-16T00:00:00Z"),
+                at("2026-09-17T00:00:00Z"),
+            )
+            .await
+            .unwrap();
+        assert_eq!(by_activity.get(&ids[0]).unwrap().len(), 1);
+
+        // Outside the range, nothing comes back.
+        assert!(db
+            .list_journal_activity_intervals(
+                at("2026-09-20T00:00:00Z"),
+                at("2026-09-21T00:00:00Z"),
+            )
+            .await
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

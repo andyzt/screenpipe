@@ -197,6 +197,7 @@ pub fn previous_card(start: &str, end: &str, title: &str) -> ActivityCard {
         relation_reason: None,
         app_primary: None,
         app_secondary: None,
+        apps: Vec::new(),
         distractions: Vec::new(),
         evidence_count: 4,
     }

@@ -20,17 +20,19 @@ use axum::{
     http::StatusCode,
     response::Json as JsonResponse,
 };
-use chrono::{DateTime, Duration, NaiveDate, Utc};
+use chrono::{DateTime, Datelike, Duration, NaiveDate, Utc};
 use oasgen::{oasgen, OaSchema};
 use screenpipe_db::{JournalCategory, JournalCategoryDraft};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::HashSet;
 use std::sync::Arc;
 use tracing::error;
 
 use crate::history_access::HistoryAccessPolicy;
 use crate::journal::day::{
-    compute_day_totals, fallback_category_id, to_card, ActivityCard, DayTotals,
+    attach_card_apps, compute_by_app, compute_day_totals, fallback_category_id, to_card,
+    ActivityCard, CategoryMinutes, DayTotals,
 };
 use crate::journal::settings::JournalSettings;
 use crate::journal::time::{day_bounds, day_of};
@@ -113,16 +115,32 @@ pub async fn get_journal_day(
             .map_err(|_| bad_request("date must be YYYY-MM-DD"))?,
         None => day_of(now),
     };
+    let generation = generation_status(&state, now).await?;
+    Ok(JsonResponse(
+        build_journal_day(&state, date, now, generation).await?,
+    ))
+}
+
+/// One day's response. Split out of the handler because `GET /journal/week`
+/// serves exactly this body seven times over and the two must not drift.
+/// `generation` is passed in rather than read per day: it is process-wide
+/// state, and reading it seven times would load the settings file and build a
+/// generator seven times for one request.
+async fn build_journal_day(
+    state: &Arc<AppState>,
+    date: NaiveDate,
+    now: DateTime<Utc>,
+    generation: JournalGenerationStatus,
+) -> Result<JournalDayResponse, ApiError> {
     let (day_start, day_end) =
         day_bounds(date).ok_or_else(|| bad_request("date is not a representable local day"))?;
 
     // Same clamp as `/activity-ledger`: a restricted account sees an empty day
     // rather than history it is not entitled to.
     let (read_start, clamped_out) = clamp(&state.history_access, day_start, day_end, now);
-    let generation = generation_status(&state, now).await?;
 
     if clamped_out {
-        return Ok(JsonResponse(JournalDayResponse {
+        return Ok(JournalDayResponse {
             date: date.to_string(),
             day_start: day_start.to_rfc3339(),
             day_end: day_end.to_rfc3339(),
@@ -131,11 +149,11 @@ pub async fn get_journal_day(
             totals: DayTotals::default(),
             intentions: Vec::new(),
             activities: Vec::new(),
-        }));
+        });
     }
 
     let categories = state.db.list_journal_categories().await.map_err(internal)?;
-    let activities: Vec<ActivityCard> = state
+    let mut activities: Vec<ActivityCard> = state
         .db
         .list_journal_activities(read_start, day_end)
         .await
@@ -143,6 +161,13 @@ pub async fn get_journal_day(
         .into_iter()
         .map(|activity| to_card(activity, &categories))
         .collect();
+    // One query for the whole day, not one per card.
+    let linked_intervals = state
+        .db
+        .list_journal_activity_intervals(read_start, day_end)
+        .await
+        .map_err(internal)?;
+    attach_card_apps(&mut activities, &linked_intervals);
     let intentions = state
         .db
         .list_focus_intentions_overlapping(read_start, day_end)
@@ -152,10 +177,10 @@ pub async fn get_journal_day(
         .map(JournalIntention::from)
         .collect();
 
-    let data_status = day_data_status(&state, &activities, read_start, day_end, now).await;
+    let data_status = day_data_status(state, &activities, read_start, day_end, now).await;
     let totals = compute_day_totals(&activities);
 
-    Ok(JsonResponse(JournalDayResponse {
+    Ok(JournalDayResponse {
         date: date.to_string(),
         day_start: day_start.to_rfc3339(),
         day_end: day_end.to_rfc3339(),
@@ -164,7 +189,130 @@ pub async fn get_journal_day(
         totals,
         intentions,
         activities,
+    })
+}
+
+// ---------- GET /journal/week ----------
+
+/// How many days `GET /journal/week` serves. A week is a fixed window, not a
+/// range the client gets to widen: seven day queries is already the most work
+/// any journal read does.
+const WEEK_DAYS: i64 = 7;
+
+#[derive(Debug, Deserialize, OaSchema)]
+pub struct JournalWeekQuery {
+    /// Calendar date of the first day of the week. Defaults to the Monday of
+    /// the current local journal week.
+    #[serde(default)]
+    pub start: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, OaSchema)]
+pub struct JournalWeekResponse {
+    pub start: String,
+    pub end: String,
+    pub days: Vec<JournalDayResponse>,
+    pub totals: DayTotals,
+}
+
+#[oasgen]
+pub async fn get_journal_week(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<JournalWeekQuery>,
+) -> Result<JsonResponse<JournalWeekResponse>, ApiError> {
+    let now = Utc::now();
+    let dates = week_dates(query.start.as_deref(), day_of(now))?;
+    let generation = generation_status(&state, now).await?;
+
+    let mut days = Vec::with_capacity(dates.len());
+    for date in &dates {
+        days.push(build_journal_day(&state, *date, now, generation.clone()).await?);
+    }
+
+    let totals = week_totals(&days);
+    Ok(JsonResponse(JournalWeekResponse {
+        start: dates
+            .first()
+            .map(NaiveDate::to_string)
+            .unwrap_or_default(),
+        end: dates.last().map(NaiveDate::to_string).unwrap_or_default(),
+        days,
+        totals,
     }))
+}
+
+/// The seven dates a week request covers. Pure so the date handling is tested
+/// without standing up an `AppState`.
+fn week_dates(start: Option<&str>, today: NaiveDate) -> Result<Vec<NaiveDate>, ApiError> {
+    let start = match start {
+        Some(value) => value
+            .trim()
+            .parse::<NaiveDate>()
+            .map_err(|_| bad_request("start must be YYYY-MM-DD"))?,
+        None => monday_of(today),
+    };
+    (0..WEEK_DAYS)
+        .map(|offset| {
+            start
+                .checked_add_signed(Duration::days(offset))
+                .ok_or_else(|| bad_request("start is not a representable week"))
+        })
+        .collect()
+}
+
+/// The Monday of the journal week `date` belongs to. The 04:00 boundary has
+/// already been applied by `day_of` before this sees a date.
+fn monday_of(date: NaiveDate) -> NaiveDate {
+    date - Duration::days(date.weekday().num_days_from_monday() as i64)
+}
+
+/// The week's totals, folded from the seven day totals so a number in the
+/// week header is always the sum of the numbers under it. `by_app` is
+/// recomputed from the cards themselves (deduplicated by id, because a card
+/// straddling local 04:00 is served by both of its days) rather than summed
+/// from the per-day top-12 lists, so an app that is never any single day's
+/// twelfth can still make the week's list.
+fn week_totals(days: &[JournalDayResponse]) -> DayTotals {
+    let mut totals = DayTotals::default();
+    let mut by_category: Vec<CategoryMinutes> = Vec::new();
+    for day in days {
+        totals.active_minutes += day.totals.active_minutes;
+        totals.wall_minutes += day.totals.wall_minutes;
+        totals.focus_minutes += day.totals.focus_minutes;
+        totals.distraction_minutes += day.totals.distraction_minutes;
+        totals.idle_minutes += day.totals.idle_minutes;
+        totals.unknown_minutes += day.totals.unknown_minutes;
+        totals.longest_focus_block_minutes = totals
+            .longest_focus_block_minutes
+            .max(day.totals.longest_focus_block_minutes);
+        for entry in &day.totals.by_category {
+            match by_category
+                .iter_mut()
+                .find(|existing| existing.category_id == entry.category_id)
+            {
+                Some(existing) => existing.minutes += entry.minutes,
+                None => by_category.push(entry.clone()),
+            }
+        }
+    }
+    by_category.sort_by(|left, right| {
+        right
+            .minutes
+            .partial_cmp(&left.minutes)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| left.category_id.cmp(&right.category_id))
+    });
+    totals.by_category = by_category;
+
+    let mut seen: HashSet<i64> = HashSet::new();
+    let cards: Vec<ActivityCard> = days
+        .iter()
+        .flat_map(|day| day.activities.iter())
+        .filter(|card| seen.insert(card.id))
+        .cloned()
+        .collect();
+    totals.by_app = compute_by_app(&cards);
+    totals
 }
 
 // ---------- GET /journal/activities/{id} ----------
@@ -236,7 +384,20 @@ pub async fn get_journal_activity(
         ));
     };
 
-    let card = to_card(activity, &categories);
+    let mut card = to_card(activity, &categories);
+    // Same `apps` the day and week routes serve, so a client that drilled into
+    // a card does not see a different app list than the one it clicked.
+    if let (Some(start), Some(end)) = (
+        DateTime::parse_from_rfc3339(&card.start_at).ok(),
+        DateTime::parse_from_rfc3339(&card.end_at).ok(),
+    ) {
+        let linked = state
+            .db
+            .list_journal_activity_intervals(start.with_timezone(&Utc), end.with_timezone(&Utc))
+            .await
+            .map_err(internal)?;
+        attach_card_apps(std::slice::from_mut(&mut card), &linked);
+    }
     // The card's own span decides visibility, so a restricted account cannot
     // read an old card by guessing its id.
     if let Some(cutoff) = state.history_access.cutoff(Utc::now()) {
@@ -711,6 +872,124 @@ mod tests {
     }
 
     #[test]
+    fn a_week_defaults_to_the_monday_of_the_current_journal_week() {
+        // 2026-09-16 is a Wednesday.
+        let wednesday: NaiveDate = "2026-09-16".parse().unwrap();
+        let dates = week_dates(None, wednesday).unwrap();
+        assert_eq!(dates.len(), 7);
+        assert_eq!(dates.first().unwrap().to_string(), "2026-09-14");
+        assert_eq!(dates.last().unwrap().to_string(), "2026-09-20");
+        // A Monday and a Sunday both resolve to the week they belong to.
+        assert_eq!(monday_of("2026-09-14".parse().unwrap()).to_string(), "2026-09-14");
+        assert_eq!(monday_of("2026-09-20".parse().unwrap()).to_string(), "2026-09-14");
+    }
+
+    #[test]
+    fn a_week_is_always_seven_consecutive_days_from_start() {
+        let today: NaiveDate = "2026-09-16".parse().unwrap();
+        let dates = week_dates(Some(" 2026-09-14 "), today).unwrap();
+        let rendered: Vec<String> = dates.iter().map(NaiveDate::to_string).collect();
+        assert_eq!(
+            rendered,
+            vec![
+                "2026-09-14",
+                "2026-09-15",
+                "2026-09-16",
+                "2026-09-17",
+                "2026-09-18",
+                "2026-09-19",
+                "2026-09-20",
+            ]
+        );
+        // A non-Monday start is honoured as given: the client picks the anchor.
+        let dates = week_dates(Some("2026-09-17"), today).unwrap();
+        assert_eq!(dates.first().unwrap().to_string(), "2026-09-17");
+        assert_eq!(dates.last().unwrap().to_string(), "2026-09-23");
+        // And a month boundary is crossed without a gap.
+        let dates = week_dates(Some("2026-09-28"), today).unwrap();
+        assert_eq!(dates.last().unwrap().to_string(), "2026-10-04");
+    }
+
+    #[test]
+    fn a_week_with_an_unparseable_start_is_a_400() {
+        let today: NaiveDate = "2026-09-16".parse().unwrap();
+        for value in ["yesterday", "2026-13-01", "2026-09", ""] {
+            let (status, _) = week_dates(Some(value), today).unwrap_err();
+            assert_eq!(status, StatusCode::BAD_REQUEST, "accepted {value:?}");
+        }
+    }
+
+    #[test]
+    fn week_totals_fold_the_days_without_double_counting_a_straddling_card() {
+        let day = |date: &str, card: ActivityCard| JournalDayResponse {
+            date: date.to_string(),
+            day_start: String::new(),
+            day_end: String::new(),
+            data_status: "ok".to_string(),
+            generation: JournalGenerationStatus {
+                enabled: true,
+                provider_ready: true,
+                provider_message: None,
+                processing: false,
+                pending_windows: 0,
+                last_window_end_at: None,
+                last_error: None,
+            },
+            totals: compute_day_totals(std::slice::from_ref(&card)),
+            intentions: Vec::new(),
+            activities: vec![card],
+        };
+        let mut card = ActivityCard {
+            id: 7,
+            activity_key: "straddler".to_string(),
+            start_at: "2026-09-16T10:00:00Z".to_string(),
+            end_at: "2026-09-16T11:00:00Z".to_string(),
+            active_minutes: 50.0,
+            state: "final".to_string(),
+            producer: "llm-v1".to_string(),
+            title: "Work".to_string(),
+            summary: String::new(),
+            detailed_summary: None,
+            category: crate::journal::day::CardCategory {
+                id: "work".to_string(),
+                name: "Work".to_string(),
+                color_hex: "#B984FF".to_string(),
+                is_system: false,
+                is_idle: false,
+            },
+            category_confidence: 0.5,
+            intention: None,
+            intention_relation: None,
+            relation_confidence: None,
+            relation_reason: None,
+            app_primary: None,
+            app_secondary: None,
+            apps: vec![crate::journal::day::CardApp {
+                name: "Code".to_string(),
+                host: None,
+                minutes: 40.0,
+            }],
+            distractions: Vec::new(),
+            evidence_count: 0,
+        };
+        let first = day("2026-09-16", card.clone());
+        card.id = 8;
+        let second = day("2026-09-17", card);
+        let totals = week_totals(&[first.clone(), second]);
+        assert_eq!(totals.focus_minutes, 120.0);
+        assert_eq!(totals.longest_focus_block_minutes, 60.0);
+        assert_eq!(totals.by_category.len(), 1);
+        assert_eq!(totals.by_category[0].minutes, 120.0);
+        assert_eq!(totals.by_app.len(), 1);
+        assert_eq!(totals.by_app[0].minutes, 80.0);
+
+        // The same card id in two days (a card straddling local 04:00) is
+        // counted once by `by_app`.
+        let totals = week_totals(&[first.clone(), first]);
+        assert_eq!(totals.by_app[0].minutes, 40.0);
+    }
+
+    #[test]
     fn activity_response_schema_flattens_the_card_without_panicking() {
         // oasgen's derive panics on `#[serde(flatten)]` while the router is
         // built, which took the whole local API down at startup once. The
@@ -724,5 +1003,19 @@ mod tests {
             assert!(object.properties.contains_key(key), "missing property {key}");
         }
         assert!(object.required.iter().any(|k| k == "evidence"));
+    }
+
+    #[test]
+    fn the_week_response_schema_builds_without_panicking() {
+        // oasgen's derive panics while the router is built if a response shape
+        // it cannot describe slips in. The week response nests seven full day
+        // responses, so exercise it here rather than at process startup.
+        let schema = <JournalWeekResponse as OaSchema>::schema();
+        let oasgen::SchemaKind::Type(oasgen::Type::Object(object)) = schema.kind else {
+            panic!("week response must be an object schema");
+        };
+        for key in ["start", "end", "days", "totals"] {
+            assert!(object.properties.contains_key(key), "missing property {key}");
+        }
     }
 }

@@ -54,6 +54,14 @@ function fullDayFixture(): JournalDayPayload {
         { category_id: "work", name: "Work", color_hex: "#B984FF", minutes: 240.0 },
         { category_id: "personal", name: "Personal", color_hex: "#00AAFF", minutes: 32.5 },
       ],
+      by_app: [
+        { name: "Code", host: null, minutes: 180.0 },
+        { name: "Chrome", host: "github.com", minutes: 60.0 },
+        { name: "Chrome", host: "news.example.com", minutes: 22.0 },
+        { name: "Mail", host: null, minutes: 20.0 },
+        { name: "Slack", host: null, minutes: 12.0 },
+        { name: "Terminal", host: null, minutes: 8.0 },
+      ],
     },
     intentions: [],
     activities: [
@@ -77,6 +85,12 @@ function fullDayFixture(): JournalDayPayload {
         relation_reason: "Editor and test runner on the auth repo the whole time.",
         app_primary: "code.visualstudio.com",
         app_secondary: "github.com",
+        apps: [
+          { name: "Code", host: null, minutes: 30.0 },
+          { name: "Chrome", host: "github.com", minutes: 8.0 },
+          { name: "Slack", host: null, minutes: 2.0 },
+          { name: "Terminal", host: null, minutes: 1.5 },
+        ],
         distractions: [
           {
             start_at: "2026-09-16T08:30:00Z",
@@ -118,12 +132,16 @@ describe("formatJournalDay", () => {
     expect(text).toContain(
       "Active 312.5 min · Focus 240 min · Distraction 22 min · Idle 60 min · Longest focus block 84 min · Top categories: Work 240m, Personal 32.5m",
     );
+    expect(text).toContain(
+      "Top apps: Code, Chrome (github.com), Chrome (news.example.com), Mail, Slack (+1)",
+    );
     // No generation line: provider ready and no pending windows.
     expect(text).not.toContain("Card generation not ready");
     expect(text).not.toContain("Generating cards");
 
     expect(text).toContain(
-      "#42 01:15–01:59 (41.5 min est.) [Work] Investigated refresh-token failures in the auth service",
+      "#42 01:15–01:59 (41.5 min est.) [Work] Investigated refresh-token failures in the auth service" +
+        " · apps: Code, Chrome (github.com), Slack (+1)",
     );
     expect(text).toContain(
       "  Read the failing test output, traced the retry path, patched the session store.",
@@ -132,7 +150,10 @@ describe("formatJournalDay", () => {
     expect(text).toContain("  distraction: Checked X (3 min)");
 
     // Card with no active intention during it: no relation line, no distractions.
-    expect(text).toContain("#43 02:00–02:20 (20 min est.) [Personal] Read email");
+    // Card 43 carries no `apps` (older engine, or an idle/system card): the
+    // line renders exactly as it did before the field existed.
+    expect(text).toContain("#43 02:00–02:20 (20 min est.) [Personal] Read email\n");
+    expect(text).not.toContain("[Personal] Read email · apps:");
     expect(text).not.toContain("#43 02:00–02:20 (20 min est.) [Personal] Read email\n  →");
 
     expect(text).toContain("Use journal-activity with an id above for the full card");
@@ -213,6 +234,34 @@ describe("formatJournalDay", () => {
 
     expect(text).toContain("Generating cards: 3 window(s) pending, processing now.");
   });
+
+  it("omits the app lines entirely against an engine that does not send them", () => {
+    const fixture = fullDayFixture();
+    delete fixture.totals!.by_app;
+    for (const card of fixture.activities ?? []) delete card.apps;
+
+    const text = formatJournalDay(fixture);
+    expect(text).not.toContain("Top apps:");
+    expect(text).not.toContain(" · apps:");
+    // Everything else renders exactly as before.
+    expect(text).toContain(
+      "#42 01:15–01:59 (41.5 min est.) [Work] Investigated refresh-token failures in the auth service\n",
+    );
+  });
+
+  it("does not add a (+N) marker when every app fits", () => {
+    const fixture = fullDayFixture();
+    fixture.totals!.by_app = [
+      { name: "Code", host: null, minutes: 180 },
+      { name: "Chrome", host: "github.com", minutes: 60 },
+    ];
+    fixture.activities![0].apps = [{ name: "Code", host: null, minutes: 30 }];
+
+    const text = formatJournalDay(fixture);
+    expect(text).toContain("Top apps: Code, Chrome (github.com)");
+    expect(text).not.toContain("Top apps: Code, Chrome (github.com) (+");
+    expect(text).toContain("auth service · apps: Code\n");
+  });
 });
 
 function activityDetailFixture(): ActivityDetailPayload {
@@ -268,6 +317,17 @@ function activityDetailFixture(): ActivityDetailPayload {
 }
 
 describe("formatJournalActivity", () => {
+  it("prefers the ledger app list over app_primary/app_secondary when present", () => {
+    const fixture = activityDetailFixture();
+    fixture.apps = [
+      { name: "Code", host: null, minutes: 30 },
+      { name: "Chrome", host: "github.com", minutes: 8 },
+    ];
+    const text = formatJournalActivity(fixture, false);
+    expect(text).toContain("Apps: Code, Chrome (github.com)");
+    expect(text).not.toContain("Apps: code.visualstudio.com, github.com");
+  });
+
   it("renders the full card without evidence when not requested", () => {
     const text = formatJournalActivity(activityDetailFixture(), false);
 

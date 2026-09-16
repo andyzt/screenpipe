@@ -1,7 +1,7 @@
 # Journal and focus API contract (MVP)
 
 <!-- doc-covers: crates/screenpipe-engine/src/routes/journal.rs, crates/screenpipe-engine/src/routes/focus.rs, crates/screenpipe-engine/src/focus, packages/screenpipe-mcp/src/index.ts, apps/screenpipe-app-tauri/components/journal -->
-<!-- doc-verified: 42bd8e9ce -->
+<!-- doc-verified: c26d61b14 -->
 > **Current.** The shared contract between the engine routes, the desktop
 > journal UI, the browser mock and the MCP tools. Change it here first; every
 > consumer follows this file. Companion: `docs/MVP_IMPLEMENTATION_PLAN.md`.
@@ -46,6 +46,10 @@ time zone.
     "longest_focus_block_minutes": 84.0,
     "by_category": [
       { "category_id": "work", "name": "Work", "color_hex": "#B984FF", "minutes": 240.0 }
+    ],
+    "by_app": [
+      { "name": "Code", "host": null, "minutes": 180.0 },
+      { "name": "Chrome", "host": "github.com", "minutes": 60.0 }
     ]
   },
   "intentions": [ { "...": "Intention objects active during the day" } ],
@@ -58,6 +62,9 @@ named "Distraction", minus `distractions[]` sub-intervals.
 `distraction_minutes` = minutes of "Distraction"-category cards plus
 `distractions[]` sub-intervals inside other cards. `longest_focus_block_minutes`
 merges focus intervals separated by less than 5 minutes.
+
+`by_app` is every card's `apps` summed, top 12, descending by `minutes` with
+ties broken by `name` then `host`.
 
 ### ActivityCard
 
@@ -84,6 +91,10 @@ merges focus intervals separated by less than 5 minutes.
   "relation_reason": "Editor and test runner on the auth repo the whole time.",
   "app_primary": "code.visualstudio.com",
   "app_secondary": "github.com",
+  "apps": [
+    { "name": "Code", "host": null, "minutes": 30.0 },
+    { "name": "Chrome", "host": "github.com", "minutes": 8.0 }
+  ],
   "distractions": [
     { "start_at": "2026-09-16T08:30:00Z", "end_at": "2026-09-16T08:33:00Z",
       "title": "Checked X", "summary": "Scrolled the feed for three minutes." }
@@ -92,10 +103,63 @@ merges focus intervals separated by less than 5 minutes.
 }
 ```
 
+### CardApp
+
+```json
+{ "name": "Chrome", "host": "github.com", "minutes": 60.0 }
+```
+
+`name` is the app the ledger attributed the time to (the interval's
+`app_name`, falling back to its parent task's title). `host` is the browser
+host when the ledger named that interval after a site, and `null` otherwise —
+including for a browser interval the ledger named after a window or document
+title. `minutes` is an estimate.
+
+A card's `apps` is the top 6, descending by `minutes` with ties broken by
+`name` then `host`. They come from the ledger intervals linked to the card
+through `journal_activity_intervals`, clipped to the card's own span, and the
+minutes are wall-clock overlap: a ledger interval is already gap-free, because
+the segmenter emits a separate `unobserved` interval for every unobserved gap
+and those are excluded here. Idle and system cards always report `[]`.
+
 `intention`, `intention_relation`, `relation_confidence`, `relation_reason`
 are `null` when no intention was active during the card.
 `category` is never null; deterministic cards use the seeded fallback category
 (first non-system category) with `category_confidence` 0.
+
+## GET /journal/week?start=YYYY-MM-DD
+
+`start` is the first day of the week and defaults to the Monday of the current
+local journal week; the desktop client passes the Monday explicitly. Exactly
+seven days are returned, starting at `start`, whatever weekday it names. Each
+entry of `days` is the complete `GET /journal/day` body for that date, in
+order, and each is clamped by the history-access policy on its own.
+
+```json
+{
+  "start": "2026-09-14",
+  "end": "2026-09-20",
+  "days": [ { "...": "the full GET /journal/day response for each date, in order" } ],
+  "totals": {
+    "active_minutes": 1840.0,
+    "wall_minutes": 2760.0,
+    "focus_minutes": 1420.0,
+    "distraction_minutes": 130.0,
+    "idle_minutes": 310.0,
+    "unknown_minutes": 0.0,
+    "longest_focus_block_minutes": 96.0,
+    "by_category": [ { "category_id": "work", "name": "Work", "color_hex": "#B984FF", "minutes": 1420.0 } ],
+    "by_app": [ { "name": "Code", "host": null, "minutes": 900.0 } ]
+  }
+}
+```
+
+The week's minute totals are the seven days' totals summed;
+`longest_focus_block_minutes` is the largest of the seven, not a block merged
+across the 04:00 boundary. `by_app` is the top 12 across the week, summed from
+the cards themselves (deduplicated by card id, because a card straddling local
+04:00 is served by both of its days) rather than from the per-day top-12 lists.
+An unparseable `start` is a 400.
 
 ## GET /journal/activities/{id}?include_evidence=true
 
@@ -114,8 +178,8 @@ Returns one ActivityCard plus:
 }
 ```
 
-Evidence is sampled (at most 24 rows, evenly spaced) and ordered by
-`occurred_at`. `frame_id` is set for frame evidence so a client can call the
+`apps` is filled here exactly as it is on the day and week routes. Evidence is
+sampled (at most 24 rows, evenly spaced) and ordered by `occurred_at`. `frame_id` is set for frame evidence so a client can call the
 existing `GET /frames/{id}/context` or open the timeline at that moment.
 
 ## GET /journal/status

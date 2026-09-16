@@ -61,7 +61,30 @@ pub const MAX_ATTEMPTS: usize = 3;
 
 /// One provider call may take this long. Local models on a cold cache are
 /// genuinely slow, and the worker is not holding a transaction.
-pub const REQUEST_TIMEOUT: StdDuration = StdDuration::from_secs(120);
+pub const REQUEST_TIMEOUT: StdDuration = StdDuration::from_secs(180);
+
+/// DeepSeek's V4 models reason before answering. On a real 15-minute window
+/// the vision-exp model spent ~9k reasoning tokens and a minute before the
+/// first byte of JSON, which is what made the first live window time out.
+/// Card generation never sends images, so a DeepSeek vision preset is served
+/// by its text sibling, thinking is switched off, and output is capped.
+pub const DEEPSEEK_JOURNAL_MODEL: &str = "deepseek/deepseek-v4-flash";
+pub const DEEPSEEK_MAX_TOKENS: u32 = 4096;
+
+/// The model the journal actually sends for a preset. Only DeepSeek vision
+/// models are rewritten; every other preset keeps the user's choice.
+pub fn journal_model_for(provider: &str, model: &str) -> String {
+    if provider == "deepseek" && model.to_ascii_lowercase().contains("vision") {
+        // Keep the id style the gateway expects (prefixed vs bare).
+        if model.contains('/') {
+            DEEPSEEK_JOURNAL_MODEL.to_string()
+        } else {
+            DEEPSEEK_JOURNAL_MODEL.trim_start_matches("deepseek/").to_string()
+        }
+    } else {
+        model.to_string()
+    }
+}
 
 /// Providers that cannot serve an OpenAI-compatible `chat/completions` call.
 /// `acp` and `pi` are agent runtimes, not chat endpoints.
@@ -136,6 +159,9 @@ pub struct ChatClient {
     model: String,
     /// Ollama and friends reject `json_schema`; start one rung lower.
     schema_supported: bool,
+    /// DeepSeek: send `thinking: disabled` and `max_tokens` (see
+    /// [`journal_model_for`]).
+    deepseek: bool,
 }
 
 impl ChatClient {
@@ -157,8 +183,9 @@ impl ChatClient {
                 .map_err(|error| ChatError::Unreachable(error.to_string()))?,
             url: upstream.url,
             api_key: upstream.api_key,
-            model: upstream.model,
+            model: journal_model_for(provider, &upstream.model),
             schema_supported: !matches!(provider, "native-ollama" | "ollama"),
+            deepseek: provider == "deepseek",
         })
     }
 
@@ -174,7 +201,14 @@ impl ChatClient {
             api_key,
             model,
             schema_supported,
+            deepseek: false,
         }
+    }
+
+    /// Apply DeepSeek request tuning (no thinking, capped output).
+    pub fn with_deepseek_tuning(mut self, enabled: bool) -> Self {
+        self.deepseek = enabled;
+        self
     }
 
     pub fn model(&self) -> &str {
@@ -233,6 +267,10 @@ impl ChatClient {
                 {"role": "user", "content": user},
             ],
         });
+        if self.deepseek {
+            body["thinking"] = json!({"type": "disabled"});
+            body["max_tokens"] = json!(DEEPSEEK_MAX_TOKENS);
+        }
         match mode {
             JsonMode::Schema => {
                 if let Some(schema) = schema {
@@ -647,6 +685,18 @@ fn parse(value: &str) -> Option<DateTime<Utc>> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn deepseek_vision_presets_generate_cards_with_the_text_model() {
+        assert_eq!(
+            journal_model_for("deepseek", "deepseek/deepseek-v4-flash-vision-exp"),
+            "deepseek/deepseek-v4-flash"
+        );
+        assert_eq!(journal_model_for("deepseek", "deepseek-v4-flash-vision-exp"), "deepseek-v4-flash");
+        assert_eq!(journal_model_for("deepseek", "deepseek/deepseek-v4-pro"), "deepseek/deepseek-v4-pro");
+        assert_eq!(journal_model_for("openai", "gpt-vision"), "gpt-vision");
+        assert_eq!(journal_model_for("native-ollama", "qwen3-vision"), "qwen3-vision");
+    }
+
     use super::*;
     use crate::journal::test_support::{compiled_fixture, context, load_fixture, previous_card};
     use wiremock::matchers::{body_string_contains, method, path};

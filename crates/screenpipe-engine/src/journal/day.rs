@@ -17,8 +17,9 @@
 
 use chrono::{DateTime, Utc};
 use oasgen::OaSchema;
-use screenpipe_db::{JournalActivity, JournalCategory};
+use screenpipe_db::{JournalActivity, JournalCategory, JournalLedgerInterval};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 use super::time::FOCUS_BLOCK_MERGE_GAP;
 
@@ -29,6 +30,16 @@ pub const DISTRACTION_CATEGORY_ID: &str = "distraction";
 
 /// Category used for error cards so a failed window leaves no hole in the day.
 pub const SYSTEM_CATEGORY_ID: &str = "system";
+
+/// How many apps a single card reports. Six is what the week view can render
+/// in a card row without turning into a legend.
+pub const CARD_APPS_LIMIT: usize = 6;
+
+/// How many apps a day or a week reports in `totals.by_app`.
+pub const DAY_APPS_LIMIT: usize = 12;
+
+/// Ledger task kind for the gaps between observations. Never an app.
+const UNOBSERVED_TASK_KIND: &str = "unobserved";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, OaSchema)]
 pub struct CardCategory {
@@ -65,6 +76,16 @@ pub struct CardDistraction {
     pub summary: String,
 }
 
+/// One app (optionally one site inside it) and how long a card or a day spent
+/// there. `minutes` is an estimate like every other minutes figure in this
+/// module.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, OaSchema)]
+pub struct CardApp {
+    pub name: String,
+    pub host: Option<String>,
+    pub minutes: f64,
+}
+
 /// One journal card, exactly as `GET /journal/day` and
 /// `GET /journal/activities/{id}` serve it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, OaSchema)]
@@ -87,6 +108,10 @@ pub struct ActivityCard {
     pub relation_reason: Option<String>,
     pub app_primary: Option<String>,
     pub app_secondary: Option<String>,
+    /// Top [`CARD_APPS_LIMIT`] apps of this card, descending by minutes.
+    /// Empty until [`attach_card_apps`] has run, and empty for idle and
+    /// system cards by definition.
+    pub apps: Vec<CardApp>,
     pub distractions: Vec<CardDistraction>,
     pub evidence_count: i64,
 }
@@ -109,6 +134,7 @@ pub struct DayTotals {
     pub unknown_minutes: f64,
     pub longest_focus_block_minutes: f64,
     pub by_category: Vec<CategoryMinutes>,
+    pub by_app: Vec<CardApp>,
 }
 
 /// Project a stored card onto the API shape, resolving its category against
@@ -149,6 +175,7 @@ pub fn to_card(activity: JournalActivity, categories: &[JournalCategory]) -> Act
         relation_reason: activity.relation_reason,
         app_primary: activity.app_primary,
         app_secondary: activity.app_secondary,
+        apps: Vec::new(),
         distractions: activity
             .distractions
             .into_iter()
@@ -183,6 +210,179 @@ pub fn fallback_category(categories: &[JournalCategory]) -> CardCategory {
 pub fn fallback_category_id(categories: &[JournalCategory]) -> String {
     fallback_category(categories).id
 }
+
+/// Fill `apps` on every card from the ledger intervals linked to it.
+///
+/// Idle and system cards stay empty: an idle card is the absence of work, and
+/// a system card is a failed window — naming apps on either would be a claim
+/// the pipeline cannot make.
+pub fn attach_card_apps(
+    cards: &mut [ActivityCard],
+    intervals_by_activity: &HashMap<i64, Vec<JournalLedgerInterval>>,
+) {
+    for card in cards.iter_mut() {
+        if card.category.is_idle || card.category.is_system {
+            card.apps = Vec::new();
+            continue;
+        }
+        let (Some(start), Some(end)) = (parse(&card.start_at), parse(&card.end_at)) else {
+            card.apps = Vec::new();
+            continue;
+        };
+        let Some(intervals) = intervals_by_activity.get(&card.id) else {
+            card.apps = Vec::new();
+            continue;
+        };
+        card.apps = compute_card_apps((start, end), intervals);
+    }
+}
+
+/// Which apps a card's span was spent in, from the ledger intervals linked to
+/// it through `journal_activity_intervals`.
+///
+/// **Minutes are wall-clock overlap**, not [`active_minutes_in_span`]. The
+/// read path never loads frame samples — a day of frames is tens of thousands
+/// of rows and this runs on every `GET /journal/day` — and a ledger interval
+/// is already gap-free by construction: the segmenter closes a segment at an
+/// unobserved gap and emits a separate `unobserved` interval for the hole. So
+/// overlap of a linked interval with the card is the same quantity
+/// `active_minutes_in_span` would report over the same frames, up to the
+/// sub-`IDLE_GAP` tail at each segment edge.
+///
+/// [`active_minutes_in_span`]: super::time::active_minutes_in_span
+pub fn compute_card_apps(
+    card_span: (DateTime<Utc>, DateTime<Utc>),
+    intervals: &[JournalLedgerInterval],
+) -> Vec<CardApp> {
+    let (span_start, span_end) = card_span;
+    if span_end <= span_start {
+        return Vec::new();
+    }
+    let mut minutes: HashMap<(String, Option<String>), f64> = HashMap::new();
+    for interval in intervals {
+        // The gaps between observations are not an app.
+        if interval.kind == UNOBSERVED_TASK_KIND {
+            continue;
+        }
+        let from = interval.start_at.max(span_start);
+        let to = interval.end_at.min(span_end);
+        if to <= from {
+            continue;
+        }
+        let Some(name) = app_name_of(interval) else {
+            continue;
+        };
+        *minutes
+            .entry((name, host_of_title(&interval.title)))
+            .or_insert(0.0) += minutes_between(from, to);
+    }
+    rank_apps(minutes, CARD_APPS_LIMIT)
+}
+
+/// The day's (or week's) apps: every card's `apps` summed, top
+/// [`DAY_APPS_LIMIT`]. Runs over the same truncated per-card lists a client
+/// sees, so a number in `totals.by_app` is always reproducible from the cards
+/// next to it.
+pub fn compute_by_app(cards: &[ActivityCard]) -> Vec<CardApp> {
+    let mut minutes: HashMap<(String, Option<String>), f64> = HashMap::new();
+    for card in cards {
+        for app in &card.apps {
+            *minutes
+                .entry((app.name.clone(), app.host.clone()))
+                .or_insert(0.0) += app.minutes;
+        }
+    }
+    rank_apps(minutes, DAY_APPS_LIMIT)
+}
+
+/// Descending by minutes, then by name and host so equal minutes never
+/// reorder between two reads of the same day.
+fn rank_apps(minutes: HashMap<(String, Option<String>), f64>, limit: usize) -> Vec<CardApp> {
+    let mut apps: Vec<CardApp> = minutes
+        .into_iter()
+        .map(|((name, host), minutes)| CardApp {
+            name,
+            host,
+            minutes,
+        })
+        .collect();
+    apps.sort_by(|left, right| {
+        right
+            .minutes
+            .partial_cmp(&left.minutes)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| left.name.cmp(&right.name))
+            .then_with(|| left.host.cmp(&right.host))
+    });
+    apps.truncate(limit);
+    apps
+}
+
+/// The app a ledger interval belongs to: the task's own `app_name`, falling
+/// back to the parent task's title (the ledger's per-app grouping row).
+fn app_name_of(interval: &JournalLedgerInterval) -> Option<String> {
+    interval
+        .app_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            interval
+                .parent_title
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        })
+        .map(str::to_string)
+}
+
+/// A browser host, when the ledger titled this interval after a site.
+///
+/// The ledger names a task after its browser host only when no document path,
+/// window title or semantic title was meaningful, and it stores the bare host
+/// string as the title — there is no separate column saying "this one is a
+/// site". So the title is matched back against the shape of a hostname:
+/// labels of `[a-z0-9-_]`, at least two of them, an alphabetic last label of
+/// two or more characters, and no whitespace. Document-derived titles are file
+/// names and hit the same shape (`auth.rs`), so a file-extension denylist
+/// rejects them. The cost of the ambiguity is a `null` host, never a wrong
+/// app name.
+fn host_of_title(title: &str) -> Option<String> {
+    let value = title.trim().to_lowercase();
+    if value.is_empty() || value.len() > 253 || value.contains(char::is_whitespace) {
+        return None;
+    }
+    if !value
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.' || c == '_')
+    {
+        return None;
+    }
+    let labels: Vec<&str> = value.split('.').collect();
+    if labels.len() < 2 || labels.iter().any(|label| label.is_empty()) {
+        return None;
+    }
+    let tld = labels[labels.len() - 1];
+    if tld.len() < 2 || !tld.chars().all(|c| c.is_ascii_alphabetic()) {
+        return None;
+    }
+    if FILE_EXTENSIONS.contains(&tld) {
+        return None;
+    }
+    Some(value)
+}
+
+/// Last labels that are far more often a file than a top-level domain. Some
+/// (`sh`, `md`, `io`) really are TLDs; a document called `notes.md` is the
+/// commoner case on a developer's machine, and losing a host is cheaper than
+/// inventing one.
+const FILE_EXTENSIONS: &[&str] = &[
+    "bak", "cfg", "conf", "cpp", "css", "csv", "docx", "env", "gif", "go", "gz", "hpp", "htm",
+    "html", "ini", "ipynb", "java", "jpeg", "jpg", "js", "json", "jsx", "key", "kt", "lock", "log",
+    "md", "mov", "numbers", "pages", "pdf", "php", "png", "pptx", "py", "rb", "rs", "scss", "sh",
+    "sql", "svg", "swift", "toml", "ts", "tsv", "tsx", "txt", "wav", "xlsx", "xml", "yaml", "yml",
+    "zip",
+];
 
 /// Day arithmetic over the cards of one day.
 ///
@@ -251,6 +451,7 @@ pub fn compute_day_totals(cards: &[ActivityCard]) -> DayTotals {
             .then_with(|| left.category_id.cmp(&right.category_id))
     });
     totals.by_category = by_category;
+    totals.by_app = compute_by_app(cards);
     totals
 }
 
@@ -366,6 +567,7 @@ mod tests {
             relation_reason: None,
             app_primary: None,
             app_secondary: None,
+            apps: Vec::new(),
             distractions: Vec::new(),
             evidence_count: 0,
         }
@@ -462,6 +664,257 @@ mod tests {
         let totals = compute_day_totals(&[overlapped]);
         assert_eq!(totals.distraction_minutes, 15.0);
         assert_eq!(totals.focus_minutes, 45.0);
+    }
+
+    fn at(value: &str) -> DateTime<Utc> {
+        value.parse().unwrap()
+    }
+
+    fn interval(
+        key: &str,
+        app: Option<&str>,
+        parent: Option<&str>,
+        title: &str,
+        start: &str,
+        end: &str,
+    ) -> JournalLedgerInterval {
+        JournalLedgerInterval {
+            interval_key: key.to_string(),
+            task_key: format!("task-{key}"),
+            kind: "task".to_string(),
+            title: title.to_string(),
+            parent_title: parent.map(str::to_string),
+            app_name: app.map(str::to_string),
+            start_at: at(start),
+            end_at: at(end),
+        }
+    }
+
+    #[test]
+    fn card_apps_clip_intervals_to_the_card_and_rank_by_minutes() {
+        let span = (at("2026-09-16T08:00:00Z"), at("2026-09-16T09:00:00Z"));
+        let intervals = vec![
+            // Starts before the card: only the 10 minutes inside it count.
+            interval(
+                "a",
+                Some("Code"),
+                Some("Code"),
+                "auth.rs - screenpipe",
+                "2026-09-16T07:30:00Z",
+                "2026-09-16T08:10:00Z",
+            ),
+            // Runs past the end: only the 20 minutes inside it count.
+            interval(
+                "b",
+                Some("Chrome"),
+                Some("Chrome"),
+                "github.com",
+                "2026-09-16T08:40:00Z",
+                "2026-09-16T09:30:00Z",
+            ),
+            // Entirely outside: nothing.
+            interval(
+                "c",
+                Some("Slack"),
+                Some("Slack"),
+                "Slack",
+                "2026-09-16T10:00:00Z",
+                "2026-09-16T11:00:00Z",
+            ),
+            // Second slice of the same app+host merges with the first.
+            interval(
+                "d",
+                Some("Code"),
+                Some("Code"),
+                "auth.rs - screenpipe",
+                "2026-09-16T08:10:00Z",
+                "2026-09-16T08:25:00Z",
+            ),
+        ];
+        let apps = compute_card_apps(span, &intervals);
+        assert_eq!(apps.len(), 2);
+        assert_eq!(apps[0].name, "Code");
+        assert_eq!(apps[0].host, None);
+        assert_eq!(apps[0].minutes, 25.0);
+        assert_eq!(apps[1].name, "Chrome");
+        assert_eq!(apps[1].host.as_deref(), Some("github.com"));
+        assert_eq!(apps[1].minutes, 20.0);
+    }
+
+    #[test]
+    fn card_apps_are_capped_at_six_and_prefer_the_longest() {
+        let span = (at("2026-09-16T08:00:00Z"), at("2026-09-16T10:00:00Z"));
+        // Eight apps, each one minute longer than the last.
+        let intervals: Vec<JournalLedgerInterval> = (0..8)
+            .map(|index| {
+                let start = 8 * 60 + index * 10;
+                JournalLedgerInterval {
+                    interval_key: format!("k{index}"),
+                    task_key: format!("t{index}"),
+                    kind: "task".to_string(),
+                    title: format!("App {index} window"),
+                    parent_title: Some(format!("App {index}")),
+                    app_name: Some(format!("App {index}")),
+                    start_at: at("2026-09-16T00:00:00Z") + chrono::Duration::minutes(start),
+                    end_at: at("2026-09-16T00:00:00Z")
+                        + chrono::Duration::minutes(start + 1 + index),
+                }
+            })
+            .collect();
+        let apps = compute_card_apps(span, &intervals);
+        assert_eq!(apps.len(), CARD_APPS_LIMIT);
+        assert_eq!(apps[0].name, "App 7");
+        assert_eq!(apps[0].minutes, 8.0);
+        assert_eq!(apps[CARD_APPS_LIMIT - 1].name, "App 2");
+    }
+
+    #[test]
+    fn unobserved_intervals_are_not_apps_and_idle_cards_report_none() {
+        let span = (at("2026-09-16T08:00:00Z"), at("2026-09-16T09:00:00Z"));
+        let mut gap = interval(
+            "gap",
+            None,
+            Some("Unobserved"),
+            "Unobserved time",
+            "2026-09-16T08:00:00Z",
+            "2026-09-16T09:00:00Z",
+        );
+        gap.kind = "unobserved".to_string();
+        assert!(compute_card_apps(span, &[gap.clone()]).is_empty());
+
+        // And an idle card gets an empty list even if something is linked.
+        let idle = card(
+            "2026-09-16T08:00:00Z",
+            "2026-09-16T09:00:00Z",
+            category("idle", "Idle", true, true),
+        );
+        let mut cards = vec![idle, work("2026-09-16T09:00:00Z", "2026-09-16T09:30:00Z")];
+        cards[0].id = 1;
+        cards[1].id = 2;
+        let linked = HashMap::from([
+            (
+                1,
+                vec![interval(
+                    "x",
+                    Some("Code"),
+                    Some("Code"),
+                    "auth.rs - screenpipe",
+                    "2026-09-16T08:00:00Z",
+                    "2026-09-16T09:00:00Z",
+                )],
+            ),
+            (
+                2,
+                vec![interval(
+                    "y",
+                    Some("Code"),
+                    Some("Code"),
+                    "auth.rs - screenpipe",
+                    "2026-09-16T09:00:00Z",
+                    "2026-09-16T09:20:00Z",
+                )],
+            ),
+        ]);
+        attach_card_apps(&mut cards, &linked);
+        assert!(cards[0].apps.is_empty());
+        assert_eq!(cards[1].apps.len(), 1);
+        assert_eq!(cards[1].apps[0].minutes, 20.0);
+    }
+
+    #[test]
+    fn the_app_name_falls_back_to_the_parent_task_title() {
+        let span = (at("2026-09-16T08:00:00Z"), at("2026-09-16T09:00:00Z"));
+        let apps = compute_card_apps(
+            span,
+            &[
+                interval(
+                    "audio",
+                    None,
+                    Some("Audio"),
+                    "Unattributed audio",
+                    "2026-09-16T08:00:00Z",
+                    "2026-09-16T08:10:00Z",
+                ),
+                // Neither an app name nor a parent: not attributable at all.
+                interval(
+                    "orphan",
+                    None,
+                    None,
+                    "Something",
+                    "2026-09-16T08:10:00Z",
+                    "2026-09-16T08:30:00Z",
+                ),
+            ],
+        );
+        assert_eq!(apps.len(), 1);
+        assert_eq!(apps[0].name, "Audio");
+    }
+
+    #[test]
+    fn hosts_are_recognised_by_shape_and_file_names_are_not() {
+        assert_eq!(host_of_title("github.com"), Some("github.com".to_string()));
+        assert_eq!(
+            host_of_title("Docs.Google.COM"),
+            Some("docs.google.com".to_string())
+        );
+        assert_eq!(
+            host_of_title("my-app.internal.example.co.uk"),
+            Some("my-app.internal.example.co.uk".to_string())
+        );
+        // Window titles have spaces; bare app names have no dot.
+        assert_eq!(host_of_title("auth.rs - screenpipe"), None);
+        assert_eq!(host_of_title("Slack"), None);
+        assert_eq!(host_of_title("localhost"), None);
+        // Document file names share the shape, so known extensions are out.
+        assert_eq!(host_of_title("auth.rs"), None);
+        assert_eq!(host_of_title("notes.md"), None);
+        assert_eq!(host_of_title("Q3.xlsx"), None);
+        // A numeric last label is never a TLD.
+        assert_eq!(host_of_title("192.168.0.1"), None);
+        assert_eq!(host_of_title(""), None);
+    }
+
+    #[test]
+    fn by_app_sums_cards_and_keeps_host_and_app_apart() {
+        let mut one = work("2026-09-16T08:00:00Z", "2026-09-16T09:00:00Z");
+        one.apps = vec![
+            CardApp {
+                name: "Chrome".to_string(),
+                host: Some("github.com".to_string()),
+                minutes: 20.0,
+            },
+            CardApp {
+                name: "Chrome".to_string(),
+                host: None,
+                minutes: 5.0,
+            },
+        ];
+        let mut two = work("2026-09-16T09:00:00Z", "2026-09-16T10:00:00Z");
+        two.apps = vec![
+            CardApp {
+                name: "Chrome".to_string(),
+                host: Some("github.com".to_string()),
+                minutes: 10.0,
+            },
+            CardApp {
+                name: "Code".to_string(),
+                host: None,
+                minutes: 30.0,
+            },
+        ];
+        let by_app = compute_by_app(&[one.clone(), two.clone()]);
+        assert_eq!(by_app.len(), 3);
+        assert_eq!(by_app[0].name, "Chrome");
+        assert_eq!(by_app[0].host.as_deref(), Some("github.com"));
+        assert_eq!(by_app[0].minutes, 30.0);
+        assert_eq!(by_app[1].name, "Code");
+        assert_eq!(by_app[1].minutes, 30.0);
+        assert_eq!(by_app[2].name, "Chrome");
+        assert_eq!(by_app[2].host, None);
+        assert_eq!(by_app[2].minutes, 5.0);
+
+        // And the day totals carry the same list.
+        assert_eq!(compute_day_totals(&[one, two]).by_app, by_app);
     }
 
     #[test]

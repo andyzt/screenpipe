@@ -53,7 +53,7 @@ use crate::{
         },
         journal::{
             get_journal_activity, get_journal_categories, get_journal_day, get_journal_status,
-            put_journal_categories, regenerate_journal_day,
+            get_journal_week, put_journal_categories, regenerate_journal_day,
         },
         meetings::{
             bulk_delete_meetings_handler, delete_meeting_handler, export_handler,
@@ -1020,6 +1020,7 @@ impl SCServer {
             .get("/activity-summary", get_activity_summary)
             .get("/activity-ledger", get_activity_ledger)
             .get("/journal/day", get_journal_day)
+            .get("/journal/week", get_journal_week)
             .get("/journal/activities/:id", get_journal_activity)
             .get("/journal/status", get_journal_status)
             .post("/journal/regenerate", regenerate_journal_day)

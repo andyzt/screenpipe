@@ -44,8 +44,15 @@ export type ActivityCard = {
   relation_reason?: string | null;
   app_primary?: string;
   app_secondary?: string;
+  apps?: CardApp[];
   distractions?: Distraction[];
   evidence_count?: number;
+};
+
+export type CardApp = {
+  name?: string;
+  host?: string | null;
+  minutes?: number;
 };
 
 export type CategoryTotal = {
@@ -74,6 +81,7 @@ export type DayTotals = {
   unknown_minutes?: number;
   longest_focus_block_minutes?: number;
   by_category?: CategoryTotal[];
+  by_app?: CardApp[];
 };
 
 export type JournalDayPayload = {
@@ -180,6 +188,26 @@ function capText(text: string | null | undefined, max = SUMMARY_CAP): string {
   return `${text.slice(0, Math.max(0, max - 1))}…`;
 }
 
+// An app entry reads as "Chrome (github.com)" when the engine resolved a
+// browser host inside the app, and just "Chrome" otherwise. Older engines do
+// not send `apps`/`by_app` at all, so every caller below tolerates absence.
+const CARD_APPS_SHOWN = 3;
+const DAY_APPS_SHOWN = 5;
+
+function appLabel(app: CardApp): string {
+  const name = app.name || "?";
+  return app.host ? `${name} (${app.host})` : name;
+}
+
+// `<a>, <b> (+N)` — the first `shown` entries, then how many were left out.
+function appList(apps: CardApp[] | undefined, shown: number): string | undefined {
+  const entries = (apps ?? []).filter((app) => app && (app.name || app.host));
+  if (!entries.length) return undefined;
+  const head = entries.slice(0, shown).map(appLabel).join(", ");
+  const rest = entries.length - Math.min(shown, entries.length);
+  return rest > 0 ? `${head} (+${rest})` : head;
+}
+
 function categoryLabel(category: Category | undefined): string {
   return category?.name || category?.id || "Uncategorized";
 }
@@ -226,6 +254,8 @@ export function formatJournalDay(data: JournalDayPayload): string {
         `Longest focus block ${formatMinutes(totals.longest_focus_block_minutes)} min` +
         (topCategories ? ` · Top categories: ${topCategories}` : ""),
     );
+    const topApps = appList(totals.by_app, DAY_APPS_SHOWN);
+    if (topApps) lines.push(`Top apps: ${topApps}`);
   }
 
   const activities = data.activities ?? [];
@@ -238,9 +268,11 @@ export function formatJournalDay(data: JournalDayPayload): string {
     const block: string[] = [];
     const start = localHHMM(card.start_at);
     const end = localHHMM(card.end_at);
+    const cardApps = appList(card.apps, CARD_APPS_SHOWN);
     block.push(
       `#${card.id} ${start}–${end} (${formatMinutes(card.active_minutes)} min est.) ` +
-        `[${categoryLabel(card.category)}] ${card.title || "(untitled)"}`,
+        `[${categoryLabel(card.category)}] ${card.title || "(untitled)"}` +
+        (cardApps ? ` · apps: ${cardApps}` : ""),
     );
     if (card.summary) {
       block.push(`  ${capText(card.summary)}`);
@@ -289,8 +321,10 @@ export function formatJournalActivity(
     lines.push(`Relation: ${data.intention_relation}${confidence}${reason}`);
   }
 
+  const ledgerApps = appList(data.apps, data.apps?.length ?? 0);
   const apps = [data.app_primary, data.app_secondary].filter(Boolean);
-  if (apps.length) lines.push(`Apps: ${apps.join(", ")}`);
+  if (ledgerApps) lines.push(`Apps: ${ledgerApps}`);
+  else if (apps.length) lines.push(`Apps: ${apps.join(", ")}`);
 
   if (data.distractions?.length) {
     lines.push("Distractions:");
