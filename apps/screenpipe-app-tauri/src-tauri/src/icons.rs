@@ -79,6 +79,23 @@ fn app_name_candidates(app_name: &str) -> Vec<String> {
     if !stripped.is_empty() && stripped != name {
         out.push(stripped);
     }
+    // Process names that differ from the bundle name even when the app is
+    // not running (so the running-app match cannot help).
+    const ALIASES: &[(&str, &str)] = &[
+        ("code", "Visual Studio Code"),
+        ("code - insiders", "Visual Studio Code - Insiders"),
+        ("iterm2", "iTerm"),
+        ("chrome", "Google Chrome"),
+        ("msedge", "Microsoft Edge"),
+        ("electron", "Electron"),
+        ("windowserver", "Finder"),
+    ];
+    let lower = name.to_ascii_lowercase();
+    for (alias, bundle) in ALIASES {
+        if lower == *alias && !out.iter().any(|c| c.eq_ignore_ascii_case(bundle)) {
+            out.push((*bundle).to_string());
+        }
+    }
     out
 }
 
@@ -1085,7 +1102,7 @@ mod app_name_tests {
     #[test]
     fn app_name_candidates_strip_a_trailing_version() {
         assert_eq!(app_name_candidates("iTerm2"), vec!["iTerm2", "iTerm"]);
-        assert_eq!(app_name_candidates("Code"), vec!["Code"]);
+        assert_eq!(app_name_candidates("Code"), vec!["Code", "Visual Studio Code"]);
         assert_eq!(app_name_candidates(" Google Chrome "), vec!["Google Chrome"]);
         assert_eq!(app_name_candidates("1Password 8"), vec!["1Password 8", "1Password"]);
     }
