@@ -583,6 +583,38 @@ impl DatabaseManager {
             .execute(&mut **tx.conn())
             .await?;
 
+        // A card that begins before the range and runs into it keeps its head.
+        // The rewrite owns the minutes inside the range and nothing else:
+        // deleting the whole card because two of its minutes are being
+        // reinterpreted would erase the hour in front of them, which no other
+        // pass ever writes again. Active minutes shrink with the span so the
+        // day's totals stay honest.
+        let straddling: Vec<(i64, String, String, f64)> = sqlx::query_as(
+            "SELECT id, start_at, end_at, active_minutes FROM journal_activities \
+             WHERE deleted_at IS NULL AND user_locked = 0 \
+               AND start_at < ?1 AND end_at > ?1",
+        )
+        .bind(&range_start)
+        .fetch_all(&mut **tx.conn())
+        .await?;
+        for (id, start, end, active_minutes) in straddling {
+            let (Some(start), Some(end)) = (parse_ts(&start), parse_ts(&end)) else {
+                continue;
+            };
+            let kept = (start_at - start).num_milliseconds() as f64
+                / (end - start).num_milliseconds().max(1) as f64;
+            sqlx::query(
+                "UPDATE journal_activities \
+                 SET end_at = ?2, active_minutes = ?3, updated_at = ?4 WHERE id = ?1",
+            )
+            .bind(id)
+            .bind(&range_start)
+            .bind(active_minutes * kept.clamp(0.0, 1.0))
+            .bind(&now_text)
+            .execute(&mut **tx.conn())
+            .await?;
+        }
+
         sqlx::query(
             "UPDATE journal_activities \
              SET deleted_at = ?3, updated_at = ?3 \
@@ -1435,6 +1467,51 @@ mod tests {
         let counts = db.journal_window_counts().await.unwrap();
         assert_eq!(counts.pending, 2);
         assert_eq!(counts.processing, 0);
+    }
+
+    /// A card that begins before the rewritten range keeps the minutes in
+    /// front of it: the window that rewrote the range owns the time inside it
+    /// and nothing before. Deleting the whole card used to erase, silently,
+    /// every minute of it that no later pass ever writes again.
+    #[tokio::test]
+    async fn replace_in_range_trims_a_straddling_card_instead_of_deleting_it() {
+        let (db, _dir) = test_db().await;
+        db.replace_activities_in_range(
+            at("2026-09-16T17:31:00Z"),
+            at("2026-09-16T18:05:00Z"),
+            &[draft("earlier", "2026-09-16T17:31:00Z", "2026-09-16T18:05:00Z")],
+        )
+        .await
+        .unwrap();
+
+        // The next window rewrites from 18:03, two minutes inside that card.
+        db.replace_activities_in_range(
+            at("2026-09-16T18:03:00Z"),
+            at("2026-09-16T18:39:00Z"),
+            &[draft("newer", "2026-09-16T18:03:00Z", "2026-09-16T18:39:00Z")],
+        )
+        .await
+        .unwrap();
+
+        let cards = db
+            .list_journal_activities(at("2026-09-16T00:00:00Z"), at("2026-09-17T00:00:00Z"))
+            .await
+            .unwrap();
+        let keys: Vec<&str> = cards.iter().map(|card| card.activity_key.as_str()).collect();
+        assert_eq!(keys, vec!["earlier", "newer"], "the earlier card survives");
+        assert_eq!(cards[0].start_at, at("2026-09-16T17:31:00Z").to_rfc3339());
+        assert_eq!(
+            cards[0].end_at,
+            at("2026-09-16T18:03:00Z").to_rfc3339(),
+            "trimmed to the start of the rewritten range"
+        );
+        // 32 of the card's 34 minutes are kept, so are 32/34 of its active
+        // minutes.
+        assert!(
+            (cards[0].active_minutes - 12.0 * 32.0 / 34.0).abs() < 0.01,
+            "active minutes {}",
+            cards[0].active_minutes
+        );
     }
 
     #[tokio::test]

@@ -35,7 +35,7 @@ use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
-use super::compile::{compile_window, CompiledWindow, CONTEXT_HORIZON};
+use super::compile::{compile_window_from, CompiledWindow, CONTEXT_HORIZON};
 use super::day::{fallback_category_id, to_card, ActivityCard, SYSTEM_CATEGORY_ID};
 use super::generator::{CardDraft, CardGenerator, GenerationAttempt, GenerationContext};
 use super::idle::{
@@ -54,6 +54,19 @@ pub const MAX_WINDOWS_PER_TICK: usize = 4;
 
 /// A window with less observed time than this is not worth a card.
 pub const MIN_WINDOW_MINUTES: f64 = 5.0;
+
+/// How far before the horizon the rewrite range may be pulled back to take in
+/// a card that straddles it. A validated card is never longer than
+/// [`super::validate::MAX_CARD`], so this covers every card the generator can
+/// write; the bound exists for the ones it cannot — a merged Idle card can
+/// span hours, and recompiling those hours to rewrite them would be a very
+/// expensive way to say "nobody was there".
+pub const MAX_STRADDLE: Duration = Duration::minutes(60);
+
+/// How far outside the rewritten range a card may fall and still be treated as
+/// rounding rather than a bug. A window is cut at whatever instant capture
+/// closed it — 18:03:01.431 — and a model answers in whole minutes.
+pub const PERSIST_TOLERANCE: Duration = Duration::minutes(1);
 
 /// Input event types that prove someone was at the keyboard.
 const INPUT_EVENT_TYPES: [&str; 4] = ["click", "text", "key", "clipboard"];
@@ -307,7 +320,8 @@ async fn process_window(
     let window_id = window.id;
     let window_start = window.start_at;
     let window_end = window.end_at;
-    let compiled = compile_window(db, window_start, window_end).await?;
+    let rewrite_start = rewrite_start(db, window_start, window_end).await?;
+    let compiled = compile_window_from(db, rewrite_start, window_start, window_end).await?;
     if compiled.observed_minutes() < MIN_WINDOW_MINUTES {
         return Ok(Outcome::TooShort);
     }
@@ -388,6 +402,12 @@ async fn process_window(
     )
     .await;
 
+    // Sub-minute skew is not a modelling error: the horizon is whatever
+    // instant the window was cut at, and a model answers in whole minutes.
+    let (drafts, dropped) = fit_drafts(drafts, compiled.context_start, window_end);
+    for note in &dropped {
+        warn!(window = window_id, note, "journal: a card did not fit the rewritten range");
+    }
     if let Err(error) = validate_drafts(&drafts, compiled.context_start, window_end) {
         record_run(
             db,
@@ -508,6 +528,100 @@ async fn write_idle_card(
     db.replace_activities_in_range(start_at, window_end, &[draft])
         .await?;
     Ok(())
+}
+
+/// The instant this window rewrites from.
+///
+/// Normally the 45-minute horizon. When a card *straddles* the horizon — it
+/// started before it and runs past it — the range is pulled back to that
+/// card's own start, and [`compile_window_from`] compiles the observations
+/// from the same instant.
+///
+/// The alternative was to clip previous cards to the horizon in the prompt and
+/// trim the straddler at write time. Both keep every minute, but only this one
+/// keeps the *card* whole: the straddler is rewritten with its own evidence in
+/// front of the model, so its boundary follows the activity instead of being
+/// cut at an arbitrary 45-minute mark the user never did anything at. Without
+/// either, the model is shown a previous card it has no observations for and
+/// is then failed both ways — for re-emitting it ("outside the source
+/// timeline") and for dropping it ("previously covered time is missing").
+///
+/// A card the write would not delete anyway (`user_locked`) never extends the
+/// range, and neither does one longer than [`MAX_STRADDLE`]: the write keeps
+/// its head instead.
+async fn rewrite_start(
+    db: &DatabaseManager,
+    window_start: DateTime<Utc>,
+    window_end: DateTime<Utc>,
+) -> anyhow::Result<DateTime<Utc>> {
+    let horizon = window_start - CONTEXT_HORIZON;
+    let floor = horizon - MAX_STRADDLE;
+    let straddling = db
+        .list_journal_activities(horizon, window_end)
+        .await?
+        .into_iter()
+        .filter(|activity| !activity.user_locked)
+        .filter_map(|activity| parse(&activity.start_at))
+        .filter(|start| *start < horizon)
+        .min();
+    Ok(match straddling {
+        Some(start) if start >= floor => start,
+        Some(start) => {
+            debug!(
+                card_start = %start,
+                "journal: a card straddling the horizon is longer than the rewrite bound; \
+                 keeping its head instead of recompiling it"
+            );
+            horizon
+        }
+        None => horizon,
+    })
+}
+
+/// Clip the cards to the range they are about to be written into.
+///
+/// A card that begins 1.4 seconds before the horizon is the same card, and
+/// failing the window over it replaces a correct summary with "Could not
+/// summarize this period". Anything more than [`PERSIST_TOLERANCE`] outside is
+/// a real bug: it is still clipped, or dropped when nothing is left, and the
+/// note says so — a dropped card is a line in the log, never a reason to lose
+/// the whole window.
+pub fn fit_drafts(
+    drafts: Vec<CardDraft>,
+    range_start: DateTime<Utc>,
+    range_end: DateTime<Utc>,
+) -> (Vec<CardDraft>, Vec<String>) {
+    let mut fitted = Vec::with_capacity(drafts.len());
+    let mut notes = Vec::new();
+    for mut draft in drafts {
+        let start = draft.start_at.max(range_start);
+        let end = draft.end_at.min(range_end);
+        let outside = (range_start - draft.start_at).max(draft.end_at - range_end);
+        if end - start < Duration::minutes(1) {
+            notes.push(format!(
+                "dropped {:?} ({}..{}): nothing of it lies inside the rewritten range {}..{}",
+                draft.title, draft.start_at, draft.end_at, range_start, range_end
+            ));
+            continue;
+        }
+        if outside > PERSIST_TOLERANCE {
+            notes.push(format!(
+                "clipped {:?} ({}..{}) into the rewritten range {}..{}",
+                draft.title, draft.start_at, draft.end_at, range_start, range_end
+            ));
+        }
+        if start != draft.start_at || end != draft.end_at {
+            draft.start_at = start;
+            draft.end_at = end;
+            draft.distractions.retain_mut(|detour| {
+                detour.start_at = detour.start_at.max(start);
+                detour.end_at = detour.end_at.min(end);
+                detour.end_at > detour.start_at
+            });
+        }
+        fitted.push(draft);
+    }
+    (fitted, notes)
 }
 
 /// Invariants every generator's output must satisfy before it is allowed near
@@ -790,6 +904,10 @@ async fn record_run(
 mod tests {
     use super::*;
     use crate::journal::generator::DeterministicGenerator;
+    use crate::journal::llm::evidence_bounds;
+    use crate::journal::validate::{
+        merge_spans, validate_cards, CardIssue, Span, SOURCE_CONNECTION,
+    };
     use screenpipe_config::DbConfig;
 
     async fn test_db() -> (tempfile::TempDir, DatabaseManager) {
@@ -977,6 +1095,215 @@ mod tests {
         .unwrap();
         assert_eq!(report.recovered, 1, "{report:?}");
         assert_eq!(db.journal_window_counts().await.unwrap().processing, 0);
+    }
+
+    /// A generator that writes one card per connected stretch of evidence and
+    /// keeps what it was shown, so a test can assert on the *inputs* the
+    /// worker built as well as on the rows that came out.
+    #[derive(Default)]
+    struct EchoGenerator {
+        seen: std::sync::Mutex<Option<Seen>>,
+    }
+
+    #[derive(Clone)]
+    struct Seen {
+        compiled: CompiledWindow,
+        previous: Vec<ActivityCard>,
+        drafts: Vec<CardDraft>,
+    }
+
+    #[async_trait::async_trait]
+    impl CardGenerator for EchoGenerator {
+        fn producer(&self) -> &'static str {
+            "llm-v1"
+        }
+
+        fn prompt_version(&self) -> Option<String> {
+            Some(crate::journal::PROMPT_VERSION.to_string())
+        }
+
+        async fn generate(
+            &self,
+            compiled: &CompiledWindow,
+            previous_cards: &[ActivityCard],
+            ctx: &GenerationContext,
+        ) -> anyhow::Result<Vec<CardDraft>> {
+            let observed: Vec<Span> = compiled
+                .intervals
+                .iter()
+                .map(|interval| Span::new(interval.start_at, interval.end_at))
+                .collect();
+            let drafts: Vec<CardDraft> = merge_spans(&observed, SOURCE_CONNECTION)
+                .into_iter()
+                .map(|span| CardDraft {
+                    start_at: span.start,
+                    end_at: span.end,
+                    title: "Edited the MVP implementation plan".to_string(),
+                    summary: "Worked through section 5 in iTerm2.".to_string(),
+                    detailed_summary: None,
+                    category_id: ctx.fallback_category_id.clone(),
+                    category_confidence: 0.9,
+                    intention_relation: None,
+                    relation_confidence: None,
+                    relation_reason: None,
+                    app_primary: None,
+                    app_secondary: None,
+                    distractions: Vec::new(),
+                    interval_keys: Vec::new(),
+                })
+                .collect();
+            *self.seen.lock().unwrap() = Some(Seen {
+                compiled: compiled.clone(),
+                previous: previous_cards.to_vec(),
+                drafts: drafts.clone(),
+            });
+            Ok(drafts)
+        }
+    }
+
+    /// Live window 7. A card covering 17:31–18:05 is already written; the next
+    /// window is 18:23–18:39, whose 45-minute horizon starts at 17:38 — inside
+    /// that card. The prompt therefore showed the model a previous card it had
+    /// no observations for, and the model could not win: re-emitting it failed
+    /// "outside the source timeline", dropping it failed "previously covered".
+    /// Three attempts later the window became a `system` card.
+    #[tokio::test]
+    async fn a_card_straddling_the_horizon_is_rewritten_with_its_own_evidence() {
+        let (_dir, db) = test_db().await;
+        let first = at("2026-09-16T17:31:00Z");
+        let first_end = at("2026-09-16T18:05:00Z");
+        let second = at("2026-09-16T18:23:00Z");
+        let now = second + Duration::minutes(16);
+        seed_capture(&db, first, 34, "iTerm2", "plan.md", true, false).await;
+        seed_capture(&db, second, 16, "iTerm2", "plan.md", true, false).await;
+
+        db.replace_activities_in_range(first, first_end, &[written_card(first, first_end)])
+            .await
+            .unwrap();
+        // Only the trailing window is queued: everything older was cut and
+        // finished on an earlier tick.
+        db.journal_state_set(JOURNAL_STATE_PRODUCER, now).await.unwrap();
+        db.insert_journal_windows(&[(second, now)]).await.unwrap();
+
+        let generator = EchoGenerator::default();
+        let report = run_tick(&db, &generator, &settings(), now).await.unwrap();
+        assert_eq!(report.processed, 1, "{report:?}");
+        assert_eq!(report.failed, 0, "{report:?}");
+
+        let seen = generator
+            .seen
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("the window reached the generator");
+        assert_eq!(
+            seen.compiled.context_start, first,
+            "the rewrite horizon is pulled back to the straddling card's own start"
+        );
+        assert!(
+            seen.previous.iter().any(|card| card.start_at == first.to_rfc3339()),
+            "the prompt still shows the earlier card"
+        );
+        assert!(
+            seen.compiled.intervals.first().unwrap().start_at < at("2026-09-16T17:38:00Z"),
+            "and now it has observations behind it"
+        );
+        // The check that used to fail three times in a row.
+        let issues = validate_cards(&seen.drafts, &evidence_bounds(&seen.compiled, &seen.previous));
+        assert!(
+            issues.is_empty(),
+            "{:?}",
+            issues.iter().map(CardIssue::heading).collect::<Vec<_>>()
+        );
+
+        let cards = db
+            .list_journal_activities(first - Duration::hours(1), now)
+            .await
+            .unwrap();
+        assert_eq!(cards.len(), 2, "{cards:#?}");
+        assert_eq!(cards[0].start_at, first.to_rfc3339(), "the older card keeps every minute");
+        assert_eq!(cards[1].start_at, second.to_rfc3339(), "and the new one starts at the new evidence");
+    }
+
+    /// Live window 8: validation passed and the write refused the answer over
+    /// 1.4 seconds of skew between a minute-rounded card and the instant the
+    /// window happened to be cut at.
+    #[test]
+    fn a_minute_rounded_card_is_clipped_into_the_range_rather_than_failing_the_window() {
+        let range_start = at("2026-09-16T18:03:01.431Z");
+        let range_end = at("2026-09-16T19:03:12.479Z");
+        let (fitted, notes) = fit_drafts(
+            vec![crate::journal::test_support::draft(
+                "2026-09-16T18:03:00Z",
+                "2026-09-16T18:15:00Z",
+                "Reviewed the plan",
+            )],
+            range_start,
+            range_end,
+        );
+        assert_eq!(fitted.len(), 1);
+        assert_eq!(fitted[0].start_at, range_start);
+        assert_eq!(fitted[0].end_at, at("2026-09-16T18:15:00Z"));
+        assert!(notes.is_empty(), "sub-minute skew is rounding, not a bug: {notes:?}");
+        validate_drafts(&fitted, range_start, range_end).unwrap();
+    }
+
+    #[test]
+    fn a_card_outside_the_range_is_dropped_with_a_note_instead_of_losing_the_window() {
+        let range_start = at("2026-09-16T18:00:00Z");
+        let range_end = at("2026-09-16T19:00:00Z");
+        let (fitted, notes) = fit_drafts(
+            vec![
+                crate::journal::test_support::draft(
+                    "2026-09-16T05:00:00Z",
+                    "2026-09-16T05:20:00Z",
+                    "Invented hour",
+                ),
+                crate::journal::test_support::draft(
+                    "2026-09-16T17:40:00Z",
+                    "2026-09-16T18:30:00Z",
+                    "Ran long at the front",
+                ),
+            ],
+            range_start,
+            range_end,
+        );
+        assert_eq!(fitted.len(), 1, "the window survives its worst card");
+        assert_eq!(fitted[0].start_at, range_start);
+        assert_eq!(notes.len(), 2, "{notes:?}");
+        assert!(notes[0].starts_with("dropped"), "{notes:?}");
+        assert!(notes[1].starts_with("clipped"), "{notes:?}");
+        validate_drafts(&fitted, range_start, range_end).unwrap();
+    }
+
+    /// A card as an earlier window left it in the database.
+    fn written_card(start: DateTime<Utc>, end: DateTime<Utc>) -> JournalActivityDraft {
+        JournalActivityDraft {
+            activity_key: format!("card-{}", start.to_rfc3339()),
+            day: day_of(start).to_string(),
+            start_at: start,
+            end_at: end,
+            active_minutes: (end - start).num_minutes() as f64,
+            state: "provisional".to_string(),
+            title: "Edited the MVP implementation plan".to_string(),
+            summary: "Worked through section 5 in iTerm2.".to_string(),
+            detailed_summary: None,
+            category_id: "work".to_string(),
+            category_confidence: 0.9,
+            intention_id: None,
+            intention_relation: None,
+            relation_confidence: None,
+            relation_reason: None,
+            app_primary: None,
+            app_secondary: None,
+            producer: "llm-v1".to_string(),
+            prompt_version: Some(crate::journal::PROMPT_VERSION.to_string()),
+            model: None,
+            window_id: None,
+            distractions: Vec::new(),
+            interval_keys: Vec::new(),
+            evidence: Vec::new(),
+        }
     }
 
     /// A generator that always fails, so the worker's failure path can be

@@ -127,7 +127,24 @@ pub async fn compile_window(
     window_start: DateTime<Utc>,
     window_end: DateTime<Utc>,
 ) -> anyhow::Result<CompiledWindow> {
-    let context_start = window_start - CONTEXT_HORIZON;
+    compile_window_from(db, window_start - CONTEXT_HORIZON, window_start, window_end).await
+}
+
+/// [`compile_window`] with an explicit rewrite horizon.
+///
+/// The worker extends the horizon backwards to the start of a card that
+/// straddles it. Compiling from the same instant is what keeps the three
+/// views of a window agreeing: the observations the prompt shows, the
+/// `EvidenceBounds` the output is checked against, and the range the write
+/// replaces. When they disagree, the model is shown a previous card it has no
+/// observations for and is then failed for re-emitting it.
+pub async fn compile_window_from(
+    db: &DatabaseManager,
+    context_start: DateTime<Utc>,
+    window_start: DateTime<Utc>,
+    window_end: DateTime<Utc>,
+) -> anyhow::Result<CompiledWindow> {
+    let context_start = context_start.min(window_start);
     crate::activity_ledger::reconcile_range(db, context_start, window_end).await?;
 
     let intervals = db
@@ -137,7 +154,8 @@ pub async fn compile_window(
     let ui_events = db.journal_ui_event_marks(context_start, window_end).await?;
     let audio = db.journal_audio_marks(context_start, window_end).await?;
 
-    let mut compiled = plan_window(
+    let mut compiled = plan_window_from(
+        context_start,
         window_start,
         window_end,
         &intervals,
@@ -162,7 +180,29 @@ pub fn plan_window(
     ui_events: &[(DateTime<Utc>, String)],
     audio: &[(i64, DateTime<Utc>)],
 ) -> CompiledWindow {
-    let context_start = window_start - CONTEXT_HORIZON;
+    plan_window_from(
+        window_start - CONTEXT_HORIZON,
+        window_start,
+        window_end,
+        intervals,
+        frames,
+        ui_events,
+        audio,
+    )
+}
+
+/// [`plan_window`] with an explicit rewrite horizon.
+#[allow(clippy::too_many_arguments)]
+pub fn plan_window_from(
+    context_start: DateTime<Utc>,
+    window_start: DateTime<Utc>,
+    window_end: DateTime<Utc>,
+    intervals: &[JournalLedgerInterval],
+    frames: &[JournalFrameSample],
+    ui_events: &[(DateTime<Utc>, String)],
+    audio: &[(i64, DateTime<Utc>)],
+) -> CompiledWindow {
+    let context_start = context_start.min(window_start);
     let frame_times: Vec<DateTime<Utc>> = frames.iter().map(|frame| frame.timestamp).collect();
 
     let mut compiled = Vec::new();
