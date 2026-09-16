@@ -22,17 +22,13 @@
  * `components/sidebar-nav-list.tsx` and the customization it owns are kept
  * intact behind `JOURNAL_SHELL` (lib/journal-shell.ts). Restoring a section
  * hidden from the old sidebar still works: the foot renders the same
- * `SidebarCustomizationMenu`, and this sidebar only shows a destination the
+ * Settings → Appearance, and this sidebar only shows a destination the
  * stored layout says is visible.
  */
 
 import React from "react";
 import { MonitorPlay, NotebookPen, Plug, Settings as SettingsIcon } from "lucide-react";
 
-import {
-  SidebarCustomizationMenu,
-  type SidebarCustomizationMenuProps,
-} from "@/components/sidebar-nav-list";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { RAIL_SECTIONS, type RailSectionId } from "@/lib/journal-shell";
@@ -95,7 +91,6 @@ export function JournalRail({
   onSelect,
   onOpenSettings,
   settingsActive = false,
-  customization,
   trailing,
 }: {
   activeSection: string;
@@ -104,8 +99,6 @@ export function JournalRail({
   onSelect: (id: RailSectionId) => void;
   onOpenSettings: () => void;
   settingsActive?: boolean;
-  /** The one path back to sections hidden from the shipped sidebar. */
-  customization?: SidebarCustomizationMenuProps;
   /** Recording status and anything else that belongs at the foot. */
   trailing?: React.ReactNode;
 }) {
@@ -136,7 +129,6 @@ export function JournalRail({
 
       <div className="flex flex-col items-center gap-1">
         {trailing}
-        {customization ? <SidebarCustomizationMenu {...customization} /> : null}
         <RailButton
           id="settings"
           label="Settings"

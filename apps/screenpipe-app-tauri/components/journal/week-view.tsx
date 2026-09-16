@@ -24,6 +24,7 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { fetchJournalWeek } from "@/lib/journal/api";
+import { withEngineWait } from "@/lib/journal/engine-wait";
 import { formatMinutes } from "@/lib/journal/format";
 import {
   UNCLASSIFIED_COLOR,
@@ -228,7 +229,7 @@ export function WeekView({
 
   useEffect(() => {
     const controller = new AbortController();
-    fetchJournalWeek(weekStart, controller.signal)
+    withEngineWait(() => fetchJournalWeek(weekStart, controller.signal), controller.signal)
       .then((next) => {
         if (controller.signal.aborted) return;
         setResult({ key: requestKey, week: next, error: null });

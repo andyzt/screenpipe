@@ -38,6 +38,7 @@ import { IntentionBar } from "./intention-bar";
 import { SegmentedToggle, WeekView, type JournalViewMode } from "./week-view";
 import { mondayOf } from "@/lib/journal/week-layout";
 import { fetchJournalDay } from "@/lib/journal/api";
+import { withEngineWait } from "@/lib/journal/engine-wait";
 import {
   canGoToNextJournalDay,
   formatJournalDate,
@@ -138,6 +139,7 @@ export function JournalView({
   const [day, setDay] = useState<JournalDay | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [waitingForEngine, setWaitingForEngine] = useState(false);
   const [reloadToken, setReloadToken] = useState(0);
   const [selectedId, setSelectedId] = useState<number | null>(selectRequest);
   const [intentionToken, setIntentionToken] = useState(0);
@@ -150,8 +152,13 @@ export function JournalView({
     async (target: string, signal: AbortSignal, showSkeleton: boolean) => {
       if (showSkeleton) setLoading(true);
       try {
-        const next = await fetchJournalDay(target, signal);
+        const next = await withEngineWait(
+          () => fetchJournalDay(target, signal),
+          signal,
+          () => setWaitingForEngine(true),
+        );
         if (signal.aborted) return;
+        setWaitingForEngine(false);
         setDay(next);
         setError(null);
         loadedDateRef.current = target;
@@ -396,7 +403,9 @@ export function JournalView({
           className="flex flex-col gap-4 min-[1100px]:flex-row"
         >
           <div className="h-[calc(100vh-8rem)] min-h-[420px] w-full min-w-0 flex-1 rounded-lg border border-border bg-card shadow-sm">
-            <p className="p-4 text-sm text-muted-foreground">Reading the day…</p>
+            <p className="p-4 text-sm text-muted-foreground" data-testid="journal-loading-copy">
+              {waitingForEngine ? "Waiting for the recording engine to start…" : "Reading the day…"}
+            </p>
           </div>
           <div className="h-40 w-full shrink-0 rounded-lg border border-border bg-card shadow-sm min-[1100px]:h-[calc(100vh-8rem)] min-[1100px]:w-[380px]" />
         </div>

@@ -1430,25 +1430,6 @@ function HomeContent() {
               visibleIds={visibleSidebarIds}
               onSelect={(id: RailSectionId) => setActiveSection(id)}
               onOpenSettings={() => openSettings()}
-              customization={{
-                hiddenItems: hiddenSidebarIds.map((id) => ({
-                  id,
-                  label: SIDEBAR_SECTION_DEFS[id].label,
-                })),
-                isTranslucent,
-                canReset: !isSidebarNavLayoutDefault(sidebarLayout),
-                onSetHidden: (id, hidden) => {
-                  persistSidebarLayout(
-                    setSidebarNavItemHidden(
-                      sidebarLayout,
-                      availableSidebarIds,
-                      id,
-                      hidden,
-                    ),
-                  );
-                },
-                onReset: () => persistSidebarLayout(DEFAULT_SIDEBAR_NAV_LAYOUT),
-              }}
               trailing={
                 <RecordingStatus
                   devices={recordingDevices}
