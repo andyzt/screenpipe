@@ -117,6 +117,8 @@ import type { AppUser } from "@/lib/app-entitlement";
 import { ONBOARDING_BRAIN_HANDOFF_EVENT } from "@/lib/live-views/onboarding-activation";
 import { ActivityLedger } from "@/components/activity-ledger";
 import { JournalView } from "@/components/journal/journal-view";
+import { journalDayToday } from "@/lib/journal/format";
+import { mondayOf } from "@/lib/journal/week-layout";
 import { JournalRail } from "@/components/journal-rail";
 import { JOURNAL_SHELL, type RailSectionId } from "@/lib/journal-shell";
 import { ShortcutKeycap } from "@/components/shortcut-keycap";
@@ -217,6 +219,20 @@ function HomeContent() {
   // that card already selected in the inspector, so the canvas' card state can
   // be captured headlessly without driving a click.
   const [journalSelectRequest] = useQueryState("select", {
+    history: "replace",
+  });
+  // The journal's two scales. `view` is navigation the reader chose, so it
+  // belongs in the URL rather than in component state: a week someone is
+  // looking at is then a link they can send, and a reload keeps it.
+  const [journalView, setJournalView] = useQueryState("view", {
+    defaultValue: "day",
+    history: "replace",
+    parse: (value) => (value === "week" ? "week" : "day"),
+    serialize: (value) => value,
+  });
+  // The Monday of the shown week. Unset means "the week we are in", resolved
+  // by the journal rather than written into the URL on first paint.
+  const [journalWeek, setJournalWeek] = useQueryState("week", {
     history: "replace",
   });
   const [activityReturnVisible, setActivityReturnVisible] = useState(false);
@@ -1072,6 +1088,14 @@ function HomeContent() {
                 ? Number(journalSelectRequest)
                 : null
             }
+            view={journalView === "week" ? "week" : "day"}
+            onViewChange={(next) => void setJournalView(next)}
+            weekStart={
+              journalWeek && /^\d{4}-\d{2}-\d{2}$/.test(journalWeek)
+                ? mondayOf(journalWeek)
+                : mondayOf(journalDayToday())
+            }
+            onWeekStartChange={(next) => void setJournalWeek(next)}
           />
         );
       case "home":

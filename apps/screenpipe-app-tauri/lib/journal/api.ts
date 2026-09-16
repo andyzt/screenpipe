@@ -25,6 +25,7 @@ import type {
   JournalCategory,
   JournalDay,
   JournalStatus,
+  JournalWeek,
 } from "./types";
 
 export class JournalApiError extends Error {
@@ -62,6 +63,24 @@ export function fetchJournalDay(
 ): Promise<JournalDay> {
   const query = date ? `?date=${encodeURIComponent(date)}` : "";
   return requestJson<JournalDay>(`/journal/day${query}`, { signal });
+}
+
+/**
+ * The seven days of one week, in one call.
+ *
+ * `start` is the Monday of the week (`lib/journal/week-layout.ts` owns that
+ * arithmetic). Seven `GET /journal/day` calls would return the same cards, but
+ * the week's totals — focus minutes, longest block, by-app — are computed over
+ * the whole range and cannot be summed from the days on the client.
+ */
+export function fetchJournalWeek(
+  startDate: string,
+  signal?: AbortSignal,
+): Promise<JournalWeek> {
+  return requestJson<JournalWeek>(
+    `/journal/week?start=${encodeURIComponent(startDate)}`,
+    { signal },
+  );
 }
 
 export function fetchActivityDetail(

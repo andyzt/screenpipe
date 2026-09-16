@@ -8,10 +8,12 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 const fetchJournalDay = vi.fn();
 const fetchActivityDetail = vi.fn();
+const fetchJournalWeek = vi.fn();
 
 vi.mock("@/lib/journal/api", () => ({
   fetchJournalDay: (...args: unknown[]) => fetchJournalDay(...args),
   fetchActivityDetail: (...args: unknown[]) => fetchActivityDetail(...args),
+  fetchJournalWeek: (...args: unknown[]) => fetchJournalWeek(...args),
 }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
 vi.mock("@tauri-apps/api/event", () => ({ emit: vi.fn() }));
@@ -40,7 +42,13 @@ vi.mock("./now-strip", () => ({
 
 import { JournalView } from "./journal-view";
 import { journalDayToday, shiftJournalDay } from "@/lib/journal/format";
-import { makeActivityCard, makeJournalDay } from "@/lib/journal/fixtures";
+import {
+  makeActivityCard,
+  makeJournalDay,
+  makeJournalWeek,
+  makeTotals,
+} from "@/lib/journal/fixtures";
+import { mondayOf, weekDays } from "@/lib/journal/week-layout";
 
 /** Local wall clock, so canvas geometry does not depend on the machine's zone. */
 function at(hour: number, minute = 0): string {
@@ -76,8 +84,37 @@ function dayWithCards() {
   });
 }
 
+/** A week whose Monday carries one clickable card. */
+function weekWithOneCard() {
+  const start = mondayOf(journalDayToday());
+  const dates = weekDays(start);
+  return makeJournalWeek({
+    start,
+    end: dates[6],
+    days: dates.map((date, index) =>
+      makeJournalDay({
+        date,
+        day_start: at(4),
+        activities:
+          index === 0
+            ? [
+                makeActivityCard({
+                  id: 2,
+                  title: "Second",
+                  start_at: at(9),
+                  end_at: at(10),
+                }),
+              ]
+            : [],
+      }),
+    ),
+    totals: makeTotals({ focus_minutes: 120 }),
+  });
+}
+
 beforeEach(() => {
   fetchJournalDay.mockResolvedValue(makeJournalDay());
+  fetchJournalWeek.mockResolvedValue(makeJournalWeek());
   fetchActivityDetail.mockResolvedValue({
     ...makeActivityCard(),
     interval_keys: [],
@@ -313,6 +350,71 @@ describe("JournalView", () => {
     fireEvent.click(screen.getByTestId("journal-prev-day"));
     await waitFor(() => expect(screen.queryByTestId("stub-now-strip")).toBeNull());
     expect(screen.queryByTestId("stub-intention-bar")).toBeNull();
+  });
+
+  it("switches between the day and the week from one toggle", async () => {
+    render(<JournalView />);
+    await waitFor(() => expect(screen.getByTestId("journal-canvas")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByTestId("journal-view-toggle-week"));
+    await waitFor(() =>
+      expect(screen.getByTestId("journal-week-view")).toBeInTheDocument(),
+    );
+    // The week it opens is the one the shown day belongs to.
+    expect(fetchJournalWeek.mock.calls[0][0]).toBe(mondayOf(journalDayToday()));
+    expect(screen.queryByTestId("journal-canvas")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("journal-view-toggle-day"));
+    await waitFor(() => expect(screen.getByTestId("journal-canvas")).toBeInTheDocument());
+  });
+
+  it("hands the week's mode and Monday to the page when the URL owns them", async () => {
+    const onViewChange = vi.fn();
+    const onWeekStartChange = vi.fn();
+    render(
+      <JournalView
+        view="week"
+        weekStart="2026-09-14"
+        onViewChange={onViewChange}
+        onWeekStartChange={onWeekStartChange}
+      />,
+    );
+    await waitFor(() => expect(fetchJournalWeek).toHaveBeenCalled());
+    expect(fetchJournalWeek.mock.calls[0][0]).toBe("2026-09-14");
+    fireEvent.click(screen.getByTestId("journal-prev-week"));
+    expect(onWeekStartChange).toHaveBeenCalledWith("2026-09-07");
+  });
+
+  it("opens the day with that card selected when a week block is clicked", async () => {
+    fetchJournalWeek.mockResolvedValue(weekWithOneCard());
+    fetchJournalDay.mockResolvedValue(dayWithCards());
+    render(<JournalView />);
+    await waitFor(() => expect(screen.getByTestId("journal-canvas")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByTestId("journal-view-toggle-week"));
+    const block = await screen.findByTestId("journal-week-block");
+    fireEvent.click(block);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("journal-inspector-card")).toHaveTextContent(
+        "Second",
+      ),
+    );
+    expect(screen.getByTestId("journal-canvas")).toBeInTheDocument();
+  });
+
+  it("opens the day when a week column header is clicked", async () => {
+    fetchJournalWeek.mockResolvedValue(weekWithOneCard());
+    render(<JournalView />);
+    await waitFor(() => expect(screen.getByTestId("journal-canvas")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByTestId("journal-view-toggle-week"));
+    const headers = await screen.findAllByTestId("journal-week-day-header");
+    const wanted = headers[1].getAttribute("data-date");
+    fireEvent.click(headers[1]);
+
+    await waitFor(() => expect(screen.getByTestId("journal-canvas")).toBeInTheDocument());
+    expect(fetchJournalDay).toHaveBeenLastCalledWith(wanted, expect.anything());
   });
 
   it("opens with a card selected when the dev select hook asks for one", async () => {

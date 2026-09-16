@@ -70,6 +70,20 @@ export interface JournalCategoryTotal {
   minutes: number;
 }
 
+/**
+ * One app's share of a card or a day.
+ *
+ * `host` is set when the time was spent on a website rather than in a native
+ * app, so a client can draw the site's favicon instead of the browser's icon —
+ * "GitHub" is more useful than "Google Chrome" four times over. `[]` for idle
+ * and system cards, which have no app to name.
+ */
+export interface CardApp {
+  name: string;
+  host: string | null;
+  minutes: number;
+}
+
 export interface JournalTotals {
   active_minutes: number;
   wall_minutes: number;
@@ -79,6 +93,8 @@ export interface JournalTotals {
   unknown_minutes: number;
   longest_focus_block_minutes: number;
   by_category: JournalCategoryTotal[];
+  /** Top 12 apps by measured minutes, descending. */
+  by_app: CardApp[];
 }
 
 /** A detour shorter than five minutes, recorded inside its parent card. */
@@ -113,6 +129,8 @@ export interface ActivityCard {
   relation_reason: string | null;
   app_primary: string | null;
   app_secondary: string | null;
+  /** Top 6 apps inside the card, descending by minutes. `[]` for idle/system. */
+  apps: CardApp[];
   distractions: ActivityDistraction[];
   evidence_count: number;
 }
@@ -142,6 +160,22 @@ export interface JournalDay {
   totals: JournalTotals;
   intentions: Intention[];
   activities: ActivityCard[];
+}
+
+/**
+ * Seven `JournalDay` rows plus the week's own totals.
+ *
+ * The days are the same shape `GET /journal/day` returns, so the week view and
+ * the day view read one type. Totals are the week's, not a sum a client has to
+ * recompute — `longest_focus_block_minutes` in particular cannot be summed.
+ */
+export interface JournalWeek {
+  /** Monday, `YYYY-MM-DD`. */
+  start: string;
+  /** Sunday, `YYYY-MM-DD`. */
+  end: string;
+  days: JournalDay[];
+  totals: JournalTotals;
 }
 
 export interface JournalStatusWindows {

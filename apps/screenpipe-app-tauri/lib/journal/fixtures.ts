@@ -12,10 +12,12 @@
 
 import type {
   ActivityCard,
+  CardApp,
   FocusStatus,
   Intention,
   JournalDay,
   JournalTotals,
+  JournalWeek,
 } from "./types";
 
 export function makeCategory(overrides: Partial<ActivityCard["category"]> = {}) {
@@ -51,6 +53,11 @@ export function makeActivityCard(
     relation_reason: null,
     app_primary: "Cursor",
     app_secondary: null,
+    apps: [
+      { name: "Cursor", host: null, minutes: 26 },
+      { name: "GitHub", host: "github.com", minutes: 9 },
+      { name: "Terminal", host: null, minutes: 6 },
+    ],
     distractions: [],
     evidence_count: 18,
     ...overrides,
@@ -74,6 +81,12 @@ export function makeTotals(overrides: Partial<JournalTotals> = {}): JournalTotal
         color_hex: "#7FC8F8",
         minutes: 50,
       },
+    ],
+    by_app: [
+      { name: "Cursor", host: null, minutes: 140 },
+      { name: "GitHub", host: "github.com", minutes: 74 },
+      { name: "Slack", host: null, minutes: 48 },
+      { name: "Terminal", host: null, minutes: 31 },
     ],
     ...overrides,
   };
@@ -129,4 +142,37 @@ export function makeJournalDay(overrides: Partial<JournalDay> = {}): JournalDay 
     activities: [makeActivityCard()],
     ...overrides,
   };
+}
+
+/**
+ * Seven days built from one builder, so a week test states only the day it is
+ * about. `start` must be the Monday; the days run from it.
+ */
+export function makeJournalWeek(
+  overrides: Partial<JournalWeek> = {},
+): JournalWeek {
+  const start = overrides.start ?? "2026-09-14";
+  const days =
+    overrides.days ??
+    Array.from({ length: 7 }, (_, index) => {
+      const date = new Date(
+        Number(start.slice(0, 4)),
+        Number(start.slice(5, 7)) - 1,
+        Number(start.slice(8, 10)) + index,
+        12,
+      );
+      const key = `${date.getFullYear()}-${`${date.getMonth() + 1}`.padStart(2, "0")}-${`${date.getDate()}`.padStart(2, "0")}`;
+      return makeJournalDay({ date: key, activities: [] });
+    });
+  return {
+    start,
+    end: days[days.length - 1]?.date ?? start,
+    days,
+    totals: makeTotals(overrides.totals),
+    ...overrides,
+  };
+}
+
+export function makeCardApp(overrides: Partial<CardApp> = {}): CardApp {
+  return { name: "Cursor", host: null, minutes: 24, ...overrides };
 }

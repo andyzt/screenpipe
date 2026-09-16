@@ -20,6 +20,11 @@
  * Phosphor appears in exactly one place: a mark on the now line saying the day
  * is being written right now. It goes out the moment `processing` is false and
  * no window is pending, which is also when the 30s poll stops.
+ *
+ * It is also the shell for the week (`week-view.tsx`), which reads the same
+ * cards at a scale where a pattern is visible. Both modes navigate through the
+ * URL when the page hands it in, so a week and a selected card are a link
+ * someone can send, and fall back to local state when it does not.
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -30,6 +35,8 @@ import { cn } from "@/lib/utils";
 import { DayCanvas } from "./day-canvas";
 import { DayInspector } from "./day-inspector";
 import { IntentionBar } from "./intention-bar";
+import { SegmentedToggle, WeekView, type JournalViewMode } from "./week-view";
+import { mondayOf } from "@/lib/journal/week-layout";
 import { fetchJournalDay } from "@/lib/journal/api";
 import {
   canGoToNextJournalDay,
@@ -101,12 +108,33 @@ export function JournalView({
    * inspector without driving a click, and is read once on mount.
    */
   selectRequest = null,
+  /**
+   * `?view=` and `?week=` when the page owns them (see `home/page.tsx`). Left
+   * out, the view keeps the same state locally, so the component still works
+   * standalone and in tests.
+   */
+  view,
+  onViewChange,
+  weekStart,
+  onWeekStartChange,
 }: {
   focusIntentionRequest?: boolean;
   onIntentionFocusHandled?: () => void;
   selectRequest?: number | null;
+  view?: JournalViewMode;
+  onViewChange?: (next: JournalViewMode) => void;
+  weekStart?: string;
+  onWeekStartChange?: (next: string) => void;
 } = {}) {
   const [date, setDate] = useState<string>(() => journalDayToday());
+  const [localView, setLocalView] = useState<JournalViewMode>(view ?? "day");
+  const [localWeek, setLocalWeek] = useState<string>(
+    () => weekStart ?? mondayOf(journalDayToday()),
+  );
+  const activeView = view ?? localView;
+  const activeWeek = weekStart ?? localWeek;
+  const setView = onViewChange ?? setLocalView;
+  const setWeek = onWeekStartChange ?? setLocalWeek;
   const [day, setDay] = useState<JournalDay | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -174,6 +202,20 @@ export function JournalView({
     setDate((current) => (typeof next === "function" ? next(current) : next));
   }, []);
 
+  /**
+   * The week's one way back into the day: the block that was clicked becomes
+   * the day's selection, in the same update as the date and the mode, so the
+   * reader never sees an intermediate day with the wrong card open.
+   */
+  const openDay = useCallback(
+    (next: string, cardId: number | null = null) => {
+      setDate(next);
+      setSelectedId(cardId);
+      setView("day");
+    },
+    [setView],
+  );
+
   const ordered = useMemo(
     () =>
       day
@@ -206,6 +248,9 @@ export function JournalView({
 
   const handleKeyDown = useCallback(
     (event: KeyboardEvent) => {
+      // The week has its own navigation; the day's arrow keys would move a
+      // date the reader cannot see.
+      if (activeView !== "day") return;
       if (isTypingTarget(event.target)) return;
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       switch (event.key) {
@@ -234,7 +279,7 @@ export function JournalView({
         default:
       }
     },
-    [canGoForward, goToDate, moveSelection, selectedId],
+    [activeView, canGoForward, goToDate, moveSelection, selectedId],
   );
 
   useEffect(() => {
@@ -245,6 +290,20 @@ export function JournalView({
   const dateLabel = today
     ? `Today · ${formatJournalDate(date)}`
     : formatJournalDate(date);
+
+  if (activeView === "week") {
+    return (
+      <div className="flex flex-col gap-4" data-testid="section-journal">
+        <WeekView
+          weekStart={activeWeek}
+          onWeekStartChange={setWeek}
+          onViewChange={setView}
+          onSelectCard={(nextDate, id) => openDay(nextDate, id)}
+          onOpenDay={(nextDate) => openDay(nextDate)}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-4" data-testid="section-journal">
@@ -283,6 +342,20 @@ export function JournalView({
         >
           Today
         </Button>
+
+        <SegmentedToggle
+          label="journal view"
+          testId="journal-view-toggle"
+          value="day"
+          options={[
+            { value: "day", label: "Day" },
+            { value: "week", label: "Week" },
+          ]}
+          onChange={(next) => {
+            if (next === "week") setWeek(mondayOf(date));
+            setView(next as JournalViewMode);
+          }}
+        />
 
         {today ? (
           <div className="w-full min-w-0 min-[900px]:ml-auto min-[900px]:w-auto min-[900px]:max-w-[540px] min-[900px]:flex-1">

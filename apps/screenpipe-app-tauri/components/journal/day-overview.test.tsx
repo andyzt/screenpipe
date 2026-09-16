@@ -52,6 +52,24 @@ describe("DayOverview", () => {
     expect(screen.queryByTestId("journal-category-bar-idle")).toBeNull();
   });
 
+  it("ranks the day's apps under the donut", () => {
+    render(<DayOverview totals={makeTotals()} />);
+    const panel = screen.getByTestId("journal-apps-breakdown");
+    const rows = within(panel).getAllByTestId("journal-apps-row");
+    expect(rows.map((row) => row.dataset.app)).toEqual([
+      "Cursor",
+      "GitHub",
+      "Slack",
+      "Terminal",
+    ]);
+    expect(rows[0]).toHaveTextContent("2h 20m");
+  });
+
+  it("says so when no app has measured time", () => {
+    render(<DayOverview totals={makeTotals({ by_app: [] })} />);
+    expect(screen.getByTestId("journal-apps-empty")).toBeInTheDocument();
+  });
+
   it("says so when no category has time at all", () => {
     render(<DayOverview totals={makeTotals({ by_category: [] })} />);
     expect(

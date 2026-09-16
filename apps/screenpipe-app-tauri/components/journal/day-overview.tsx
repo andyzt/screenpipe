@@ -23,6 +23,7 @@
 import React from "react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { AppsBreakdown } from "./apps-breakdown";
 import {
   formatEstimate,
   formatMinutes,
@@ -403,6 +404,9 @@ export function DayOverview({
     >
       <DayFigures totals={totals} />
       <CategoryDonut totals={totals} />
+      {/* Categories are the engine's judgement; apps are the measurement under
+          it. Directly below the donut so the two are read together. */}
+      <AppsBreakdown apps={totals.by_app ?? []} />
       <LongestFocusCard totals={totals} activities={activities} />
       <DistractionCard totals={totals} />
     </section>

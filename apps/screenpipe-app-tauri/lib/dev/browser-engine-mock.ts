@@ -983,6 +983,8 @@ type MockCardSeed = {
   relationReason?: string;
   appPrimary: string;
   appSecondary?: string;
+  /** Apps inside the card, most used first. Empty for idle. */
+  apps: string[];
   state?: "provisional" | "final";
   detours?: {
     startHour: number;
@@ -997,6 +999,7 @@ type MockCardSeed = {
 const MOCK_JOURNAL_CARD_SEEDS: MockCardSeed[] = [
   {
     id: 4101,
+    apps: ["Cursor", "Terminal", "GitHub", "Google Chrome", "Telegram"],
     startHour: 8, startMinute: 15, endHour: 8, endMinute: 52,
     activeMinutes: 34,
     title: "Traced the refresh-token failures in the auth service",
@@ -1017,6 +1020,7 @@ const MOCK_JOURNAL_CARD_SEEDS: MockCardSeed[] = [
   },
   {
     id: 4102,
+    apps: ["Mail", "Google Chrome", "Telegram", "Slack"],
     startHour: 8, startMinute: 52, endHour: 9, endMinute: 10,
     activeMinutes: 16,
     title: "Cleared the overnight inbox",
@@ -1028,6 +1032,7 @@ const MOCK_JOURNAL_CARD_SEEDS: MockCardSeed[] = [
   },
   {
     id: 4103,
+    apps: ["Cursor", "Terminal", "GitHub", "Slack"],
     startHour: 9, startMinute: 10, endHour: 10, endMinute: 5,
     activeMinutes: 52,
     title: "Wrote the retry path and its tests",
@@ -1041,6 +1046,7 @@ const MOCK_JOURNAL_CARD_SEEDS: MockCardSeed[] = [
   },
   {
     id: 4104,
+    apps: [],
     startHour: 10, startMinute: 5, endHour: 10, endMinute: 25,
     activeMinutes: 0,
     title: "Away from the machine",
@@ -1051,6 +1057,7 @@ const MOCK_JOURNAL_CARD_SEEDS: MockCardSeed[] = [
   },
   {
     id: 4105,
+    apps: ["GitHub", "Google Chrome", "Cursor", "Slack", "Terminal"],
     startHour: 10, startMinute: 25, endHour: 11, endMinute: 20,
     activeMinutes: 51,
     title: "Reviewed the session-store migration",
@@ -1063,6 +1070,7 @@ const MOCK_JOURNAL_CARD_SEEDS: MockCardSeed[] = [
   },
   {
     id: 4106,
+    apps: ["Google Chrome", "X", "Telegram"],
     startHour: 11, startMinute: 20, endHour: 11, endMinute: 45,
     activeMinutes: 23,
     title: "Read a long feed thread about token rotation",
@@ -1075,6 +1083,7 @@ const MOCK_JOURNAL_CARD_SEEDS: MockCardSeed[] = [
   },
   {
     id: 4107,
+    apps: ["Zoom", "Terminal", "Cursor", "Slack"],
     startHour: 11, startMinute: 45, endHour: 12, endMinute: 30,
     activeMinutes: 42,
     title: "Paired on the failing integration test",
@@ -1087,6 +1096,7 @@ const MOCK_JOURNAL_CARD_SEEDS: MockCardSeed[] = [
   },
   {
     id: 4108,
+    apps: ["Obsidian", "Notion", "Google Chrome", "Slack"],
     startHour: 13, startMinute: 30, endHour: 14, endMinute: 20,
     activeMinutes: 46,
     title: "Drafted the incident write-up",
@@ -1098,6 +1108,7 @@ const MOCK_JOURNAL_CARD_SEEDS: MockCardSeed[] = [
   },
   {
     id: 4109,
+    apps: ["Terminal", "GitHub", "Google Chrome", "Cursor", "Slack", "Telegram"],
     startHour: 14, startMinute: 20, endHour: 15, endMinute: 5,
     activeMinutes: 40,
     title: "Rolled the fix out behind a flag",
@@ -1111,6 +1122,98 @@ const MOCK_JOURNAL_CARD_SEEDS: MockCardSeed[] = [
   },
 ];
 
+/**
+ * Which app names are websites.
+ *
+ * The contract lets a card name the site rather than the browser, because
+ * "GitHub" is the answer to "what did I use" and "Google Chrome" four times
+ * over is not. A host makes the UI draw the site's favicon; null makes it ask
+ * the app-icon server.
+ */
+const MOCK_APP_HOSTS: Record<string, string | null> = {
+  GitHub: "github.com",
+  Notion: "notion.so",
+  Linear: "linear.app",
+  X: "x.com",
+  "Google Chrome": null,
+  Cursor: null,
+  Terminal: null,
+  Slack: null,
+  Telegram: null,
+  Zoom: null,
+  Mail: null,
+  Obsidian: null,
+};
+
+/**
+ * Split a card's measured minutes over its apps, most used first.
+ *
+ * Descending integer weights, remainder to the top app, so the parts always
+ * add up to the whole the card reports — a mock whose apps disagree with its
+ * own `active_minutes` would teach the UI to tolerate that.
+ */
+function mockCardApps(names: string[], activeMinutes: number) {
+  if (names.length === 0 || activeMinutes <= 0) return [];
+  const weights = names.map((_, index) => names.length - index);
+  const weightSum = weights.reduce((sum, weight) => sum + weight, 0);
+  const minutes = weights.map((weight) =>
+    Math.max(1, Math.round((activeMinutes * weight) / weightSum)),
+  );
+  const drift = Math.round(activeMinutes) - minutes.reduce((a, b) => a + b, 0);
+  minutes[0] = Math.max(1, minutes[0] + drift);
+  return names.map((name, index) => ({
+    name,
+    host: MOCK_APP_HOSTS[name] ?? null,
+    minutes: minutes[index],
+  }));
+}
+
+/**
+ * How each weekday differs from the seeded day.
+ *
+ * The same nine cards every day would make a week grid that says nothing: the
+ * point of seven columns is that they are not identical. So each day shifts
+ * its cards by a few dozen minutes and drops one or two, and the weekend keeps
+ * only a handful — which is also what makes "fewer blocks on Sat/Sun" visible
+ * in a screenshot. `keep: null` means every seeded card.
+ */
+const MOCK_WEEK_PLAN: { shiftMinutes: number; keep: number[] | null }[] = [
+  { shiftMinutes: 0, keep: null },
+  { shiftMinutes: -45, keep: [0, 1, 2, 3, 4, 5, 6, 7] },
+  { shiftMinutes: 30, keep: null },
+  { shiftMinutes: 75, keep: [0, 2, 3, 4, 5, 6, 7, 8] },
+  { shiftMinutes: -20, keep: null },
+  { shiftMinutes: 160, keep: [0, 3, 5, 7] },
+  { shiftMinutes: 205, keep: [1, 4, 6] },
+];
+
+/** Monday-first weekday index of a `YYYY-MM-DD` date. */
+function mockWeekdayIndex(date: string): number {
+  const [year, month, day] = date.split("-").map(Number);
+  return (new Date(year, (month ?? 1) - 1, day ?? 1, 12).getDay() + 6) % 7;
+}
+
+/** The Monday of the week a date falls in. */
+function mockMondayOf(date: string): string {
+  const [year, month, day] = date.split("-").map(Number);
+  const local = new Date(year, (month ?? 1) - 1, day ?? 1, 12);
+  local.setDate(local.getDate() - mockWeekdayIndex(date));
+  return `${local.getFullYear()}-${`${local.getMonth() + 1}`.padStart(2, "0")}-${`${local.getDate()}`.padStart(2, "0")}`;
+}
+
+/**
+ * Seven dates from `start`, whatever weekday it names — the contract does not
+ * make the route re-derive a Monday, and a client that asks for a Wednesday
+ * gets the seven days it asked for.
+ */
+function mockWeekDates(start: string): string[] {
+  const [year, month, day] = start.split("-").map(Number);
+  return Array.from({ length: 7 }, (_, index) => {
+    const local = new Date(year, (month ?? 1) - 1, (day ?? 1) + index, 12);
+    return `${local.getFullYear()}-${`${local.getMonth() + 1}`.padStart(2, "0")}-${`${local.getDate()}`.padStart(2, "0")}`;
+  });
+}
+
 function mockJournalCategoryById(id: string): MockJournalCategory {
   return (
     mockJournalCategories.find((row) => row.id === id) ??
@@ -1120,10 +1223,16 @@ function mockJournalCategoryById(id: string): MockJournalCategory {
 }
 
 function mockJournalCards(date: string, intention: MockIntention | null) {
-  return MOCK_JOURNAL_CARD_SEEDS.map((seed) => {
+  const plan = MOCK_WEEK_PLAN[mockWeekdayIndex(date)] ?? MOCK_WEEK_PLAN[0];
+  const seeds = MOCK_JOURNAL_CARD_SEEDS.filter(
+    (_, index) => plan.keep === null || plan.keep.includes(index),
+  );
+  return seeds.map((seed) => {
     const category = mockJournalCategoryById(seed.categoryId);
-    const start = journalLocal(date, seed.startHour, seed.startMinute);
-    const end = journalLocal(date, seed.endHour, seed.endMinute);
+    // Minute overflow is what `Date` is for: +205 on 15:05 lands on 18:30
+    // without a second clock calculation here.
+    const start = journalLocal(date, seed.startHour, seed.startMinute + plan.shiftMinutes);
+    const end = journalLocal(date, seed.endHour, seed.endMinute + plan.shiftMinutes);
     const relation = intention ? seed.relation : null;
     return {
       id: seed.id,
@@ -1154,6 +1263,7 @@ function mockJournalCards(date: string, intention: MockIntention | null) {
       relation_reason: relation ? (seed.relationReason ?? null) : null,
       app_primary: seed.appPrimary || null,
       app_secondary: seed.appSecondary ?? null,
+      apps: category.is_idle ? [] : mockCardApps(seed.apps, seed.activeMinutes),
       distractions: (seed.detours ?? []).map((detour) => ({
         start_at: journalLocal(date, detour.startHour, detour.startMinute).toISOString(),
         end_at: journalLocal(date, detour.endHour, detour.endMinute).toISOString(),
@@ -1199,6 +1309,7 @@ function mockJournalTotals(cards: MockJournalCard[]) {
   let distraction = 0;
   let focus = 0;
   const byCategory = new Map<string, { name: string; color_hex: string; minutes: number }>();
+  const byApp = new Map<string, { host: string | null; minutes: number }>();
 
   for (const card of cards) {
     const detourMinutes = card.distractions.reduce(
@@ -1223,6 +1334,12 @@ function mockJournalTotals(cards: MockJournalCard[]) {
     };
     bucket.minutes += card.active_minutes;
     byCategory.set(card.category.id, bucket);
+    for (const app of card.apps) {
+      const row = byApp.get(app.name) ?? { host: app.host, minutes: 0 };
+      row.minutes += app.minutes;
+      if (!row.host && app.host) row.host = app.host;
+      byApp.set(app.name, row);
+    }
   }
 
   const wall = cards.length
@@ -1243,6 +1360,17 @@ function mockJournalTotals(cards: MockJournalCard[]) {
       color_hex: bucket.color_hex,
       minutes: Math.round(bucket.minutes),
     })),
+    // Top 12, as the contract caps it.
+    // Descending by minutes, ties broken by name then host (contract §day).
+    by_app: [...byApp.entries()]
+      .map(([name, row]) => ({ name, host: row.host, minutes: Math.round(row.minutes) }))
+      .sort(
+        (a, b) =>
+          b.minutes - a.minutes ||
+          a.name.localeCompare(b.name) ||
+          (a.host ?? "").localeCompare(b.host ?? ""),
+      )
+      .slice(0, 12),
   };
 }
 
@@ -1283,8 +1411,14 @@ function mockJournalGeneration(scenario: BrowserDevScenario, cards: MockJournalC
 }
 
 function mockJournalDay(url: URL, scenario: BrowserDevScenario) {
+  return mockJournalDayFor(
+    url.searchParams.get("date") || journalToday(),
+    scenario,
+  );
+}
+
+function mockJournalDayFor(date: string, scenario: BrowserDevScenario) {
   ensureMockIntentionSeed(scenario);
-  const date = url.searchParams.get("date") || journalToday();
   const intention = mockActiveIntention();
   const hasCards = scenario === "ready" || scenario === "journal-generating";
   const cards = hasCards ? mockJournalCards(date, intention) : [];
@@ -1307,12 +1441,86 @@ function mockJournalDay(url: URL, scenario: BrowserDevScenario) {
   };
 }
 
+type MockJournalDay = ReturnType<typeof mockJournalDayFor>;
+
+/**
+ * The week's own totals.
+ *
+ * Summed from the days rather than recomputed from a flattened card list,
+ * except `longest_focus_block_minutes`, which is a maximum: a week does not
+ * have a longer block than its longest day, and adding seven of them would
+ * publish a number that never happened.
+ */
+function mockWeekTotals(days: MockJournalDay[]) {
+  const byCategory = new Map<string, { name: string; color_hex: string; minutes: number }>();
+  const byApp = new Map<string, { host: string | null; minutes: number }>();
+  const sum = (pick: (day: MockJournalDay) => number) =>
+    Math.round(days.reduce((total, day) => total + pick(day), 0));
+
+  for (const day of days) {
+    for (const row of day.totals.by_category) {
+      const bucket = byCategory.get(row.category_id) ?? {
+        name: row.name,
+        color_hex: row.color_hex,
+        minutes: 0,
+      };
+      bucket.minutes += row.minutes;
+      byCategory.set(row.category_id, bucket);
+    }
+    for (const app of day.totals.by_app) {
+      const row = byApp.get(app.name) ?? { host: app.host, minutes: 0 };
+      row.minutes += app.minutes;
+      if (!row.host && app.host) row.host = app.host;
+      byApp.set(app.name, row);
+    }
+  }
+
+  return {
+    active_minutes: sum((day) => day.totals.active_minutes),
+    wall_minutes: sum((day) => day.totals.wall_minutes),
+    focus_minutes: sum((day) => day.totals.focus_minutes),
+    distraction_minutes: sum((day) => day.totals.distraction_minutes),
+    idle_minutes: sum((day) => day.totals.idle_minutes),
+    unknown_minutes: sum((day) => day.totals.unknown_minutes),
+    longest_focus_block_minutes: days.reduce(
+      (best, day) => Math.max(best, day.totals.longest_focus_block_minutes),
+      0,
+    ),
+    by_category: [...byCategory.entries()]
+      .map(([category_id, bucket]) => ({ category_id, ...bucket }))
+      .sort((a, b) => b.minutes - a.minutes),
+    by_app: [...byApp.entries()]
+      .map(([name, row]) => ({ name, host: row.host, minutes: row.minutes }))
+      .sort(
+        (a, b) =>
+          b.minutes - a.minutes ||
+          a.name.localeCompare(b.name) ||
+          (a.host ?? "").localeCompare(b.host ?? ""),
+      )
+      .slice(0, 12),
+  };
+}
+
+function mockJournalWeek(url: URL, scenario: BrowserDevScenario) {
+  const start = url.searchParams.get("start") || mockMondayOf(journalToday());
+  const dates = mockWeekDates(start);
+  const days = dates.map((date) => mockJournalDayFor(date, scenario));
+  return {
+    start: dates[0],
+    end: dates[6],
+    days,
+    totals: mockWeekTotals(days),
+  };
+}
+
 function mockJournalActivity(id: number, scenario: BrowserDevScenario) {
   ensureMockIntentionSeed(scenario);
-  const date = journalToday();
-  const card = mockJournalCards(date, mockActiveIntention()).find(
-    (row) => row.id === id,
-  );
+  // Any day of the current week: the week view selects a card on Saturday and
+  // then asks for its evidence, and the weekday plan means that id is not in
+  // today's set.
+  const card = mockWeekDates(mockMondayOf(journalToday()))
+    .flatMap((date) => mockJournalCards(date, mockActiveIntention()))
+    .find((row) => row.id === id);
   if (!card) return null;
   const start = new Date(card.start_at).getTime();
   const span = new Date(card.end_at).getTime() - start;
@@ -1446,6 +1654,9 @@ function mockJournalApiResponse(
 
   if (url.pathname === "/journal/day") {
     return Response.json(mockJournalDay(url, scenario));
+  }
+  if (url.pathname === "/journal/week") {
+    return Response.json(mockJournalWeek(url, scenario));
   }
   if (url.pathname === "/journal/status") {
     return Response.json(mockJournalStatus(scenario));
