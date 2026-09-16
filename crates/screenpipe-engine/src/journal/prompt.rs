@@ -39,7 +39,7 @@ use super::validate::CardIssue;
 
 /// Prompt identity. Stored on cards and windows; a bump makes previously
 /// generated windows eligible for regeneration the next time they are touched.
-pub const PROMPT_VERSION: &str = "journal-cards-v2";
+pub const PROMPT_VERSION: &str = "journal-cards-v3";
 
 /// Guard rail on the *evidence* half of the prompt: the rendered observations
 /// plus the previous cards. The instruction blocks are a fixed ~11k characters
@@ -81,16 +81,18 @@ Each card covers one cohesive chunk of activity, roughly 15–60 minutes.
 **When to start a new card:**
 1. What's the main thing happening right now?
 2. Does the next chunk of activity continue that same thing? → Keep extending.
-3. Is there a brief unrelated detour (<5 min)? → Log it as a distraction, keep the card going.
-4. Has the focus genuinely shifted for 10+ minutes? → New card.
+3. Is there a brief unrelated detour (<5 min)? → Log it in distractions[], keep the card going.
+4. Is the unrelated stretch 5–10 minutes, with the same task running before it and resumed after it? → Still a detour: distractions[], keep the card going.
+5. Is the unrelated stretch 10 minutes or longer? → Its own card, with its own category. Give it that card even when it lands under 15 minutes: ten minutes of YouTube is a ten-minute card, not a footnote on a coding card.
+6. Has the focus genuinely shifted for 10+ minutes? → New card.
 
 **When to merge with a previous card:**
-1. Is the previous card's main activity the same as what's happening now? (same PR, same feature, same codebase, same article) → Merge.
+1. Is the previous card's main activity the same work stream as what's happening now? (same PR, same feature, same codebase, same article) → Merge.
 2. Did the person just take a 2–5 minute break (messages, a feed, a video) and come back to the same thing? → That's a distraction, not a new card. Merge.
 3. Are two adjacent cards both "scrolling with occasional work check-ins"? → Merge. The vibe didn't change.
 4. Only start a new card if the CORE INTENT changed for 10+ minutes.
 
-DEFAULT TO MERGING. Two 15-minute cards about the same work stream should almost never exist. If you're unsure whether to merge or split, merge."#;
+DEFAULT TO MERGING WITHIN ONE WORK STREAM. Two 15-minute cards about the same work stream should almost never exist, and if you're unsure whether to merge two parts of one work stream, merge. The default stops at the edge of the stream: an unrelated block of 10 minutes or more is never merged into the work around it, however short its own card turns out to be."#;
 
 const TITLE_BLOCK: &str = r#"## Titles
 
@@ -179,7 +181,17 @@ Gaps between observation lines mean nothing was captured: the person was away or
 
 const DISTRACTIONS_BLOCK: &str = r#"## Distractions
 
-A distraction is a brief (<5 min) unrelated interruption inside a card. Checking a feed for 2 minutes while debugging is a distraction. Spending 15 minutes there is not a distraction — it's either part of the card's theme or it's a new card.
+HARD RULE: no entry in distractions[] may last 10 minutes or more. Ever. distractions[] is only for interruptions that stay INSIDE a card, and length decides, in three tiers:
+
+- Under 5 minutes and unrelated → a distraction. Checking a feed for 2 minutes while debugging goes in distractions[] and the card keeps running.
+- 5–10 minutes and unrelated → still a distraction, but only when it sits inside one task: the same work was running before it and resumes after it. If the work does not resume, it is a card.
+- 10 minutes or more and unrelated → never a distraction. It is its own card with its own category, even when that card is shorter than the usual 15–60 minutes. Twenty minutes of YouTube in the middle of a coding session is a twenty-minute card, not a line in the coding card's summary.
+
+Pick that card's category by matching what the block actually was against the category descriptions above, not by what is nearby: a feed, a video, a game, endless scrolling → the label whose description covers feeds, videos and detours — watching videos is not an errand and does not belong under a personal/admin label; a real errand, admin or a message thread → the personal label; work that is simply different work → the work label.
+
+Worked example. Observations: 09:10–09:50 in an editor on parser.rs, then 09:50–10:05 on instagram.com.
+WRONG: one card 09:10–10:05 "Work", with a 15-minute Instagram entry in distractions[].
+RIGHT: card 1, 09:10–09:50, Work, "Rewrote the parser's error recovery"; card 2, 09:50–10:05, the distraction-style label, "Scrolling Instagram". Fifteen minutes is the person's fifteen minutes and the journal has to show it.
 
 Don't label related sub-tasks as distractions. Searching an error message while debugging isn't a distraction, it's part of debugging."#;
 
@@ -220,22 +232,56 @@ If yes to both, merge them in your output."#;
 
 const ONGOING_BLOCK: &str = r#"<ongoing_segmentation>
 Rewrite the full connected span from the supplied evidence. Previous cards preserve content only; their boundaries, titles and categories are provisional.
-Group time by the person's immediate activity. App switches within one task belong together. Sustained different activities deserve separate cards. Each card must be 10–60 minutes. Absorb interruptions under five minutes; a distinct 5–9-minute episode may borrow the minimum neighbouring minutes to reach ten if the neighbouring cards remain at least ten. Cover all observed time without overlaps and preserve real source gaps. A broad project or a continuous computer session does not by itself make one activity.
+Group time by the person's immediate activity. App switches within one task belong together. Sustained different activities deserve separate cards. Each card must be 10–60 minutes. Absorb unrelated interruptions under five minutes, and unrelated 5–9-minute episodes that sit inside one task which resumes afterwards. An unrelated stretch of ten minutes or more is always its own card with its own category and is never absorbed, even if that card lands at the ten-minute floor. A 5–9-minute episode that is not absorbed may borrow the minimum neighbouring minutes to reach ten if the neighbouring cards remain at least ten. Cover all observed time without overlaps and preserve real source gaps. A broad project or a continuous computer session does not by itself make one activity.
 </ongoing_segmentation>"#;
 
-const FRESH_BLOCK: &str = r#"FRESH SEGMENT MODE — EXACTLY ONE CARD:
-No previous card belongs to this batch's contiguous source-evidence segment. Nearby history separated by a genuine gap is left untouched. Return exactly ONE new card covering the entire supplied observation span, regardless of internal activity or goal changes. This card is provisional; later sliding-window passes may split it once each resulting activity has at least 10 minutes of supporting evidence.
+const FRESH_BLOCK: &str = r#"FRESH SEGMENT MODE — SPLIT ONLY ON A LONG UNRELATED BLOCK:
+No previous card belongs to this batch's contiguous source-evidence segment. Nearby history separated by a genuine gap is left untouched. Build this batch's cards in two steps.
 
-Do not split this batch. Title and categorize its dominant activity, and put shorter or unrelated activity in the summary and detailed summary. This rule overrides all other coherence and splitting guidance for this call."#;
+Step 1. Find every stretch of 10 minutes or more that is unrelated to the rest of the span — leisure, entertainment, social, or an activity of a different kind altogether. Each one is its own card, with its own start time, end time, title and category, even when that card is shorter than 15 minutes. Twenty minutes of YouTube inside a coding session is a twenty-minute card categorized as what it was: not a distractions[] entry, not a clause in a Work card's title, not a line in its detailed summary. This is the one split this mode makes, and it is not optional.
+
+Step 2. Each remaining contiguous stretch is ONE card, regardless of internal activity or goal changes. Do not split it by topic, project, goal or app. Title and categorize its dominant activity, and put unrelated activity shorter than 10 minutes in distractions[], the summary and the detailed summary.
+
+So: exactly one card when nothing unrelated ran for 10 minutes — the normal case — and one extra card for each long unrelated block when something did. Never return an empty cards array: every batch of observations produces at least one card. These cards are provisional; later sliding-window passes may split them once each resulting activity has at least 10 minutes of supporting evidence. Apart from step 1, this rule overrides all other coherence and splitting guidance for this call."#;
+
+/// The output-language instruction, shared verbatim with the live tail
+/// classifier so a card and the "now" strip cannot come back in two different
+/// languages.
+///
+/// Only the human-readable text moves. JSON keys, the five relation values,
+/// the category labels and the timestamps are contract, and a model that
+/// translates them produces output the normalizer silently drops.
+pub const LANGUAGE_INSTRUCTIONS: [(&str, &str); 1] = [(
+    "ru",
+    "Write all human-readable text (title, summary, detailedSummary, distraction titles/summaries, \
+     relation_reason) in Russian. Keep JSON keys, category labels and timestamps exactly as \
+     specified.",
+)];
+
+/// The instruction for a language, or `None` when the model's own default is
+/// what we want — English needs no instruction, and neither does a language
+/// nobody wrote one for.
+pub fn language_instruction(language: &str) -> Option<&'static str> {
+    LANGUAGE_INSTRUCTIONS
+        .iter()
+        .find(|(tag, _)| *tag == language.trim().to_ascii_lowercase())
+        .map(|(_, instruction)| *instruction)
+}
+
+/// The prompt section carrying [`language_instruction`].
+pub fn language_section(language: &str) -> Option<String> {
+    language_instruction(language)
+        .map(|instruction| format!("## Output language\n\n{instruction}"))
+}
 
 /// The five relations and when each one applies. Shared verbatim with the
 /// live tail classifier (`crate::focus::classifier`) so the card view and the
 /// "now" strip cannot drift apart about what "other work" means.
 pub const RELATION_RULES: &str = r#"Rules for the relation, in this order:
-- other_work: real work or a real errand that is simply not the stated intention. Other work is NOT a distraction. Use this whenever the activity is purposeful.
-- supports_intention: the activity advances the intention, including reading documentation, searching an error message, or reviewing material that the intention needs. Research that serves the task supports it.
+- other_work: real work or a real errand that is simply not the stated intention. Other work is NOT a distraction. Use this whenever the activity is purposeful. Same project, different task is other_work: the intention names a task, not a repository, a product, an employer or a tool. Another crate, another feature, another document, the quarterly plan, a different ticket in the same tracker — all other_work, however real the work is.
+- supports_intention: the activity advances the stated task itself, including reading documentation, searching an error message, or reviewing material that task needs. Research that serves the task supports it: the documentation for the API being used, the error being debugged, the document being written. Background reading about the field, the market or tooling in general is not that — it is other_work. Ask: would finishing this move the stated task forward? If the honest answer is "no, but it is still work", the answer is other_work, not supports_intention. Do not stretch the intention to cover whatever the person happened to be working on.
 - break: eating, walking away, an obvious pause. A break is a break, not a failure.
-- possible_distraction: the activity is neither the intention nor purposeful work and displaced the intention — an entertainment feed or an unrelated video while the intention was open.
+- possible_distraction: the activity is neither the intention nor purposeful work and displaced the intention — an entertainment feed or an unrelated video while the intention was open. Check break first: a timer, the weather, a walk away from the desk is a break, however long it ran.
 - unknown: the evidence is too thin to tell. Prefer unknown over a guess. Never call something a distraction to fill the field.
 
 relationConfidence is 0.0–1.0 and must be below 0.5 whenever you choose unknown.
@@ -307,6 +353,9 @@ fn render(
             SegmentMode::Ongoing => ONGOING_BLOCK,
         },
     );
+    if let Some(section) = language_section(&ctx.language) {
+        push_section(&mut prompt, &section);
+    }
 
     prompt.push_str("## Inputs\n\nPrevious cards (a draft you are revising):\n");
     prompt.push_str(previous);
@@ -355,8 +404,15 @@ fn output_contract(ctx: &GenerationContext) -> String {
     }
     let shape = json!({ "cards": [card] });
     contract.push_str(&serde_json::to_string_pretty(&shape).unwrap_or_else(|_| "{}".to_string()));
-    contract.push_str("\n\nWrite the summaries before the title. Check coverage, duration and \
-                       factual accuracy before returning the object.");
+    contract.push_str(
+        "\n\nWrite the summaries before the title. Check coverage, duration and factual accuracy \
+         before returning the object.\n\nLAST CHECK, before you return: is any entry in \
+         distractions[] 10 minutes or longer, or does any card's text describe an unrelated block \
+         of 10 minutes or more? Then that block is not a distraction. Remove it from \
+         distractions[], give it its own card with its own start time, end time, title and \
+         category, and move the neighbouring card's boundary to meet it. Do this even in fresh \
+         segment mode, and even when the new card is under 15 minutes.",
+    );
     contract
 }
 
@@ -417,8 +473,12 @@ pub fn intention_section(intention: Option<&FocusIntention>) -> Option<String> {
         section.push_str(&format!("\nNotes: {notes}"));
     }
     section.push_str(&format!(
-        "\nStated at: {}\n\nFor every card, set intentionRelation, relationConfidence and \
-         relationReason.\n\n{RELATION_RULES}",
+        "\nStated at: {}\n\nThe title, and the notes when there are any, are the boundary of \
+         this intention. Work they do not cover is other_work, even in the same repository, the \
+         same product or the same company. A card whose own activity is leisure, social or \
+         entertainment and which ran for 10 minutes or more is possible_distraction, not a \
+         footnote on the work around it.\n\nFor every card, set intentionRelation, \
+         relationConfidence and relationReason.\n\n{RELATION_RULES}",
         intention.started_at
     ));
     Some(section)
@@ -635,8 +695,12 @@ pub fn render_correction(issues: &[CardIssue], mode: SegmentMode) -> String {
     );
     block.push_str(match mode {
         SegmentMode::Fresh => {
-            "- This is a fresh segment. Return exactly ONE card covering the full supplied \
-             observation span.\n"
+            "- This is a fresh segment. Split out every unrelated stretch of 10 minutes or more \
+             (leisure, entertainment, social, or an activity of a different kind) as its own card \
+             with its own category, even if that card is under 15 minutes; return exactly ONE card \
+             for each remaining contiguous stretch of the supplied observation span. Nothing \
+             shorter than 10 minutes is ever split out: measure it, then leave it inside the card \
+             it interrupted.\n"
         }
         SegmentMode::Ongoing => {
             "- Recheck the entire array, not only the issue named above. Absorb every 1–4-minute \
@@ -648,9 +712,12 @@ pub fn render_correction(issues: &[CardIssue], mode: SegmentMode) -> String {
         }
     });
     block.push_str(
-        "- The duration rule overrides semantic purity. When unrelated activities must be merged, \
-         title and categorize the dominant activity and move the shorter activity into the summary \
-         and detailed summary.\n\
+        "- The duration rule overrides semantic purity below ten minutes. When unrelated activity \
+         shorter than ten minutes must be merged, title and categorize the dominant activity and \
+         move the shorter activity into distractions[], the summary and the detailed summary.\n\
+         - An unrelated stretch of ten minutes or more is never merged away: it keeps its own card \
+         and its own category, even when that card sits at the ten-minute floor. Merging by default \
+         applies inside one work stream only.\n\
          - After merging, recompute the title and category from the combined duration.\n\
          - Output JSON only. No code fences or extra text.",
     );
@@ -696,8 +763,18 @@ mod tests {
     #[test]
     fn the_fresh_prompt_asks_for_exactly_one_provisional_card() {
         let prompt = build_prompt(&compiled_fixture(), &[], &context(None));
-        assert!(prompt.contains("FRESH SEGMENT MODE — EXACTLY ONE CARD"));
-        assert!(prompt.contains("later sliding-window passes may split it"));
+        assert!(prompt.contains("FRESH SEGMENT MODE — SPLIT ONLY ON A LONG UNRELATED BLOCK"));
+        assert!(prompt.contains("later sliding-window passes may split them"));
+        assert!(prompt.contains("Each remaining contiguous stretch is ONE card"));
+        // Even a fresh segment splits a long unrelated block out (finding 1).
+        assert!(prompt.contains(
+            "Step 1. Find every stretch of 10 minutes or more that is unrelated to the rest of \
+             the span"
+        ));
+        // The minimum-card floor lives in the card-structure block and in the
+        // correction round; repeating it here made the model fold the long
+        // block back into the work card, which is the miss this rule exists for.
+        assert!(prompt.contains("Minimum 10 minutes per card"));
         assert!(!prompt.contains("<ongoing_segmentation>"));
     }
 
@@ -775,8 +852,52 @@ mod tests {
         let prompt = build_prompt(&compiled_fixture(), &[], &context(None));
         assert!(prompt.contains("Use honest verbs"));
         assert!(prompt.contains("\"deep dive,\" \"rabbit hole\""));
-        assert!(prompt.contains("DEFAULT TO MERGING"));
-        assert!(prompt.contains("A distraction is a brief (<5 min) unrelated interruption"));
+        assert!(prompt.contains("DEFAULT TO MERGING WITHIN ONE WORK STREAM"));
+        assert!(prompt.contains("Under 5 minutes and unrelated → a distraction"));
+    }
+
+    #[test]
+    fn a_long_unrelated_block_gets_its_own_card_not_a_distraction_entry() {
+        let prompt = build_prompt(&compiled_fixture(), &[], &context(None));
+        // The three tiers the 2026-09-16 eval's `distraction-block` miss needs.
+        assert!(prompt.contains("5–10 minutes and unrelated → still a distraction"));
+        assert!(prompt.contains(
+            "10 minutes or more and unrelated → never a distraction. It is its own card with \
+             its own category"
+        ));
+        assert!(prompt
+            .contains("an unrelated block of 10 minutes or more is never merged into the work"));
+        assert!(prompt.contains(
+            "Is the unrelated stretch 10 minutes or longer? → Its own card, with its own category."
+        ));
+
+        let ongoing = build_prompt(
+            &compiled_fixture(),
+            &[previous_card("2026-09-16T07:45:00Z", "2026-09-16T08:00:00Z", "Earlier")],
+            &context(None),
+        );
+        assert!(ongoing.contains(
+            "An unrelated stretch of ten minutes or more is always its own card with its own \
+             category and is never absorbed"
+        ));
+    }
+
+    #[test]
+    fn same_project_different_task_is_other_work() {
+        let prompt = build_prompt(&compiled_fixture(), &[], &context(Some("Ship auth fix")));
+        assert!(prompt.contains(
+            "Same project, different task is other_work: the intention names a task, not a \
+             repository, a product, an employer or a tool."
+        ));
+        assert!(prompt.contains("the answer is other_work, not supports_intention"));
+        assert!(prompt.contains(
+            "A card whose own activity is leisure, social or entertainment and which ran for 10 \
+             minutes or more is possible_distraction"
+        ));
+        // The shared rules stay free of card-length reasoning: the live tail
+        // classifier reads them too, and a ten-minute break is still a break.
+        assert!(RELATION_RULES.contains("Check break first"));
+        assert!(!RELATION_RULES.contains("10 minutes"));
     }
 
     #[test]
@@ -820,13 +941,18 @@ mod tests {
         assert!(fresh.contains("Card 1 'Short' is only 4.0 minutes long"));
         assert!(fresh.contains("TIME COVERAGE ERROR"));
         assert!(fresh.contains("Return the FULL corrected JSON object (not a diff)"));
-        assert!(fresh.contains("Return exactly ONE card"));
-        assert!(fresh.contains("duration rule overrides semantic purity"));
+        assert!(fresh.contains("return exactly ONE card for each remaining contiguous stretch"));
+        assert!(fresh.contains(
+            "Split out every unrelated stretch of 10 minutes or more (leisure, entertainment, \
+             social, or an activity of a different kind) as its own card"
+        ));
+        assert!(fresh.contains("duration rule overrides semantic purity below ten minutes"));
+        assert!(fresh.contains("An unrelated stretch of ten minutes or more is never merged away"));
         assert!(fresh.contains("Output JSON only"));
 
         let ongoing = render_correction(&issues, SegmentMode::Ongoing);
         assert!(ongoing.contains("Never return the same invalid short boundary"));
-        assert!(!ongoing.contains("Return exactly ONE card"));
+        assert!(!ongoing.contains("return exactly ONE card for each remaining"));
     }
 
     #[test]
@@ -838,8 +964,35 @@ mod tests {
     }
 
     #[test]
+    fn russian_asks_for_russian_text_and_english_asks_for_nothing() {
+        let mut ctx = context(Some("Ship auth fix"));
+        assert_eq!(ctx.language, "en");
+        let english = build_prompt(&compiled_fixture(), &[], &ctx);
+        assert!(!english.contains("## Output language"));
+        assert!(!english.contains("in Russian"));
+
+        ctx.language = "ru".to_string();
+        let russian = build_prompt(&compiled_fixture(), &[], &ctx);
+        assert!(russian.contains("## Output language"));
+        assert!(russian.contains(
+            "Write all human-readable text (title, summary, detailedSummary, distraction \
+             titles/summaries, relation_reason) in Russian. Keep JSON keys, category labels and \
+             timestamps exactly as specified."
+        ));
+        // The contract itself is untouched: same keys, same labels, same times.
+        assert!(russian.contains("\"detailedSummary\""));
+        assert!(russian.contains("Allowed values: [\"Work\", \"Personal\""));
+        assert!(russian.contains("RFC3339 UTC instants"));
+
+        // An unknown tag is the model's own default, not a third language.
+        ctx.language = "de".to_string();
+        assert!(!build_prompt(&compiled_fixture(), &[], &ctx).contains("## Output language"));
+        assert_eq!(language_instruction("RU  "), language_instruction("ru"));
+    }
+
+    #[test]
     fn the_prompt_version_is_the_one_stored_on_cards() {
-        assert_eq!(PROMPT_VERSION, "journal-cards-v2");
+        assert_eq!(PROMPT_VERSION, "journal-cards-v3");
         assert_eq!(CONNECTED_GAP, Duration::minutes(5));
         assert!(SYSTEM_PROMPT.contains("Return only the requested JSON"));
         assert!(at("2026-09-16T08:00:00Z") < at("2026-09-16T08:15:00Z"));

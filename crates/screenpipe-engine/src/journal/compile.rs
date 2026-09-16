@@ -276,7 +276,15 @@ pub fn plan_window_from(
                 .app_name
                 .clone()
                 .or_else(|| most_common(span_frames.iter().filter_map(|f| f.app_name.clone()))),
-            window_title: most_common(span_frames.iter().filter_map(|f| f.window_name.clone())),
+            // Normalized for the same reason the ledger keys on a normalized
+            // title: a spinner frame is not what the window was showing, and
+            // `most_common` over animated titles otherwise votes on noise.
+            window_title: most_common(span_frames.iter().filter_map(|f| {
+                f.window_name
+                    .as_deref()
+                    .map(crate::activity_ledger::normalize_title)
+                    .filter(|title| !title.is_empty())
+            })),
             host: most_common(
                 span_frames
                     .iter()

@@ -105,6 +105,10 @@ pub struct GenerationContext {
     /// The intention live during the window, if any. Cards get an
     /// `intention_relation` only while one is set.
     pub active_intention: Option<FocusIntention>,
+    /// The language the card text is written in, already resolved to one of
+    /// `settings::SUPPORTED_LANGUAGES`. The JSON shape never changes with it:
+    /// keys, category labels and timestamps stay exactly as the contract says.
+    pub language: String,
 }
 
 /// One provider call, as the `journal_runs` audit records it.

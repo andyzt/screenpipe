@@ -853,7 +853,7 @@ mod tests {
             Some("deepseek"),
         );
         assert_eq!(generator.producer(), "llm-v1");
-        assert_eq!(generator.prompt_version().as_deref(), Some("journal-cards-v2"));
+        assert_eq!(generator.prompt_version().as_deref(), Some("journal-cards-v3"));
         assert_eq!(generator.model().as_deref(), Some("deepseek/deepseek-v4-flash"));
     }
 

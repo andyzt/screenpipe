@@ -347,21 +347,21 @@ fn identity_for(observation: &ActivityLedgerObservation) -> TaskIdentity {
             let title = Path::new(path)
                 .file_name()
                 .and_then(|value| value.to_str())
-                .map(|value| clean_label(value, 200))
+                .map(|value| normalize_title(&clean_label(value, 200)))
                 .filter(|value| !value.is_empty())
                 .unwrap_or_else(|| app.clone());
             (format!("document|{}", path), title, 0.85)
         } else if let Some(title) = observation
             .window_title
             .as_deref()
-            .map(|value| clean_label(value, 200))
+            .map(|value| normalize_title(&clean_label(value, 200)))
             .filter(|value| meaningful_title(value, &app))
         {
             (format!("window|{}", title), title, 0.8)
         } else if let Some(title) = observation
             .semantic_title
             .as_deref()
-            .map(|value| clean_label(value, 200))
+            .map(|value| normalize_title(&clean_label(value, 200)))
             .filter(|value| meaningful_title(value, &app))
         {
             let key = observation
@@ -545,6 +545,101 @@ fn clean_label(value: &str, max_chars: usize) -> String {
         .collect()
 }
 
+/// Characters a window title uses as animation or status ornament rather than
+/// content: every braille spinner frame, the quadrant and clock spinners, the
+/// asterisk family agent CLIs animate, and the box/block/arrow ornaments that
+/// draw progress bars in a title bar.
+fn is_ornament(character: char) -> bool {
+    matches!(character,
+        '\u{2800}'..='\u{28FF}'   // braille patterns — every spinner frame
+        | '\u{2190}'..='\u{21FF}'  // arrows
+        | '\u{2500}'..='\u{259F}'  // box drawing and block elements
+        | '\u{25B6}' | '\u{25B8}' | '\u{25C0}' | '\u{25C2}'
+        | '\u{25CB}'..='\u{25D3}'  // ○◌◍◎● and ◐◑◒◓
+        | '\u{25F4}'..='\u{25F7}'  // ◴◵◶◷
+        | '\u{2731}'..='\u{2736}'  // ✱✲✳✴✵✶
+        | '\u{2022}' | '\u{2219}'
+        | '\u{23F0}'..='\u{23FF}'  // ⏳ ⏱ and friends
+        | '\u{2699}' | '\u{26A1}' | '\u{2705}' | '\u{2714}' | '\u{2716}' | '\u{274C}'
+    )
+}
+
+/// A token that is decoration or a live counter rather than part of the task:
+/// a bare ornament, a `[3/10]` progress fragment, `42%`, a bracketed `(12)`
+/// unread count, or an elapsed `00:12` / `1:02:33` timer.
+fn is_status_token(token: &str) -> bool {
+    if token.is_empty() || token.chars().all(is_ornament) {
+        return true;
+    }
+    let core = token.trim_matches(|character: char| "()[]{}<>".contains(character));
+    if core.is_empty() {
+        return false;
+    }
+    let digits = |value: &str| !value.is_empty() && value.chars().all(|c| c.is_ascii_digit());
+
+    if let Some(number) = core.strip_suffix('%') {
+        if !number.is_empty()
+            && number.chars().all(|c| c.is_ascii_digit() || c == '.')
+            && number.chars().any(|c| c.is_ascii_digit())
+        {
+            return true;
+        }
+    }
+    if let Some((done, total)) = core.split_once('/') {
+        if digits(done) && digits(total) {
+            return true;
+        }
+    }
+    // A bare number is only a counter when something bracketed it: "Issue 42"
+    // is a title, "(42)" is an unread badge.
+    if core != token && digits(core) {
+        return true;
+    }
+    let parts: Vec<&str> = core.split(':').collect();
+    if parts.len() >= 2 && parts.iter().all(|part| digits(part) && part.len() <= 2) {
+        return true;
+    }
+    false
+}
+
+/// Punctuation left dangling once a status token next to it is gone
+/// (`Build — 42%` → `Build`).
+fn is_separator_token(token: &str) -> bool {
+    !token.is_empty()
+        && token
+            .chars()
+            .all(|character| "—–-·|:,.•".contains(character))
+}
+
+/// Strip animation and status decoration from a window title so the same task
+/// keys to the same identity from one second to the next.
+///
+/// Titles that animate — an agent CLI spinner, a progress bar, an unread badge,
+/// an elapsed timer — otherwise make every captured second its own task, its
+/// own interval and its own line in the journal prompt. Only the edges are
+/// trimmed: whatever sits between the ornaments is the task and is left
+/// exactly as the window reported it.
+pub(crate) fn normalize_title(value: &str) -> String {
+    let mut tokens: Vec<&str> = value
+        .split_whitespace()
+        .map(|token| token.trim_matches(is_ornament))
+        .filter(|token| !token.is_empty())
+        .collect();
+    while tokens
+        .first()
+        .is_some_and(|token| is_status_token(token) || is_separator_token(token))
+    {
+        tokens.remove(0);
+    }
+    while tokens
+        .last()
+        .is_some_and(|token| is_status_token(token) || is_separator_token(token))
+    {
+        tokens.pop();
+    }
+    tokens.join(" ")
+}
+
 fn meaningful_title(value: &str, app: &str) -> bool {
     !value.is_empty()
         && !value.eq_ignore_ascii_case(app)
@@ -703,6 +798,86 @@ mod tests {
             ),
             "accounts.screenpipe.com/sign-in"
         );
+    }
+
+    #[test]
+    fn animated_window_titles_normalize_to_one_key() {
+        // Raw title → the title the ledger keys and displays. The first row is
+        // the iTerm2 spinner from the 2026-09-16 live export, which by itself
+        // produced ~96 % of that day's ledger intervals.
+        let cases = [
+            ("◐ Screenpipe MVP implementation plan", "Screenpipe MVP implementation plan"),
+            ("◑ Screenpipe MVP implementation plan", "Screenpipe MVP implementation plan"),
+            ("✳ Screenpipe MVP implementation plan", "Screenpipe MVP implementation plan"),
+            ("⠋ Screenpipe MVP implementation plan", "Screenpipe MVP implementation plan"),
+            ("⣾  Screenpipe MVP   implementation plan  ", "Screenpipe MVP implementation plan"),
+            ("Telegram (3)", "Telegram"),
+            ("(12) Telegram — private chat", "Telegram — private chat"),
+            ("[2/7] building screenpipe-engine", "building screenpipe-engine"),
+            ("Recording 12:31", "Recording"),
+            ("00:12 — Zoom Meeting", "Zoom Meeting"),
+            ("Exporting fixtures — 42%", "Exporting fixtures"),
+            ("◐ deploy [3/10] 01:23", "deploy"),
+            // Normal titles are left exactly as the window reported them.
+            ("day.rs — screenpipe", "day.rs — screenpipe"),
+            ("-bash", "-bash"),
+            ("Activity Monitor – My Processes", "Activity Monitor – My Processes"),
+            ("Issue 42: token refresh", "Issue 42: token refresh"),
+            // Nothing but ornament leaves nothing, and the caller falls back.
+            ("◐", ""),
+        ];
+        for (raw, expected) in cases {
+            assert_eq!(normalize_title(raw), expected, "normalizing {raw:?}");
+        }
+    }
+
+    #[test]
+    fn a_title_that_is_only_a_spinner_falls_back_to_the_app() {
+        let mut observation = frame(1, "2026-08-17T09:00:00Z", "iTerm2", "◑");
+        let identity = identity_for(&observation);
+        assert_eq!(identity.task_title, "Using iTerm2");
+        assert_eq!(identity.confidence(), 0.6);
+
+        observation.window_title = Some("◑ Screenpipe MVP implementation plan".to_string());
+        let named = identity_for(&observation);
+        assert_eq!(named.task_title, "Screenpipe MVP implementation plan");
+        assert_ne!(named.task_key, identity.task_key);
+    }
+
+    #[test]
+    fn a_rotating_spinner_title_is_one_interval_not_sixty() {
+        // One minute of the iTerm2 agent CLI: the glyph changes every second,
+        // the task does not.
+        let spinners = ['\u{25D0}', '\u{25D1}', '\u{25D2}', '\u{25D3}', '\u{2733}', '\u{280B}'];
+        let observations: Vec<ActivityLedgerObservation> = (0..60)
+            .map(|second| {
+                frame(
+                    second + 1,
+                    &format!("2026-08-17T09:00:{second:02}Z"),
+                    "iTerm2",
+                    &format!(
+                        "{} Screenpipe MVP implementation plan",
+                        spinners[second as usize % spinners.len()]
+                    ),
+                )
+            })
+            .collect();
+
+        let (tasks, intervals) = build_ledger(
+            observations,
+            at("2026-08-17T09:00:00Z"),
+            at("2026-08-17T09:01:00Z"),
+        );
+
+        assert_eq!(intervals.len(), 1, "one task, one interval");
+        assert_eq!(intervals[0].start_at, at("2026-08-17T09:00:00Z"));
+        assert_eq!(intervals[0].end_at, at("2026-08-17T09:01:00Z"));
+        let task = tasks
+            .iter()
+            .find(|task| task.task_key == intervals[0].task_key)
+            .expect("the interval's task is registered");
+        assert_eq!(task.title, "Screenpipe MVP implementation plan");
+        assert_eq!(tasks.iter().filter(|task| task.kind == "task").count(), 1);
     }
 
     #[test]

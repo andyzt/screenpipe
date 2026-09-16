@@ -739,8 +739,16 @@ pub struct TailFixture {
     pub grace_minutes: i64,
     #[serde(default)]
     pub work_profile: Value,
+    /// `uiLanguage` as the app would have resolved it. Absent in every
+    /// hand-written fixture, which means English.
+    #[serde(default = "default_language")]
+    pub language: String,
     #[serde(default)]
     pub observations: Option<CompiledWindow>,
+}
+
+fn default_language() -> String {
+    super::settings::DEFAULT_LANGUAGE.to_string()
 }
 
 fn default_grace_minutes() -> i64 {
@@ -778,6 +786,7 @@ impl TailFixture {
             divergence_minutes: self.divergence_minutes,
             grace_minutes: self.grace_minutes,
             work_profile: self.work_profile.clone(),
+            language: self.language.clone(),
             observations: self.observations.clone(),
         }
     }

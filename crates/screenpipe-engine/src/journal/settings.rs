@@ -23,6 +23,14 @@ use std::path::Path;
 /// classifying. Contract key: `focusGraceMinutes`.
 pub const DEFAULT_FOCUS_GRACE_MINUTES: i64 = 10;
 
+/// The language every prompt writes in when nothing says otherwise.
+pub const DEFAULT_LANGUAGE: &str = "en";
+
+/// Languages the prompts have an instruction for. Anything else falls back to
+/// [`DEFAULT_LANGUAGE`]: a model told to write in a language the prompt cannot
+/// name reliably invents a third one.
+pub const SUPPORTED_LANGUAGES: [&str; 2] = ["en", "ru"];
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct JournalSettings {
     /// `journalEnabled` — worker on/off. Defaults to on.
@@ -37,6 +45,10 @@ pub struct JournalSettings {
     /// `focusNudgesEnabled` — the notification layer. Off by default and not
     /// consumed yet; read here so one settings reader covers the feature.
     pub nudges_enabled: bool,
+    /// `uiLanguage` — the language the journal writes cards and reasons in.
+    /// Always one of [`SUPPORTED_LANGUAGES`]: `"system"` is already resolved
+    /// against the machine locale here, so no prompt has to think about it.
+    pub language: String,
 }
 
 impl Default for JournalSettings {
@@ -47,8 +59,63 @@ impl Default for JournalSettings {
             work_profile: default_work_profile(),
             focus_grace_minutes: DEFAULT_FOCUS_GRACE_MINUTES,
             nudges_enabled: false,
+            language: DEFAULT_LANGUAGE.to_string(),
         }
     }
+}
+
+/// `"system"`, `"ru-RU"`, `"RU"` or nonsense → one of [`SUPPORTED_LANGUAGES`].
+///
+/// `"system"` is resolved against the machine locale, which is where a desktop
+/// app's "same as the system" setting has to end up: the store holds the
+/// user's choice, not the answer.
+pub fn normalize_language(value: &str) -> String {
+    let value = value.trim().to_ascii_lowercase();
+    if value.is_empty() || value == "system" {
+        return system_language();
+    }
+    language_tag(&value).unwrap_or_else(|| DEFAULT_LANGUAGE.to_string())
+}
+
+/// The machine's language, from the POSIX locale environment.
+///
+/// `LC_ALL` wins over `LC_MESSAGES` over `LANG`, which is the order every
+/// POSIX implementation resolves them in. `C` and `POSIX` are not languages;
+/// they mean "no locale", and the default answers that.
+pub fn system_language() -> String {
+    language_from_locale(|key| std::env::var(key).ok())
+}
+
+/// [`system_language`] over an arbitrary environment, so the resolution order
+/// can be tested without mutating the process's own.
+fn language_from_locale(lookup: impl Fn(&str) -> Option<String>) -> String {
+    for key in ["LC_ALL", "LC_MESSAGES", "LANG"] {
+        let Some(value) = lookup(key) else { continue };
+        let value = value.trim().to_ascii_lowercase();
+        if value.is_empty() || value == "c" || value == "posix" {
+            continue;
+        }
+        if let Some(tag) = language_tag(&value) {
+            return tag;
+        }
+    }
+    DEFAULT_LANGUAGE.to_string()
+}
+
+/// The primary subtag of `ru_RU.UTF-8` / `ru-RU` / `ru`, when it is one the
+/// prompts support.
+fn language_tag(value: &str) -> Option<String> {
+    let primary = value
+        .split(['.', '@'])
+        .next()
+        .unwrap_or(value)
+        .split(['_', '-'])
+        .next()
+        .unwrap_or(value);
+    SUPPORTED_LANGUAGES
+        .iter()
+        .find(|supported| **supported == primary)
+        .map(|supported| supported.to_string())
 }
 
 pub fn default_work_profile() -> Value {
@@ -95,6 +162,11 @@ impl JournalSettings {
                 .get("focusNudgesEnabled")
                 .and_then(Value::as_bool)
                 .unwrap_or(defaults.nudges_enabled),
+            language: settings
+                .get("uiLanguage")
+                .and_then(Value::as_str)
+                .map(normalize_language)
+                .unwrap_or(defaults.language),
         }
     }
 }
@@ -126,6 +198,7 @@ mod tests {
                     "journalWorkProfile": {"role": "engineer", "projects": [], "notes": ""},
                     "focusGraceMinutes": 25,
                     "focusNudgesEnabled": true,
+                    "uiLanguage": "ru",
                 }
             }))
             .unwrap(),
@@ -137,6 +210,50 @@ mod tests {
         assert_eq!(settings.focus_grace_minutes, 25);
         assert!(settings.nudges_enabled);
         assert_eq!(settings.work_profile["role"], json!("engineer"));
+        assert_eq!(settings.language, "ru");
+    }
+
+    #[test]
+    fn the_ui_language_resolves_to_one_the_prompts_can_write() {
+        // The store holds the user's choice; this is where it becomes an answer.
+        assert_eq!(normalize_language("ru"), "ru");
+        assert_eq!(normalize_language("  RU  "), "ru");
+        assert_eq!(normalize_language("ru-RU"), "ru");
+        assert_eq!(normalize_language("en"), "en");
+        // A language no prompt has an instruction for is English, not a guess.
+        assert_eq!(normalize_language("de"), DEFAULT_LANGUAGE);
+        assert_eq!(normalize_language("nonsense"), DEFAULT_LANGUAGE);
+        // An absent key is English.
+        assert_eq!(JournalSettings::default().language, DEFAULT_LANGUAGE);
+        assert_eq!(
+            JournalSettings::from_store(&json!({"settings": {}})).language,
+            DEFAULT_LANGUAGE
+        );
+    }
+
+    #[test]
+    fn system_language_reads_the_posix_locale_in_order() {
+        let env = |pairs: Vec<(&'static str, &'static str)>| {
+            move |key: &str| {
+                pairs
+                    .iter()
+                    .find(|(name, _)| *name == key)
+                    .map(|(_, value)| value.to_string())
+            }
+        };
+        assert_eq!(language_from_locale(env(vec![("LANG", "ru_RU.UTF-8")])), "ru");
+        assert_eq!(
+            language_from_locale(env(vec![("LC_ALL", "ru_RU.UTF-8"), ("LANG", "en_GB.UTF-8")])),
+            "ru"
+        );
+        assert_eq!(
+            language_from_locale(env(vec![("LC_MESSAGES", "en_US.UTF-8"), ("LANG", "ru_RU")])),
+            "en"
+        );
+        // "C" is not a language, and neither is a locale nobody wrote a prompt for.
+        assert_eq!(language_from_locale(env(vec![("LANG", "C")])), DEFAULT_LANGUAGE);
+        assert_eq!(language_from_locale(env(vec![("LANG", "de_DE.UTF-8")])), DEFAULT_LANGUAGE);
+        assert_eq!(language_from_locale(env(vec![])), DEFAULT_LANGUAGE);
     }
 
     #[test]

@@ -362,6 +362,7 @@ async fn process_window(
         fallback_category_id: fallback,
         work_profile: settings.work_profile.clone(),
         active_intention,
+        language: settings.language.clone(),
     };
 
     // Everything above is a read. The provider call happens here, with no

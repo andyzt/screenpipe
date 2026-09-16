@@ -37,7 +37,9 @@ use serde_json::{json, Value};
 use crate::journal::compile::MAX_SNIPPETS_PER_INTERVAL;
 use crate::journal::json::extract_json;
 use crate::journal::llm::{resolve_journal_preset, ChatClient};
-use crate::journal::prompt::{render_observations, work_profile_section, RELATION_RULES};
+use crate::journal::prompt::{
+    language_section, render_observations, work_profile_section, RELATION_RULES,
+};
 use crate::journal::settings::JournalSettings;
 
 use super::detector::{TailClassifier, TailInput, TailVerdict, TAIL_WINDOW};
@@ -210,6 +212,10 @@ pub fn build_prompt(input: &TailInput) -> String {
 
     sections.push(format!("## How to choose the relation\n\n{RELATION_RULES}"));
 
+    if let Some(section) = language_section(&input.language) {
+        sections.push(section);
+    }
+
     sections.push(format!(
         "## Answer\n\nReturn exactly one JSON object:\n\n{{\"relation\": \"one of \
          supports_intention, other_work, break, possible_distraction, unknown\", \"confidence\": \
@@ -367,6 +373,7 @@ mod tests {
             divergence_minutes: 14.0,
             grace_minutes: 10,
             work_profile: json!({"role": "backend engineer", "projects": [], "notes": ""}),
+            language: "en".to_string(),
             observations: Some(CompiledWindow {
                 window_start: tail_start,
                 window_end: now,
@@ -404,10 +411,28 @@ mod tests {
         assert!(prompt.contains("34 clicks"));
         // The shared rules and the answer contract.
         assert!(prompt.contains("other_work: real work or a real errand"));
-        assert!(prompt.contains("Research that serves the task supports it."));
+        assert!(prompt.contains("Research that serves the task supports it:"));
         assert!(prompt.contains("A break is a break"));
         assert!(prompt.contains("Prefer unknown over a guess"));
         assert!(prompt.contains("\"relation\""), "the answer shape is spelled out");
+        // English is the model's own default and needs no instruction.
+        assert!(!prompt.contains("## Output language"));
+    }
+
+    #[test]
+    fn a_russian_ui_asks_for_a_russian_reason_and_the_same_relation_values() {
+        let mut input = input();
+        input.language = "ru".to_string();
+        let prompt = build_prompt(&input);
+        assert!(prompt.contains("## Output language"));
+        assert!(prompt.contains(
+            "Write all human-readable text (title, summary, detailedSummary, distraction \
+             titles/summaries, relation_reason) in Russian. Keep JSON keys, category labels and \
+             timestamps exactly as specified."
+        ));
+        // The five relation values are contract and are never translated.
+        assert!(prompt.contains("supports_intention, other_work, break, possible_distraction"));
+        assert!(prompt.contains("other_work: real work or a real errand"));
     }
 
     #[test]
@@ -622,6 +647,7 @@ mod tests {
             divergence_minutes: 12.0,
             grace_minutes: 10,
             work_profile: json!({"role": "product manager", "projects": [], "notes": ""}),
+            language: "en".to_string(),
             observations: Some(CompiledWindow {
                 window_start: tail_start,
                 window_end: now,

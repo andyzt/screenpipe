@@ -364,6 +364,7 @@ async fn run(
             fallback_category_id: fallback.clone(),
             work_profile: settings.work_profile.clone(),
             active_intention: intention.clone(),
+            language: settings.language.clone(),
         };
         // Every fixture is judged on its own: a corpus where window N depends
         // on the cards window N-1 happened to produce measures the order of

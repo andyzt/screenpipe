@@ -146,6 +146,10 @@ pub struct TailInput {
     pub grace_minutes: i64,
     /// `journalWorkProfile`: role, projects, notes.
     pub work_profile: Value,
+    /// The language `reason` comes back in, already resolved to one of
+    /// `journal::settings::SUPPORTED_LANGUAGES`. The relation itself is a
+    /// contract value and never translated.
+    pub language: String,
     /// The last ten minutes compiled into the same bounded observation set the
     /// card prompt reads: app, window title, host, document, input-event
     /// counts, and at most [`TAIL_SNIPPET_BUDGET`] characters of screen text
@@ -464,6 +468,7 @@ pub async fn run_focus_tick(
         divergence_minutes,
         grace_minutes: settings.focus_grace_minutes,
         work_profile: settings.work_profile.clone(),
+        language: settings.language.clone(),
         observations: None,
     };
 

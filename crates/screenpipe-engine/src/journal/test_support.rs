@@ -71,6 +71,7 @@ pub fn context(active_intention: Option<&str>) -> GenerationContext {
             "notes": "Reviews PRs in the morning."
         }),
         active_intention: active_intention.map(intention),
+        language: crate::journal::settings::DEFAULT_LANGUAGE.to_string(),
     }
 }
 
