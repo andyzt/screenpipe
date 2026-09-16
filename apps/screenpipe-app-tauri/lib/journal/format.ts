@@ -191,3 +191,32 @@ export function isGenerationRunning(generation: {
 }): boolean {
   return generation.processing || generation.pending_windows > 0;
 }
+
+/**
+ * A category colour at partial strength, for fills that must sit on a light
+ * panel without becoming the loudest thing on screen.
+ *
+ * Categories arrive as `#RRGGBB` from the engine, but nothing guarantees it —
+ * an unparseable value yields `undefined` so the caller can fall back to a
+ * neutral rather than paint `rgba(NaN…)`.
+ */
+export function hexAlpha(
+  hex: string | null | undefined,
+  alpha: number,
+): string | undefined {
+  if (!hex) return undefined;
+  const match = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(hex.trim());
+  if (!match) return undefined;
+  let body = match[1];
+  if (body.length === 3) {
+    body = body
+      .split("")
+      .map((char) => char + char)
+      .join("");
+  }
+  const value = Number.parseInt(body, 16);
+  const r = (value >> 16) & 255;
+  const g = (value >> 8) & 255;
+  const b = value & 255;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}

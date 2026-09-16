@@ -55,7 +55,7 @@ describe("DayOverview", () => {
   it("says so when no category has time at all", () => {
     render(<DayOverview totals={makeTotals({ by_category: [] })} />);
     expect(
-      screen.getByText("no category has measured time on this day."),
+      screen.getByText("No category has measured time on this day."),
     ).toBeInTheDocument();
   });
 });

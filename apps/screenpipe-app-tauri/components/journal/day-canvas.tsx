@@ -11,18 +11,19 @@
  * block is visibly five times a 10-minute one and the shape of a day — solid
  * morning, shredded afternoon — is readable before a single word is.
  *
- * DESIGN.md rules that are load-bearing here:
- *  - a canvas is structural geometry, so it stays sharp: no radius on the
- *    surface, on the hour rules or on the blocks;
- *  - a category's colour appears only as the block's 1px border and its 3px
- *    left bar, never as a fill, and the category name is always in the
- *    tooltip and the inspector, so nothing depends on colour;
- *  - phosphor appears at exactly one point — the now line, and only while the
- *    day is actively being written. It goes out when generation stops.
+ * The fork dresses this in shadcn/ui values (app/journal-theme.css) without
+ * changing what it measures:
+ *  - a block is a Card — white, `border`, `rounded-lg`, `shadow-sm` — with the
+ *    category's colour as a 4px left border and its name in an outline Badge,
+ *    so the reading never rests on the hue alone;
+ *  - a selected block takes `ring-2 ring-ring`, idle is `bg-muted` under a
+ *    dashed border, and the unwritten tail is `bg-muted/50`;
+ *  - the now line is `--primary`, drawn once.
  */
 
 import React, { useCallback, useEffect, useMemo, useRef } from "react";
 
+import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import {
   GUTTER_PX,
@@ -36,7 +37,7 @@ import {
   type CanvasRange,
   type PositionedBlock,
 } from "@/lib/journal/canvas-layout";
-import { formatClock, formatEstimate } from "@/lib/journal/format";
+import { formatClock, formatEstimate, hexAlpha } from "@/lib/journal/format";
 import type {
   ActivityCard,
   ActivityDistraction,
@@ -99,9 +100,16 @@ function DetourInsets({
             key={`${detour.start_at}-${detour.title}`}
             aria-hidden="true"
             data-testid="journal-canvas-detour"
-            title={`detour · ${formatClock(detour.start_at)}–${formatClock(detour.end_at)} · ${detour.title}`}
-            className="pointer-events-auto absolute right-1 w-10 border"
-            style={{ top: topPx, height: heightPx, borderColor: colorHex }}
+            title={`Detour · ${formatClock(detour.start_at)}–${formatClock(detour.end_at)} · ${detour.title}`}
+            // A detour is an inset pill inside its parent block, not a block of
+            // its own: same colour language, visibly subordinate.
+            className="pointer-events-auto absolute right-2 w-10 rounded-sm border"
+            style={{
+              top: topPx,
+              height: heightPx,
+              borderColor: colorHex,
+              backgroundColor: hexAlpha(colorHex, 0.16),
+            }}
           />
         );
       })}
@@ -138,46 +146,51 @@ function CanvasBlock({
       title={cardTooltip(card)}
       onClick={() => onSelect(card.id)}
       className={cn(
-        // Sharp on purpose: blocks are measurement geometry on a canvas.
-        "absolute overflow-hidden border py-1 pl-3 pr-2 text-left transition-colors duration-150",
-        "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
-        idle
-          ? "border-dashed border-border bg-transparent"
-          : "border-border bg-card hover:bg-card-hover",
-        selected ? "outline outline-2 -outline-offset-1 outline-foreground" : "",
+        // A shadcn Card on the canvas: the colour lives in the left border, so
+        // the surface stays the same white every other card in the app is.
+        "absolute overflow-hidden rounded-lg border bg-card py-1.5 pl-3 pr-2 text-left shadow-sm transition-shadow",
+        "hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        idle ? "border-dashed bg-muted" : "border-border",
+        selected && "ring-2 ring-ring",
       )}
       style={{
         top: block.topPx,
         height: block.heightPx,
         left: `calc(${leftPct}% + ${BLOCK_INSET_PX}px)`,
         width: `calc(${widthPct}% - ${BLOCK_INSET_PX * 2}px)`,
-        ...(idle ? {} : { borderColor: card.category.color_hex }),
+        ...(idle
+          ? {}
+          : { borderLeft: `4px solid ${card.category.color_hex}` }),
       }}
     >
-      <span
-        aria-hidden="true"
-        className={cn("absolute inset-y-0 left-0 w-[3px]", idle ? "bg-border" : "")}
-        style={idle ? undefined : { backgroundColor: card.category.color_hex }}
-      />
       {block.tier !== "none" ? (
         <span
           className={cn(
-            "block truncate text-xs",
-            idle ? "font-mono text-muted-foreground" : "text-foreground",
+            "block truncate text-sm font-medium text-foreground",
+            idle && "font-normal text-muted-foreground",
           )}
           data-testid="journal-canvas-block-title"
         >
-          {idle ? "idle" : card.title}
+          {idle ? "Idle" : card.title}
         </span>
       ) : null}
       {block.tier === "full" ? (
         <span
-          className="mt-0.5 block truncate font-mono text-[10px] text-muted-foreground"
+          className="mt-0.5 flex items-center gap-2 truncate text-xs text-muted-foreground"
           data-testid="journal-canvas-block-meta"
         >
-          {formatClock(card.start_at)}–{formatClock(card.end_at)} ·{" "}
-          {formatEstimate(card.active_minutes)}
-          {card.state === "provisional" ? " · draft" : ""}
+          <span className="truncate">
+            {formatClock(card.start_at)}–{formatClock(card.end_at)} ·{" "}
+            {formatEstimate(card.active_minutes)}
+          </span>
+          <Badge variant="outline" className="shrink-0 px-1.5 py-0 text-[10px] font-normal">
+            {card.category.name}
+          </Badge>
+          {card.state === "provisional" ? (
+            <Badge variant="secondary" className="shrink-0 px-1.5 py-0 text-[10px] font-normal">
+              draft
+            </Badge>
+          ) : null}
         </span>
       ) : null}
       <DetourInsets
@@ -203,23 +216,30 @@ function NowLine({
   return (
     <div
       data-testid="journal-now-line"
-      className="pointer-events-none absolute left-0 right-0 z-10 border-t border-foreground"
+      className="pointer-events-none absolute left-0 right-0 z-10 border-t border-primary"
       style={{ top: msToTopPx(nowMs, range) }}
     >
-      <span className="absolute -top-2 left-2 bg-background pr-1 font-mono text-[10px] text-foreground">
+      <span
+        aria-hidden="true"
+        className="absolute -top-[3.5px] size-[7px] rounded-full bg-primary"
+        style={{ left: GUTTER_PX - 3.5 }}
+      />
+      {/* Opaque: the now clock sits in the gutter and has to cover whatever
+          hour label it lands on, not blend with it. */}
+      <span className="absolute -top-2.5 left-1 rounded bg-card px-1 text-xs font-medium text-foreground">
         {formatClock(new Date(nowMs).toISOString())}
       </span>
       {generating ? (
-        <span
+        <Badge
           data-testid="journal-generating"
-          className="absolute -top-2 right-2 bg-phosphor px-1.5 py-0.5 font-mono text-[10px] lowercase text-phosphor-ink"
+          className="absolute -top-[11px] right-2 font-normal"
         >
           writing {pendingWindows || 1} window{pendingWindows === 1 ? "" : "s"}
-        </span>
+        </Badge>
       ) : (
         <span
           data-testid="journal-now-mark"
-          className="absolute -top-2 right-2 bg-background px-1 font-mono text-[10px] lowercase text-muted-foreground"
+          className="absolute -top-2.5 right-2 rounded bg-card px-1 text-xs font-medium text-foreground"
         >
           now
         </span>
@@ -336,7 +356,7 @@ export function DayCanvas({
       ref={scrollRef}
       data-testid="journal-canvas"
       aria-label="day canvas"
-      className="relative h-[calc(100vh-16rem)] min-h-[420px] w-full min-w-0 flex-1 overflow-y-auto border border-border bg-background"
+      className="journal-scroll relative h-[calc(100vh-8rem)] min-h-[420px] w-full min-w-0 flex-1 overflow-y-auto rounded-lg border border-border bg-card shadow-sm"
     >
       <div
         className="relative w-full"
@@ -352,13 +372,13 @@ export function DayCanvas({
           <React.Fragment key={tick.ms}>
             <div
               aria-hidden="true"
-              className="pointer-events-none absolute right-0 border-t border-border"
+              className="pointer-events-none absolute right-0 border-t border-border/70"
               style={{ top: tick.topPx, left: GUTTER_PX }}
             />
             <span
               data-testid="journal-canvas-hour"
-              className="pointer-events-none absolute left-2 font-mono text-[10px] text-muted-foreground"
-              style={{ top: Math.max(0, tick.topPx - 6) }}
+              className="pointer-events-none absolute text-xs text-muted-foreground"
+              style={{ top: Math.max(0, tick.topPx - 7), right: `calc(100% - ${GUTTER_PX - 8}px)` }}
             >
               {tick.label}
             </span>
@@ -378,20 +398,19 @@ export function DayCanvas({
                   ? "recording — this stretch is not written yet"
                   : "capture stalled — nothing is arriving for this stretch"
               }
-              className="absolute left-2 right-2 border border-dashed border-border"
+              className={cn(
+                "absolute left-2 right-2 rounded-lg border bg-muted/50",
+                recordingOk ? "border-border" : "border-dashed border-border",
+              )}
               style={{
                 top: projection.topPx,
                 height: projection.heightPx,
-                backgroundImage:
-                  // Hatching, not a gradient fill: it reads as "measured but
-                  // not written" and survives greyscale.
-                  "repeating-linear-gradient(135deg, hsl(var(--muted-foreground) / 0.18) 0 1px, transparent 1px 7px)",
               }}
             >
               {/* Anchored at the bottom, next to the now line: on a long
                   stretch the top of the block is scrolled out of view, and the
                   live edge is where the reader is looking. */}
-              <span className="absolute bottom-1 left-2 font-mono text-[10px] lowercase text-muted-foreground">
+              <span className="absolute bottom-1.5 left-3 text-xs text-muted-foreground">
                 {recordingOk ? "recording…" : "capture stalled"}
               </span>
             </div>

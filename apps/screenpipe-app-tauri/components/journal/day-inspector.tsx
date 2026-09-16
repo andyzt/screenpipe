@@ -19,7 +19,14 @@
 
 import React from "react";
 
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Separator } from "@/components/ui/separator";
 import { DayOverview } from "./day-overview";
 import { EvidenceList } from "./evidence-list";
 import { NowStrip } from "./now-strip";
@@ -38,13 +45,13 @@ function openJournalSettings() {
   );
 }
 
+/** A titled block of prose, separated from the one above it. */
 function Line({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="flex flex-col gap-1">
-      <span className="font-mono text-[10px] lowercase tracking-wide text-muted-foreground">
-        {label}
-      </span>
-      <div className="text-xs text-foreground">{children}</div>
+    <div className="flex flex-col gap-1.5">
+      <Separator />
+      <h3 className="pt-1 text-sm font-medium text-foreground">{label}</h3>
+      <div className="text-sm text-muted-foreground">{children}</div>
     </div>
   );
 }
@@ -66,11 +73,16 @@ function CardDetail({
       data-card-id={card.id}
       className="flex flex-col gap-3"
     >
-      <div className="flex items-start justify-between gap-2">
-        <span className="font-mono text-[11px] text-muted-foreground">
-          {formatClockRange(card.start_at, card.end_at)} ·{" "}
-          {formatEstimate(card.active_minutes)}
-        </span>
+      <CardHeader className="flex-row items-start justify-between gap-2 space-y-0 p-0">
+        <div className="min-w-0 space-y-1.5">
+          <CardTitle className="text-lg font-semibold normal-case tracking-tight">
+            {card.title || (card.category.is_idle ? "Idle" : "Untitled")}
+          </CardTitle>
+          <CardDescription>
+            {formatClockRange(card.start_at, card.end_at)} ·{" "}
+            {formatEstimate(card.active_minutes)}
+          </CardDescription>
+        </div>
         <Button
           size="sm"
           variant="ghost"
@@ -79,82 +91,84 @@ function CardDetail({
         >
           Close
         </Button>
-      </div>
-
-      <h2 className="text-sm font-medium text-foreground">
-        {card.title || (card.category.is_idle ? "idle" : "untitled")}
-      </h2>
+      </CardHeader>
 
       <div className="flex flex-wrap items-center gap-2">
-        {/* The colour is a 1px chip border only; the name always carries the
-            meaning, so a greyscale screenshot loses nothing. */}
-        <span
+        {/* The colour rides as a dot inside a stock secondary Badge: the name
+            always carries the meaning, so a greyscale screenshot loses
+            nothing. */}
+        <Badge
+          variant="secondary"
           data-testid="journal-card-category"
-          className="inline-flex items-center gap-1 rounded-sm border px-1.5 py-0.5 font-mono text-[10px] text-foreground"
-          style={{ borderColor: card.category.color_hex }}
+          className="gap-1.5 font-normal"
         >
+          <span
+            aria-hidden="true"
+            className="size-2 shrink-0 rounded-full"
+            style={{ backgroundColor: card.category.color_hex }}
+          />
           {card.category.name}
           {confidence ? (
             <span
               data-testid="journal-card-category-confidence"
-              className="lowercase text-muted-foreground"
+              className="text-muted-foreground"
             >
               · {confidence}
             </span>
           ) : null}
-        </span>
-        <span
+        </Badge>
+        <Badge
+          variant="outline"
           data-testid="journal-card-state"
-          className="rounded-sm border border-border px-1.5 py-0.5 font-mono text-[10px] lowercase text-muted-foreground"
+          className="font-normal text-muted-foreground"
         >
           {card.state === "provisional" ? "draft — still being revised" : "final"}
-        </span>
+        </Badge>
       </div>
 
       {card.summary ? (
-        <p className="text-sm text-muted-foreground">{card.summary}</p>
+        <Line label="Summary">
+          <p>{card.summary}</p>
+        </Line>
       ) : null}
 
       {card.detailed_summary ? (
-        <Line label="detail">
-          <p className="whitespace-pre-wrap font-mono text-[11px] text-muted-foreground">
-            {card.detailed_summary}
-          </p>
+        <Line label="Detailed summary">
+          <p className="whitespace-pre-wrap">{card.detailed_summary}</p>
         </Line>
       ) : null}
 
       {relation ? (
-        <Line label="against your intention">
-          <span data-testid="journal-card-relation">
+        <Line label="Against your intention">
+          <Badge
+            variant="secondary"
+            data-testid="journal-card-relation"
+            className="font-normal"
+          >
             {relation}
             {card.intention ? ` · ${card.intention.title}` : ""}
-          </span>
+          </Badge>
           {card.relation_reason ? (
-            <p className="mt-1 text-xs text-muted-foreground">
-              {card.relation_reason}
-            </p>
+            <p className="mt-1.5">{card.relation_reason}</p>
           ) : null}
         </Line>
       ) : null}
 
       {apps ? (
-        <Line label="apps">
-          <span className="font-mono text-[11px] text-muted-foreground">{apps}</span>
+        <Line label="Apps">
+          <span>{apps}</span>
         </Line>
       ) : null}
 
       {card.distractions.length > 0 ? (
-        <Line label="detours">
+        <Line label="Detours">
           <ul
             data-testid="journal-card-distractions"
-            className="flex flex-col gap-1"
+            className="flex flex-col gap-1.5"
           >
             {card.distractions.map((detour) => (
-              <li
-                key={`${detour.start_at}-${detour.title}`}
-                className="text-xs text-muted-foreground"
-              >
-                <span className="font-mono text-[10px]">
+              <li key={`${detour.start_at}-${detour.title}`} className="text-sm">
+                <span className="tabular-nums text-muted-foreground">
                   {formatClockRange(detour.start_at, detour.end_at)}
                 </span>{" "}
                 <span className="text-foreground">{detour.title}</span>
@@ -191,22 +205,19 @@ function DaySummary({
 
       {day.activities.length === 0 ? (
         <div data-testid="journal-empty" className="flex flex-col gap-1">
-          <p className="text-sm text-foreground">
+          <p className="text-sm font-medium text-foreground">
             {dataStatusCopy(day.data_status).title}
           </p>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-sm text-muted-foreground">
             {dataStatusCopy(day.data_status).body}
           </p>
         </div>
       ) : null}
 
-      <DayOverview totals={day.totals} />
+      <DayOverview totals={day.totals} activities={day.activities} />
 
       {provisional > 0 ? (
-        <p
-          data-testid="journal-provisional-count"
-          className="font-mono text-[10px] text-muted-foreground"
-        >
+        <p data-testid="journal-provisional-count" className="text-xs text-muted-foreground">
           provisional cards: {provisional} — still inside the rewrite horizon
         </p>
       ) : null}
@@ -214,12 +225,12 @@ function DaySummary({
       {!day.generation.provider_ready ? (
         <div
           data-testid="journal-no-preset"
-          className="flex flex-col items-start gap-2 border border-border p-3"
+          className="flex flex-col items-start gap-2 rounded-lg border border-border p-3"
         >
-          <p className="text-sm text-foreground">
-            no model is configured for the journal
+          <p className="text-sm font-medium text-foreground">
+            No model is configured for the journal
           </p>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-sm text-muted-foreground">
             {day.generation.provider_message ??
               "pick an ai preset the journal can use. until then the day shows only what was measured, without written cards."}
           </p>
@@ -235,7 +246,7 @@ function DaySummary({
       ) : null}
 
       {day.generation.last_error ? (
-        <p className="font-mono text-[10px] text-muted-foreground">
+        <p className="text-xs text-muted-foreground">
           last generation error: {day.generation.last_error}
         </p>
       ) : null}
@@ -262,7 +273,7 @@ export function DayInspector({
     <aside
       data-testid="journal-inspector"
       aria-label={selected ? "selected card" : "day summary"}
-      className="w-full shrink-0 overflow-y-auto border border-border bg-card p-4 min-[1100px]:h-[calc(100vh-16rem)] min-[1100px]:min-h-[420px] min-[1100px]:w-[360px]"
+      className="journal-scroll w-full shrink-0 overflow-y-auto rounded-lg border border-border bg-card p-4 text-card-foreground shadow-sm min-[1100px]:h-[calc(100vh-8rem)] min-[1100px]:min-h-[420px] min-[1100px]:w-[380px]"
     >
       {selected ? (
         <CardDetail card={selected} onClose={onClose} />

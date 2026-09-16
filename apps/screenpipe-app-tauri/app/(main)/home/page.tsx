@@ -117,6 +117,8 @@ import type { AppUser } from "@/lib/app-entitlement";
 import { ONBOARDING_BRAIN_HANDOFF_EVENT } from "@/lib/live-views/onboarding-activation";
 import { ActivityLedger } from "@/components/activity-ledger";
 import { JournalView } from "@/components/journal/journal-view";
+import { JournalRail } from "@/components/journal-rail";
+import { JOURNAL_SHELL, type RailSectionId } from "@/lib/journal-shell";
 import { ShortcutKeycap } from "@/components/shortcut-keycap";
 import { ExperimentalShortcutGuide } from "@/components/shortcut-guide";
 import { commandPalette as commandPaletteAnalytics } from "@/lib/analytics/command-palette";
@@ -1171,6 +1173,10 @@ function HomeContent() {
     connections: { label: "Connections", icon: <Plug className="h-3.5 w-3.5" /> },
   };
 
+  // The journal fork's shell. Kept as a constant rather than a setting: it is
+  // a build decision, and the shipped sidebar has to stay compilable.
+  const railShell = JOURNAL_SHELL === "rail";
+
   const sidebarLayout = normalizeSidebarNavLayout(settings.sidebarNavLayout);
   const availableSidebarIds = (Object.keys(SIDEBAR_SECTION_DEFS) as SidebarNavId[])
     .filter((id) => !isSectionHidden(id) && !(id === "brain" && isSectionHidden("memories")))
@@ -1390,6 +1396,54 @@ function HomeContent() {
 
           {/* Sidebar */}
           <TooltipProvider delayDuration={400}>
+          {/* This build wears the icon rail (lib/journal-shell.ts). The rail
+              replaces both the labelled sidebar and the chrome strip that
+              carried its toggle — there is nothing to collapse, and recording
+              status moves to the rail's foot. */}
+          {railShell && (
+            <JournalRail
+              activeSection={activeSection}
+              visibleIds={visibleSidebarIds}
+              onSelect={(id: RailSectionId) => setActiveSection(id)}
+              onOpenSettings={() => openSettings()}
+              customization={{
+                hiddenItems: hiddenSidebarIds.map((id) => ({
+                  id,
+                  label: SIDEBAR_SECTION_DEFS[id].label,
+                })),
+                isTranslucent,
+                canReset: !isSidebarNavLayoutDefault(sidebarLayout),
+                onSetHidden: (id, hidden) => {
+                  persistSidebarLayout(
+                    setSidebarNavItemHidden(
+                      sidebarLayout,
+                      availableSidebarIds,
+                      id,
+                      hidden,
+                    ),
+                  );
+                },
+                onReset: () => persistSidebarLayout(DEFAULT_SIDEBAR_NAV_LAYOUT),
+              }}
+              trailing={
+                <RecordingStatus
+                  devices={recordingDevices}
+                  onDevicesChange={setRecordingDevices}
+                  meetingActive={meetingState.active ?? false}
+                  onPauseRecording={pauseRecording}
+                  onResumeRecording={resumeRecording}
+                  isGloballyPaused={isCapturePaused}
+                  isTranslucent={isTranslucent}
+                  allCaptureDisabled={
+                    !!(settings.disableAudio && settings.disableVision)
+                  }
+                  onOpenRecordingSettings={() => openSettings("recording")}
+                />
+              }
+            />
+          )}
+          {!railShell && (
+          <>
           {/* Top-left chrome strip — pinned next to the macOS traffic
               lights: sidebar toggle, search, meetings and recording-status dot.
               No wordmark, no header row (Claude / Codex style). When
@@ -1712,6 +1766,8 @@ function HomeContent() {
             </div>
           </AppSidebar>
           )}
+          </>
+          )}
           </TooltipProvider>
 
           {/* Content.
@@ -1720,7 +1776,13 @@ function HomeContent() {
               nowrap, so that's the FULL untruncated text width), and in a
               narrow window with the sidebar open the whole pane gets
               clipped at the right window edge instead of truncating. */}
-          <div className={cn("flex-1 min-w-0 flex flex-col h-full bg-background min-h-0 relative", isTranslucent ? "rounded-none" : "rounded-tr-lg")} data-testid="home-page">
+          <div
+            className={cn(
+              "flex-1 min-w-0 flex flex-col min-h-0 relative h-full bg-background",
+              !railShell && (isTranslucent ? "rounded-none" : "rounded-tr-lg"),
+            )}
+            data-testid="home-page"
+          >
             {/* ALWAYS-MOUNTED chat layer.
                 Hidden via CSS (display:none) when the user is on a non-chat
                 section, so the StandaloneChat component never unmounts. This
@@ -1766,7 +1828,13 @@ function HomeContent() {
                       // The journal is a time canvas beside an inspector; it
                       // needs the width the reading-column sections do not.
                       activeSection === "journal" ? "max-w-[1440px]" : "max-w-4xl",
-                      activeSection === "pipes" ? "pb-6 pt-10" : "pb-12 pt-6",
+                      activeSection === "pipes"
+                        ? "pb-6 pt-10"
+                        : // The journal sizes its canvas and inspector to the
+                          // viewport, so it keeps its own padding tight.
+                          activeSection === "journal"
+                          ? "pb-5 pt-8"
+                          : "pb-12 pt-6",
                     )}
                   >
                     {renderMainSection()}

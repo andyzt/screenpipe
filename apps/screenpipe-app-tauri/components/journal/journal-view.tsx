@@ -26,6 +26,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { ChevronLeft, ChevronRight } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { DayCanvas } from "./day-canvas";
 import { DayInspector } from "./day-inspector";
 import { IntentionBar } from "./intention-bar";
@@ -69,9 +70,18 @@ function DateChevron({
       data-testid={direction === "previous" ? "journal-prev-day" : "journal-next-day"}
       disabled={disabled}
       onClick={onClick}
-      className="rounded-full p-1 text-muted-foreground transition-colors duration-150 hover:text-foreground disabled:opacity-40 disabled:hover:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+      className={cn(
+        // Half of a shadcn outline button group: the two chevrons and the date
+        // share one bordered row, so only the outer corners are rounded.
+        "inline-flex h-8 w-8 items-center justify-center border border-input bg-background text-foreground transition-colors",
+        "hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50",
+        "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+        direction === "previous"
+          ? "rounded-l-md border-r-0"
+          : "rounded-r-md border-l-0",
+      )}
     >
-      <Icon className="h-3.5 w-3.5" />
+      <Icon className="size-4" />
     </button>
   );
 }
@@ -233,24 +243,26 @@ export function JournalView({
   }, [handleKeyDown]);
 
   const dateLabel = today
-    ? `today · ${formatJournalDate(date)}`
+    ? `Today · ${formatJournalDate(date)}`
     : formatJournalDate(date);
 
   return (
     <div className="flex flex-col gap-4" data-testid="section-journal">
       <header className="flex flex-wrap items-center gap-3">
-        <h1 className="text-xl font-medium lowercase text-foreground">journal</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground">
+          Journal
+        </h1>
 
         <div
           data-testid="journal-date-pill"
-          className="flex items-center gap-1 rounded-full border border-border px-1 py-0.5"
+          className="flex items-center"
         >
           <DateChevron
             direction="previous"
             onClick={() => goToDate((current) => shiftJournalDay(current, -1))}
           />
           <span
-            className="px-1 font-mono text-xs lowercase text-foreground"
+            className="flex h-8 items-center border border-input bg-background px-3 text-sm font-medium text-foreground"
             data-testid="journal-date-label"
           >
             {dateLabel}
@@ -289,8 +301,10 @@ export function JournalView({
           data-testid="journal-error"
           className="rounded-lg border border-border bg-card px-4 py-3"
         >
-          <p className="text-sm text-foreground">the journal could not be read</p>
-          <p className="mt-1 text-xs text-muted-foreground">{error}</p>
+          <p className="text-sm font-medium text-foreground">
+            The journal could not be read
+          </p>
+          <p className="mt-1 text-sm text-muted-foreground">{error}</p>
           <Button
             size="sm"
             variant="outline"
@@ -308,12 +322,10 @@ export function JournalView({
           data-testid="journal-loading"
           className="flex flex-col gap-4 min-[1100px]:flex-row"
         >
-          <div className="h-[calc(100vh-16rem)] min-h-[420px] w-full min-w-0 flex-1 border border-border bg-background">
-            <p className="p-3 font-mono text-xs text-muted-foreground">
-              reading the day…
-            </p>
+          <div className="h-[calc(100vh-8rem)] min-h-[420px] w-full min-w-0 flex-1 rounded-lg border border-border bg-card shadow-sm">
+            <p className="p-4 text-sm text-muted-foreground">Reading the day…</p>
           </div>
-          <div className="h-40 w-full shrink-0 border border-border bg-card min-[1100px]:h-[calc(100vh-16rem)] min-[1100px]:w-[360px]" />
+          <div className="h-40 w-full shrink-0 rounded-lg border border-border bg-card shadow-sm min-[1100px]:h-[calc(100vh-8rem)] min-[1100px]:w-[380px]" />
         </div>
       ) : null}
 

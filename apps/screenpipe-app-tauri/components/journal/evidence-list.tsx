@@ -29,6 +29,7 @@ import { useRouter } from "next/navigation";
 import { emit } from "@tauri-apps/api/event";
 
 import { Button } from "@/components/ui/button";
+import { Separator } from "@/components/ui/separator";
 import { useTimelineStore } from "@/lib/hooks/use-timeline-store";
 import { fetchActivityDetail } from "@/lib/journal/api";
 import { formatClock } from "@/lib/journal/format";
@@ -89,71 +90,66 @@ export function EvidenceList({
     <section
       aria-label="evidence"
       data-testid="journal-evidence"
-      className="flex flex-col gap-2"
+      className="flex flex-col gap-1.5"
     >
-      <h3 className="font-mono text-[10px] lowercase tracking-wide text-muted-foreground">
-        evidence
-      </h3>
+      <Separator />
+      <h3 className="pt-1 text-sm font-medium text-foreground">Evidence</h3>
 
       {loading ? (
-        <p className="font-mono text-xs text-muted-foreground">
-          loading evidence…
-        </p>
+        <p className="text-sm text-muted-foreground">loading evidence…</p>
       ) : null}
 
       {error ? (
-        <p className="text-xs text-foreground" role="alert">
+        <p className="text-sm text-foreground" role="alert">
           evidence could not be loaded: {error}
         </p>
       ) : null}
 
       {detail && detail.evidence.length === 0 ? (
-        <p className="text-xs text-muted-foreground">
+        <p className="text-sm text-muted-foreground">
           no evidence rows are stored for this card. the source frames may have
           been deleted by retention.
         </p>
       ) : null}
 
       {detail && detail.evidence.length > 0 ? (
-        <ul className="flex flex-col divide-y divide-border border border-border">
+        <ul className="flex flex-col divide-y divide-border">
           {detail.evidence.map((row) => (
             <li
               key={`${row.source_type}-${row.source_id}`}
-              className="flex flex-col gap-1 px-2 py-2"
+              className="flex flex-col gap-0.5 py-2"
               data-testid="journal-evidence-row"
             >
               <div className="flex items-baseline gap-2">
-                <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
+                <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
                   {formatClock(row.occurred_at)}
                 </span>
-                <span className="min-w-0 flex-1 truncate font-mono text-xs text-foreground">
+                <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
                   {row.app_name ?? row.source_type}
                 </span>
               </div>
               {row.window_title ? (
-                <span className="truncate text-xs text-muted-foreground">
+                <span className="truncate text-sm text-muted-foreground">
                   {row.window_title}
                 </span>
               ) : null}
               {row.browser_url ? (
-                <span className="truncate font-mono text-[10px] text-muted-foreground">
+                <span className="truncate text-xs text-muted-foreground">
                   {row.browser_url}
                 </span>
               ) : null}
               {row.frame_id ? (
                 <Button
+                  variant="ghost"
                   size="sm"
-                  variant="outline"
-                  className="self-start"
+                  className="mt-0.5 h-7 self-start px-2"
                   data-testid="journal-evidence-open-timeline"
                   onClick={() => openInTimeline(row.occurred_at, row.frame_id)}
                 >
                   Open in timeline
                 </Button>
               ) : (
-                <span className="font-mono text-[10px] lowercase text-muted-foreground">
-                  audio
-                </span>
+                <span className="text-xs text-muted-foreground">audio</span>
               )}
             </li>
           ))}
@@ -161,7 +157,7 @@ export function EvidenceList({
       ) : null}
 
       {detail ? (
-        <p className="font-mono text-[10px] text-muted-foreground">
+        <p className="text-xs text-muted-foreground">
           evidence is sampled — at most 24 rows, evenly spaced across the card.
         </p>
       ) : null}

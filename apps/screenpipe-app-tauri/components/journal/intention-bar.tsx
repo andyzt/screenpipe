@@ -122,25 +122,24 @@ export function IntentionBar({
     <section
       aria-label="current intention"
       data-testid="journal-intention-bar"
-      className="rounded-lg border border-border bg-card px-4 py-3"
     >
       {intention ? (
-        <div className="flex flex-wrap items-center gap-3">
-          <span className="font-mono text-[10px] lowercase tracking-wide text-muted-foreground">
-            working on
-          </span>
-          <span className="min-w-0 flex-1 truncate text-sm text-foreground">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm text-muted-foreground">Working on</span>
+          <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
             {intention.title}
             {intention.project ? (
-              <span className="text-muted-foreground"> · {intention.project}</span>
+              <span className="font-normal text-muted-foreground">
+                {" "}
+                · {intention.project}
+              </span>
             ) : null}
           </span>
-          <span className="font-mono text-[10px] text-muted-foreground">
+          <span className="text-xs tabular-nums text-muted-foreground">
             since {formatClock(intention.started_at)}
           </span>
           <Button
             size="sm"
-            variant="outline"
             data-testid="journal-intention-end"
             disabled={busy}
             onClick={() => void end()}
@@ -155,9 +154,9 @@ export function IntentionBar({
         >
           <label
             htmlFor="journal-intention-title"
-            className="font-mono text-[10px] lowercase tracking-wide text-muted-foreground"
+            className="text-sm text-muted-foreground"
           >
-            working on
+            Working on
           </label>
           <Input
             ref={titleRef}
@@ -174,7 +173,7 @@ export function IntentionBar({
             value={project}
             onChange={(event) => setProject(event.target.value)}
             placeholder="project (optional)"
-            className="h-9 w-40"
+            className="h-9 w-36"
           />
           <Button
             size="sm"
@@ -187,7 +186,7 @@ export function IntentionBar({
         </form>
       )}
       {error ? (
-        <p role="alert" className="mt-2 text-xs text-foreground">
+        <p role="alert" className="mt-2 text-sm text-destructive">
           {error}
         </p>
       ) : null}

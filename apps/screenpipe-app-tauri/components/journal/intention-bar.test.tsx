@@ -30,7 +30,7 @@ describe("IntentionBar", () => {
     await waitFor(() =>
       expect(screen.getByText(/Ship auth fix/)).toBeInTheDocument(),
     );
-    expect(screen.getByText("working on")).toBeInTheDocument();
+    expect(screen.getByText("Working on")).toBeInTheDocument();
     expect(screen.queryByTestId("journal-intention-title")).toBeNull();
     expect(screen.getByTestId("journal-intention-end")).toBeInTheDocument();
   });

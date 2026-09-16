@@ -5,6 +5,7 @@
 
 import React, { createContext, useContext, useEffect } from "react";
 import { type ColorTheme } from "@/lib/constants/colors";
+import { JOURNAL_THEME } from "@/lib/journal-shell";
 import { useSettings } from "@/lib/hooks/use-settings";
 import { commands } from "@/lib/utils/tauri";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -81,6 +82,27 @@ export function ThemeProvider({
       root.classList.add(resolvedTheme);
     };
     const nativeSync = commands.setNativeTheme(theme).catch(() => {});
+
+    // The journal fork repaints the app in shadcn/ui values. The layer defines
+    // both a light and a dark half (app/journal-theme.css), so it sits under
+    // the ordinary light/dark resolution below rather than replacing it, and
+    // the theme setting keeps working exactly as it did.
+    if (JOURNAL_THEME) {
+      root.setAttribute("data-theme", JOURNAL_THEME);
+    } else {
+      root.removeAttribute("data-theme");
+    }
+
+    // shadcn/ui's own surfaces are light, and this build follows them: an
+    // install that has never expressed a theme preference gets light rather
+    // than whatever the OS happens to be. Choosing "dark" in Settings →
+    // Appearance still reaches the dark half of the layer; only "system"
+    // changes meaning, and only while the fork theme is on. The first-paint
+    // script in app/layout.tsx applies the same rule.
+    if (JOURNAL_THEME && theme === "system") {
+      applyResolvedTheme("light");
+      return;
+    }
 
     if (theme !== "system") {
       // For explicit preferences, apply as-is

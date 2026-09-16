@@ -15,6 +15,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { fetchFocusStatus, overrideFocusState } from "@/lib/journal/api";
 import { formatMinutes, relationLabel } from "@/lib/journal/format";
@@ -95,16 +96,21 @@ export function NowStrip({ refreshToken = 0 }: { refreshToken?: number }) {
     !!status.intention &&
     (status.relation === "possible_distraction" || status.relation === "other_work");
 
+  // A muted banner at the head of the day summary: it is the one live thing on
+  // the surface, so it gets a surface of its own rather than a colour.
   return (
     <section
       aria-label="focus right now"
       data-testid="journal-now-strip"
-      className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-l border-border pl-3"
+      className="flex flex-wrap items-baseline gap-x-3 gap-y-1 rounded-lg border border-border bg-muted/50 px-3 py-2.5"
     >
-      <span className="font-mono text-[10px] lowercase tracking-wide text-muted-foreground">
-        now
-      </span>
-      <span className="text-sm text-foreground" data-testid="journal-now-relation">
+      <Badge variant="outline" className="bg-background font-normal">
+        Now
+      </Badge>
+      <span
+        className="text-sm font-medium text-foreground"
+        data-testid="journal-now-relation"
+      >
         {relation}
       </span>
       {status && !stalled && status.dominant_task_title ? (
@@ -114,15 +120,12 @@ export function NowStrip({ refreshToken = 0 }: { refreshToken?: number }) {
         </span>
       ) : null}
       {status && !stalled && status.divergence_minutes > 0 ? (
-        <span
-          className="font-mono text-[10px] text-muted-foreground"
-          data-testid="journal-now-divergence"
-        >
+        <span className="text-xs text-muted-foreground" data-testid="journal-now-divergence">
           away {formatMinutes(status.divergence_minutes)} est.
         </span>
       ) : null}
       {status?.reason ? (
-        <span className="w-full text-xs text-muted-foreground">
+        <span className="w-full text-xs leading-5 text-muted-foreground">
           {stalled
             ? "no fresh capture in the last few minutes, so the relation is not judged."
             : status.reason}

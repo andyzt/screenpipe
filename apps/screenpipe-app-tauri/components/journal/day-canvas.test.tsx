@@ -88,13 +88,19 @@ describe("DayCanvas", () => {
     );
   });
 
-  it("carries the category colour as a border, never as a fill", () => {
+  it("carries the category colour as a left border, never as a fill", () => {
     renderCanvas();
     const block = screen.getByTestId("journal-canvas-block");
-    expect(block.style.borderColor).toBeTruthy();
+    // A shadcn Card surface with a 4px category rule down its left edge: the
+    // block stays the same white every other card in the app is.
+    expect(block.style.borderLeft).toBe("4px solid rgb(185, 132, 255)");
     expect(block.style.backgroundColor).toBe("");
+    expect(block.className).toContain("bg-card");
     // and the name is still printed, so colour is never the only carrier
     expect(block.getAttribute("title")).toContain("Work");
+    expect(screen.getByTestId("journal-canvas-block-meta")).toHaveTextContent(
+      "Work",
+    );
   });
 
   it("marks an idle block as idle instead of colouring it", () => {
@@ -116,7 +122,7 @@ describe("DayCanvas", () => {
     expect(block.dataset.idle).toBe("true");
     expect(block.className).toContain("border-dashed");
     expect(screen.getByTestId("journal-canvas-block-title")).toHaveTextContent(
-      "idle",
+      "Idle",
     );
   });
 
@@ -135,7 +141,7 @@ describe("DayCanvas", () => {
     renderCanvas({ day: day({ activities: [withDetour] }) });
     const detour = screen.getByTestId("journal-canvas-detour");
     expect(detour.style.top).toBe(`${30 * MINUTE_PX}px`);
-    expect(detour.getAttribute("title")).toContain("detour");
+    expect(detour.getAttribute("title")).toContain("Detour");
     expect(detour.getAttribute("title")).toContain("Checked a social feed");
   });
 
@@ -150,7 +156,7 @@ describe("DayCanvas", () => {
     expect(screen.queryByTestId("journal-now-line")).toBeNull();
   });
 
-  it("burns phosphor on the now line only while the day is being written", () => {
+  it("marks the now line while the day is being written, and only then", () => {
     renderCanvas({
       nowMs: at(10, 30).getTime(),
       generating: true,
@@ -167,7 +173,9 @@ describe("DayCanvas", () => {
       }),
     });
     const mark = screen.getByTestId("journal-generating");
-    expect(mark.className).toContain("bg-phosphor");
+    // Live work is a default Badge (primary ink), not the shipped lime: the
+    // shadcn neutral scale has no second accent hue to spend on it.
+    expect(mark.className).toContain("bg-primary");
     expect(mark).toHaveTextContent("writing 3 windows");
     expect(screen.queryByTestId("journal-now-mark")).toBeNull();
   });
@@ -205,7 +213,8 @@ describe("DayCanvas", () => {
     );
     const block = screen.getByTestId("journal-canvas-block");
     expect(block.dataset.selected).toBe("true");
-    expect(block.className).toContain("outline-2");
+    expect(block.className).toContain("ring-2");
+    expect(block.className).toContain("ring-ring");
   });
 
   it("lays overlapping cards out side by side rather than hiding one", () => {

@@ -116,7 +116,7 @@ describe("JournalView", () => {
     render(<JournalView />);
     await waitFor(() => expect(fetchJournalDay).toHaveBeenCalled());
     expect(fetchJournalDay.mock.calls[0][0]).toBe(journalDayToday());
-    expect(screen.getByTestId("journal-date-label")).toHaveTextContent("today");
+    expect(screen.getByTestId("journal-date-label")).toHaveTextContent("Today");
   });
 
   it("walks back a day through the date pill and refuses to walk past today", async () => {
@@ -231,7 +231,7 @@ describe("JournalView", () => {
     input.remove();
   });
 
-  it("marks live generation with phosphor on the now line and polls while it runs", async () => {
+  it("marks live generation on the now line and polls while it runs", async () => {
     vi.useFakeTimers();
     fetchJournalDay.mockResolvedValue(
       makeJournalDay({
@@ -255,7 +255,7 @@ describe("JournalView", () => {
       expect(screen.getByTestId("journal-generating")).toBeInTheDocument(),
     );
     expect(screen.getByTestId("journal-generating").className).toContain(
-      "bg-phosphor",
+      "bg-primary",
     );
 
     const before = fetchJournalDay.mock.calls.length;
