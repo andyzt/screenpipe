@@ -1461,6 +1461,9 @@ mod tests {
                         ok: false,
                         error: Some("DURATION ERROR: card 1 is 4.0 minutes".to_string()),
                         repairs: Vec::new(),
+                        prompt_tokens: 3_000,
+                        completion_tokens: 400,
+                        total_tokens: 3_400,
                     },
                     GenerationAttempt {
                         request_chars: 11_000,
@@ -1469,6 +1472,9 @@ mod tests {
                         ok: true,
                         error: None,
                         repairs: vec!["source gap: 'Session' split".to_string()],
+                        prompt_tokens: 3_600,
+                        completion_tokens: 450,
+                        total_tokens: 4_050,
                     },
                 ]
             }

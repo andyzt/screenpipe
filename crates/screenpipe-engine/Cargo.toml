@@ -203,6 +203,13 @@ jemalloc = ["tikv-jemallocator"]
 name = "screenpipe"
 path = "src/bin/screenpipe-engine.rs"
 
+# Eval harness for the journal's provider calls (plan §11). Not shipped in the
+# app bundle: it is a developer tool run from the workspace with
+# `cargo run -p screenpipe-engine --bin journal-eval`.
+[[bin]]
+name = "journal-eval"
+path = "src/bin/journal-eval.rs"
+
 [[bench]]
 name = "hot_frame_cache"
 harness = false

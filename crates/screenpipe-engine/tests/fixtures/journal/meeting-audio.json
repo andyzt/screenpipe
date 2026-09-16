@@ -1,0 +1,45 @@
+{
+  "window_start": "2026-09-16T18:30:00Z",
+  "window_end": "2026-09-16T18:45:00Z",
+  "context_start": "2026-09-16T17:45:00Z",
+  "active_minutes": 47.0,
+  "intervals": [
+    {
+      "interval_key": "ma-1",
+      "task_key": "task-design-review",
+      "title": "Design review — journal day view",
+      "app": "zoom.us",
+      "window_title": "Zoom Meeting — Design review",
+      "host": null,
+      "document": null,
+      "start_at": "2026-09-16T17:55:00Z",
+      "end_at": "2026-09-16T18:20:00Z",
+      "active_minutes": 24.0,
+      "click_count": 7,
+      "text_event_count": 18,
+      "audio_segments": 23,
+      "text_snippets": [
+        "Design review — 4 participants — screen share: journal day canvas"
+      ]
+    },
+    {
+      "interval_key": "ma-2",
+      "task_key": "task-design-review",
+      "title": "Review notes — journal day view",
+      "app": "Notes",
+      "window_title": "Review notes — journal day view",
+      "host": null,
+      "document": null,
+      "start_at": "2026-09-16T18:20:00Z",
+      "end_at": "2026-09-16T18:45:00Z",
+      "active_minutes": 23.0,
+      "click_count": 12,
+      "text_event_count": 430,
+      "audio_segments": 16,
+      "text_snippets": [
+        "Decisions: keep the inspector on the right, no score widgets, phosphor only while generating",
+        "Open: do idle cards show in the day or collapse into gaps?"
+      ]
+    }
+  ]
+}

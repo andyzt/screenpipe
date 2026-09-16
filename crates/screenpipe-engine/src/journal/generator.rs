@@ -126,6 +126,13 @@ pub struct GenerationAttempt {
     /// the interesting row, because it is the one that would otherwise have
     /// cost two more provider calls and a `system` card.
     pub repairs: Vec<String>,
+    /// Tokens as the provider reported them, zero when it reported none.
+    /// Characters are what the audit row stores, but cost and the plan's
+    /// per-day budget are both denominated in tokens, and a provider's own
+    /// count is the only honest source for them.
+    pub prompt_tokens: i64,
+    pub completion_tokens: i64,
+    pub total_tokens: i64,
 }
 
 #[async_trait]

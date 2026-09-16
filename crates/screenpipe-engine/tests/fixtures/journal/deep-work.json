@@ -1,0 +1,65 @@
+{
+  "window_start": "2026-09-16T10:15:00Z",
+  "window_end": "2026-09-16T10:30:00Z",
+  "context_start": "2026-09-16T09:30:00Z",
+  "active_minutes": 52.0,
+  "intervals": [
+    {
+      "interval_key": "dw-1",
+      "task_key": "task-journal-validate",
+      "title": "validate.rs — screenpipe",
+      "app": "Code",
+      "window_title": "validate.rs — screenpipe",
+      "host": null,
+      "document": "/Users/dev/screenpipe/crates/screenpipe-engine/src/journal/validate.rs",
+      "start_at": "2026-09-16T09:35:00Z",
+      "end_at": "2026-09-16T09:55:00Z",
+      "active_minutes": 19.0,
+      "click_count": 21,
+      "text_event_count": 1140,
+      "audio_segments": 0,
+      "text_snippets": [
+        "pub fn validate_cards(cards: &[CardDraft], bounds: &EvidenceBounds) -> Vec<CardIssue> {",
+        "// every card except the last must be at least MIN_CARD long"
+      ]
+    },
+    {
+      "interval_key": "dw-2",
+      "task_key": "task-journal-validate",
+      "title": "validate.rs — screenpipe",
+      "app": "Code",
+      "window_title": "validate.rs — screenpipe",
+      "host": null,
+      "document": "/Users/dev/screenpipe/crates/screenpipe-engine/src/journal/validate.rs",
+      "start_at": "2026-09-16T09:55:00Z",
+      "end_at": "2026-09-16T10:12:00Z",
+      "active_minutes": 16.5,
+      "click_count": 14,
+      "text_event_count": 980,
+      "audio_segments": 0,
+      "text_snippets": [
+        "test journal::validate::tests::a_card_bridging_a_gap_is_rejected ... ok",
+        "14 passed; 0 failed; 0 ignored"
+      ]
+    },
+    {
+      "interval_key": "dw-3",
+      "task_key": "task-journal-validate",
+      "title": "repair.rs — screenpipe",
+      "app": "Code",
+      "window_title": "repair.rs — screenpipe",
+      "host": null,
+      "document": "/Users/dev/screenpipe/crates/screenpipe-engine/src/journal/repair.rs",
+      "start_at": "2026-09-16T10:12:00Z",
+      "end_at": "2026-09-16T10:30:00Z",
+      "active_minutes": 17.0,
+      "click_count": 19,
+      "text_event_count": 1210,
+      "audio_segments": 0,
+      "text_snippets": [
+        "fn clip_to_evidence(card: &mut CardDraft, evidence: &[Span]) -> Option<RepairNote> {",
+        "cargo test -p screenpipe-engine --lib journal::repair ... ok"
+      ]
+    }
+  ]
+}

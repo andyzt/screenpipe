@@ -12,10 +12,15 @@ Implemented on branch `mvp-journal` (uncommitted at time of writing):
 M0–M5 plus the wave-3 follow-ups (LLM tail classifier, `POST
 /focus/state/override`, journal deep links). Verified with library-scoped
 Rust tests, the frontend and MCP suites, and a headless engine smoke over
-every new route plus the MCP `journal-day` tool. Not done: the tray "Set
-intention" item and a native Tauri build (blocked on local disk space), and
-the eval corpus of labelled days (§11). The shared contract is
-`docs/JOURNAL_API_CONTRACT.md`.
+every new route plus the MCP `journal-day` tool. §11 is now built and run:
+`cargo run -p screenpipe-engine --bin journal-eval` (export / run / tail) over
+8 labelled synthetic windows, 4 real exported windows and 6 labelled tails,
+with the reports in `docs/evals/`. Coverage validity is 100 % and tail
+distraction precision 100 %; **category accuracy is 75 % and fails the 80 %
+gate**, driven by a 20-minute distraction folded into a Work card (§11). Not
+done: the tray "Set intention" item and a native Tauri build (blocked on local
+disk space), the MCP output format linter, and labelling the live corpus. The
+shared contract is `docs/JOURNAL_API_CONTRACT.md`.
 
 ## 1. Scope
 
@@ -356,23 +361,64 @@ Each PR body carries the commands and results per `CLAUDE.md`.
 
 ## 11. Evals and quality gates
 
-- **Fixture corpus.** 10–20 real days exported as compiled observations JSON
-  (no raw text beyond what the prompt would see), hand-labelled with expected
-  card boundaries (±5 min), category, and, for days with an intention,
-  relation. Store under `crates/screenpipe-engine/tests/fixtures/journal/`.
-- **Metrics.** Coverage validity (100 % required), boundary agreement,
-  category accuracy (target ≥ 80 %, roadmap's editable-label bar), distraction
-  precision (target ≥ 90 %, roadmap's interruption bar, since the tail
-  detector reuses it), `unknown` rate on stalled-capture days (must be 100 %),
-  tokens per day and cost per provider.
-- **Harness.** `cargo run -p screenpipe-engine --bin journal-eval -- --provider
-  <preset> --fixtures ...` writing a Markdown report; TS format linter for MCP
-  output like `evaluateDailySummaryFormat`. A prompt change does not merge
-  without the report in the PR body.
+Built. The harness is `crates/screenpipe-engine/src/bin/journal-eval.rs` over
+the pure metric module `crates/screenpipe-engine/src/journal/eval.rs`; reports
+live in `docs/evals/`.
+
+- **Fixture corpus.** `crates/screenpipe-engine/tests/fixtures/journal/`:
+  8 labelled synthetic compiled windows (deep work, research across docs and
+  browser, a 20-minute distraction block, an idle-heavy window, a meeting with
+  audio marks, plus the three original ones) with
+  `synthetic.labels.json`, and `live/` — 4 windows exported from real capture,
+  unlabelled and scrubbed. `tests/fixtures/focus/tail/` holds 6 labelled tails
+  (social feed, a long-form report, docs supporting the coding task, a break,
+  thin evidence, a meeting on another topic).
+- **Metrics.** Coverage validity (100 % required), category accuracy (≥ 80 %),
+  relation accuracy, attempts and repairs per window, error-card rate,
+  distraction precision (≥ 90 %), `unknown` rate on thin evidence, latency,
+  tokens and cost. Accuracy over an unlabelled corpus is `n/a`, never 100 %;
+  the gates and this rule are unit-tested in `journal::eval`.
+- **Harness.**
+
+  ```bash
+  cargo run -p screenpipe-engine --bin journal-eval -- export \
+    --data-dir ~/.screenpipe-dev --date YYYY-MM-DD --out <dir> [--max-windows 10]
+  cargo run -p screenpipe-engine --bin journal-eval -- run \
+    --fixtures <dir> [--labels <file>] [--provider-preset <id>] [--data-dir <dir>] \
+    [--out report.md] [--price-in <usd/Mtok> --price-out <usd/Mtok>]
+  cargo run -p screenpipe-engine --bin journal-eval -- tail --fixtures <dir> [--out report.md]
+  ```
+
+  `run` and `tail` exit non-zero when a gate fails. A prompt change does not
+  merge without the report in the PR body. The TS format linter for MCP output
+  is still to do.
+- **Measured, 2026-09-16, `deepseek/deepseek-v4-flash`** (full reports:
+  `docs/evals/journal-eval-2026-09-16.md`, `docs/evals/tail-eval-2026-09-16.md`):
+
+  | corpus | validity | category | relation | attempts/window | tokens/window | latency |
+  |---|---|---|---|---|---|---|
+  | synthetic, 8 labelled windows | 100 % | **75 % (gate fails, bar 80 %)** | 57 % (4/7) | 1.12 | 4.5k | 4.4 s |
+  | live, 4 real windows | 100 % | n/a | n/a | 1.75 | 14.9k | 7.2 s |
+  | tail, 6 labelled tails | — | — | 83 % | 1.0 | — | 1.6 s |
+
+  Tail distraction precision **100 % (1/1), gate passes**; `unknown` on thin
+  evidence 100 %. Error-card rate 0 % on both card corpora.
+- **Open from the measurement.** (1) A 20-minute YouTube block was folded into
+  the neighbouring Work card — the prompt merges by default and only offers
+  `distractions[]` for detours under 5 minutes, so a detour in between has
+  nowhere to go. This is the category gate's failure and the one to fix before
+  classification ships. (2) The model reads same-project work as
+  `supports_intention`, collapsing the roadmap's "other work is not a failure"
+  distinction. (3) `activity_ledger` fragments on window titles that change
+  every second (an agent CLI's spinner glyph): 224–1,715 intervals per real
+  window, which truncates the prompt's observation list, triples tokens and
+  costs a correction round on every live window.
 - **Runtime budget.** Worker adds < 1 % average CPU and no allocation in
   capture paths (it reads the DB only). Provider calls: ~32–64 windows/day ×
   ~4–8k tokens; with a local model, zero cost; log actual numbers in
-  `/journal/status`.
+  `/journal/status`. Measured: synthetic windows sit inside that band, real
+  ones are roughly double the ceiling until the ledger fragmentation above is
+  fixed.
 
 ## 12. Risks and open decisions
 

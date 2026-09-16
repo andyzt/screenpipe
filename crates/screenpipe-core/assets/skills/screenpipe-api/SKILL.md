@@ -80,6 +80,12 @@ Required: `start_time`, `end_time`. Optional: `app_name`, `q` (filters memories+
 
 ---
 
+## Journal and focus — `GET /journal/day`, `GET /journal/week`, `GET /focus/status`, set-intention
+
+The journal is the interpreted counterpart of `/activity-summary`: a background worker cuts capture into ~15-minute windows, compiles them deterministically and has the user's own AI preset write activity cards, so `GET /journal/day?date=YYYY-MM-DD` (local 04:00 day boundary) returns titled, summarised, categorised cards with per-category minutes, focus-vs-distraction totals, longest focus block, `data_status` and the generation status — ask it, rather than re-deriving a narrative from raw `/search` rows, whenever the question is "what did I actually do". `GET /journal/week?start=YYYY-MM-DD` folds seven of those days, `GET /journal/activities/{id}?include_evidence=true` returns one card with its detours and the frame ids behind it (feed those to `GET /frames/{frame_id}/context`), and `GET /journal/status` says whether generation is enabled, which preset it uses and what the last error was. On the focus side, `GET /focus/status` returns the live tail state — the user's current intention, the relation (`supports_intention`, `other_work`, `break`, `possible_distraction`, `unknown`), a confidence and a one-sentence reason — and setting an intention is `POST /focus/intentions` with `{"title": "...", "project": "..."}`, closed with `POST /focus/intentions/{id}/end`; at most one is active at a time. Two rules matter when you report any of this back: thin or stalled evidence always yields `unknown` and never a distraction verdict, and cards inside the trailing 45 minutes are provisional drafts that later runs rewrite, so do not quote them as settled history.
+
+---
+
 ## 2. Search — `GET /search`
 
 Use when `/activity-summary` says `ok` but you need verbatim quotes, media paths, frame IDs, or a specific match.

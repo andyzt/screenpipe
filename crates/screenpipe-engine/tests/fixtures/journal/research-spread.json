@@ -1,0 +1,65 @@
+{
+  "window_start": "2026-09-16T11:00:00Z",
+  "window_end": "2026-09-16T11:15:00Z",
+  "context_start": "2026-09-16T10:15:00Z",
+  "active_minutes": 50.0,
+  "intervals": [
+    {
+      "interval_key": "rs-1",
+      "task_key": "task-tokio-docs",
+      "title": "tokio::select! — docs.rs",
+      "app": "Arc",
+      "window_title": "tokio::macros::select — Rust",
+      "host": "docs.rs",
+      "document": null,
+      "start_at": "2026-09-16T10:20:00Z",
+      "end_at": "2026-09-16T10:38:00Z",
+      "active_minutes": 17.0,
+      "click_count": 44,
+      "text_event_count": 60,
+      "audio_segments": 0,
+      "text_snippets": [
+        "tokio::select! — waits on multiple concurrent branches and returns when the first completes",
+        "Cancellation safety: the future is dropped when another branch completes first"
+      ]
+    },
+    {
+      "interval_key": "rs-2",
+      "task_key": "task-plan-doc",
+      "title": "MVP implementation plan — journal",
+      "app": "Arc",
+      "window_title": "docs/MVP_IMPLEMENTATION_PLAN.md — screenpipe",
+      "host": "github.com",
+      "document": null,
+      "start_at": "2026-09-16T10:38:00Z",
+      "end_at": "2026-09-16T10:52:00Z",
+      "active_minutes": 13.5,
+      "click_count": 29,
+      "text_event_count": 240,
+      "audio_segments": 0,
+      "text_snippets": [
+        "5. Journal pipeline: compile deterministically, then one structured LLM call per window",
+        "Windows target 15 min, split on a > 2 min gap, cards 10-60 min"
+      ]
+    },
+    {
+      "interval_key": "rs-3",
+      "task_key": "task-journal-worker",
+      "title": "worker.rs — screenpipe",
+      "app": "Code",
+      "window_title": "worker.rs — screenpipe",
+      "host": null,
+      "document": "/Users/dev/screenpipe/crates/screenpipe-engine/src/journal/worker.rs",
+      "start_at": "2026-09-16T10:52:00Z",
+      "end_at": "2026-09-16T11:15:00Z",
+      "active_minutes": 22.0,
+      "click_count": 26,
+      "text_event_count": 1490,
+      "audio_segments": 0,
+      "text_snippets": [
+        "tokio::select! { _ = shutdown.recv() => break, _ = ticker.tick() => {} }",
+        "async fn process_window(db: &DatabaseManager, generator: &dyn CardGenerator"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,53 @@
+{
+  "intention": {
+    "id": 1,
+    "title": "Ship the journal MVP",
+    "project": "screenpipe",
+    "notes": "Cards, validators, the worker and the journal day view. Work in crates/screenpipe-engine/src/journal, the plan doc, and the journal UI counts as supporting it.",
+    "started_at": "2026-09-16T07:30:00Z",
+    "ended_at": null,
+    "source": "app"
+  },
+  "windows": {
+    "call-and-gap.json": {
+      "expected_category": "work",
+      "expected_relation": "other_work",
+      "notes": "The window itself is the Gmail inbox after the sync call: real work, not the journal."
+    },
+    "deep-work.json": {
+      "expected_category": "work",
+      "expected_relation": "supports_intention",
+      "notes": "Fifty-five uninterrupted minutes in one editor on journal/validate.rs and repair.rs."
+    },
+    "distraction-block.json": {
+      "expected_category": "distraction",
+      "expected_relation": "possible_distraction",
+      "notes": "A twenty-minute YouTube Shorts block that covers the whole window."
+    },
+    "focused-morning.json": {
+      "expected_category": "work",
+      "expected_relation": "other_work",
+      "notes": "Coding and CI on the auth crate: real work in the same repo, but not the journal."
+    },
+    "idle-heavy.json": {
+      "expected_category": "idle",
+      "expected_relation": null,
+      "notes": "A Notion draft left open: two clicks in fifteen minutes. Relation deliberately unlabelled - a human would not call this either work or a break."
+    },
+    "meeting-audio.json": {
+      "expected_category": "work",
+      "expected_relation": "supports_intention",
+      "notes": "A design review of the journal day view plus the notes written straight after it."
+    },
+    "research-spread.json": {
+      "expected_category": "work",
+      "expected_relation": "supports_intention",
+      "notes": "tokio docs, the plan doc and journal/worker.rs: research that serves the stated task."
+    },
+    "split-attention.json": {
+      "expected_category": "work",
+      "expected_relation": "other_work",
+      "notes": "The Q4 launch plan in Notion. Real work; the three-minute feed detour ends before the window does."
+    }
+  }
+}

@@ -583,6 +583,9 @@ impl CardGenerator for LlmGenerator {
                         ok: false,
                         error: Some(error.to_string()),
                         repairs: Vec::new(),
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        total_tokens: 0,
                     });
                     return Err(anyhow::Error::new(error));
                 }
@@ -623,6 +626,9 @@ impl CardGenerator for LlmGenerator {
                             ok: true,
                             error: None,
                             repairs,
+                            prompt_tokens: usage.prompt_tokens,
+                            completion_tokens: usage.completion_tokens,
+                            total_tokens: usage.total_tokens,
                         });
                         return Ok(drafts);
                     }
@@ -643,6 +649,9 @@ impl CardGenerator for LlmGenerator {
                 ok: false,
                 error: Some(summary.clone()),
                 repairs,
+                prompt_tokens: usage.prompt_tokens,
+                completion_tokens: usage.completion_tokens,
+                total_tokens: usage.total_tokens,
             });
             warn!(attempt, issues = %summary, "journal: provider output failed validation");
 

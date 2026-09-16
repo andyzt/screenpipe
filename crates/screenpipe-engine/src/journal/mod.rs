@@ -20,6 +20,12 @@
 //! - [`worker`] — the tick that runs the stages in order and persists once.
 //! - [`day`] — the API shapes and the day arithmetic behind `/journal/day`.
 //! - [`settings`] — the journal's slice of the desktop settings store.
+//! - [`eval`] — the fixtures, labels, metrics and gates the `journal-eval`
+//!   binary reports against. Pure, so a threshold is a unit test rather than a
+//!   number someone recomputed in a shell.
+//! - [`eval`] — the fixtures, labels, metrics and gates the `journal-eval`
+//!   binary reports against. Pure, so a threshold is a unit test rather than a
+//!   number someone recomputed in a shell.
 //!
 //! Everything is engine-owned rather than app-owned: MCP talks to
 //! `localhost:3030`, the CLI must work with no desktop app installed, and
@@ -31,6 +37,7 @@
 
 pub mod compile;
 pub mod day;
+pub mod eval;
 pub mod generator;
 pub mod idle;
 pub mod json;

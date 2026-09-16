@@ -1,0 +1,91 @@
+{
+  "expected_relation": "supports_intention",
+  "thin_evidence": false,
+  "notes": "Reading the docs for the exact type being edited, then going back to the file. Research that serves the task.",
+  "now": "2026-09-16T15:40:00Z",
+  "tail_start": "2026-09-16T15:30:00Z",
+  "intention": {
+    "id": 7,
+    "title": "Finish the journal repair pass",
+    "project": "screenpipe",
+    "notes": "Card geometry repair in crates/screenpipe-engine/src/journal/repair.rs and its tests.",
+    "started_at": "2026-09-16T13:05:00Z",
+    "ended_at": null,
+    "source": "app"
+  },
+  "dominant": {
+    "task_key": "task-chrono-docs",
+    "title": "chrono::Duration — docs.rs",
+    "app": "Arc",
+    "parent_title": null,
+    "active_minutes": 5.5
+  },
+  "support_set": [
+    "code",
+    "repair.rs — screenpipe",
+    "github.com"
+  ],
+  "candidate": "possible_distraction",
+  "candidate_reason": "the dominant task 'chrono::Duration — docs.rs' is not among the apps this intention has been worked on",
+  "divergence_minutes": 12.0,
+  "grace_minutes": 10,
+  "work_profile": {
+    "role": "Rust engineer on a desktop capture product",
+    "projects": [
+      {
+        "name": "screenpipe",
+        "keywords": [
+          "journal",
+          "repair.rs",
+          "activity ledger"
+        ]
+      }
+    ],
+    "notes": "Writes code in Code, reviews on github.com, plans in Notion."
+  },
+  "observations": {
+    "window_start": "2026-09-16T15:30:00Z",
+    "window_end": "2026-09-16T15:40:00Z",
+    "context_start": "2026-09-16T15:30:00Z",
+    "active_minutes": 9.0,
+    "intervals": [
+      {
+        "interval_key": "tf-1",
+        "task_key": "task-chrono-docs",
+        "title": "chrono::Duration — docs.rs",
+        "app": "Arc",
+        "window_title": "chrono::Duration — docs.rs",
+        "host": "docs.rs",
+        "document": null,
+        "start_at": "2026-09-16T15:30:00Z",
+        "end_at": "2026-09-16T15:36:00Z",
+        "active_minutes": 5.5,
+        "click_count": 18,
+        "text_event_count": 40,
+        "audio_segments": 0,
+        "text_snippets": [
+          "Duration::num_minutes — returns the total number of whole minutes in the duration",
+          "checked_add — returns None when the result would overflow"
+        ]
+      },
+      {
+        "interval_key": "tf-2",
+        "task_key": "task-repair",
+        "title": "repair.rs — screenpipe",
+        "app": "Code",
+        "window_title": "repair.rs — screenpipe",
+        "host": null,
+        "document": "/Users/dev/screenpipe/crates/screenpipe-engine/src/journal/repair.rs",
+        "start_at": "2026-09-16T15:36:00Z",
+        "end_at": "2026-09-16T15:40:00Z",
+        "active_minutes": 3.5,
+        "click_count": 9,
+        "text_event_count": 310,
+        "audio_segments": 0,
+        "text_snippets": [
+          "let over = card.end_at - card.start_at - MAX_CARD;"
+        ]
+      }
+    ]
+  }
+}
