@@ -65,6 +65,93 @@ pub(crate) fn encode_nsimage_as_small_png(icon: cocoa::base::id) -> Option<Vec<u
     }
 }
 
+/// Names the capture layer reports are the running app's localized name
+/// ("iTerm2", "Code"), which is not always the bundle's display name
+/// ("iTerm", "Visual Studio Code"). Try the name as given, then without a
+/// trailing version digit.
+fn app_name_candidates(app_name: &str) -> Vec<String> {
+    let name = app_name.trim();
+    let mut out = vec![name.to_string()];
+    let stripped = name
+        .trim_end_matches(|c: char| c.is_ascii_digit())
+        .trim()
+        .to_string();
+    if !stripped.is_empty() && stripped != name {
+        out.push(stripped);
+    }
+    out
+}
+
+/// Scan the standard application folders for `<name>.app`, case-insensitive.
+/// Mirrors the native timeline's icon lookup (`swift/timeline/TimelineIcons.swift`).
+fn scan_application_folders(app_name: &str) -> Option<String> {
+    let mut dirs = vec![
+        std::path::PathBuf::from("/Applications"),
+        std::path::PathBuf::from("/System/Applications"),
+        std::path::PathBuf::from("/System/Applications/Utilities"),
+    ];
+    if let Some(home) = dirs::home_dir() {
+        dirs.push(home.join("Applications"));
+    }
+    for dir in dirs {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for entry in entries.flatten() {
+            let file_name = entry.file_name();
+            let file_name = file_name.to_string_lossy();
+            let Some(stem) = file_name.strip_suffix(".app") else { continue };
+            if stem.eq_ignore_ascii_case(app_name) {
+                return Some(entry.path().to_string_lossy().into_owned());
+            }
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "macos")]
+unsafe fn ns_string_to_owned(value: cocoa::base::id) -> String {
+    use objc::{msg_send, sel, sel_impl};
+    let utf8: *const std::os::raw::c_char = msg_send![value, UTF8String];
+    if utf8.is_null() {
+        return String::new();
+    }
+    std::ffi::CStr::from_ptr(utf8).to_string_lossy().into_owned()
+}
+
+/// The bundle path of a running application whose localized name matches.
+#[cfg(target_os = "macos")]
+unsafe fn running_application_path(workspace: cocoa::base::id, app_name: &str) -> Option<String> {
+    use cocoa::base::{id, nil};
+    use objc::{msg_send, sel, sel_impl};
+    let apps: id = msg_send![workspace, runningApplications];
+    if apps == nil {
+        return None;
+    }
+    let count: usize = msg_send![apps, count];
+    for index in 0..count {
+        let app: id = msg_send![apps, objectAtIndex: index];
+        if app == nil {
+            continue;
+        }
+        let name: id = msg_send![app, localizedName];
+        if name == nil {
+            continue;
+        }
+        if !ns_string_to_owned(name).eq_ignore_ascii_case(app_name) {
+            continue;
+        }
+        let url: id = msg_send![app, bundleURL];
+        if url == nil {
+            continue;
+        }
+        let path: id = msg_send![url, path];
+        if path == nil {
+            continue;
+        }
+        return Some(ns_string_to_owned(path));
+    }
+    None
+}
+
 #[cfg(target_os = "macos")]
 pub async fn get_app_icon(
     app_name: &str,
@@ -83,17 +170,40 @@ pub async fn get_app_icon(
             let path = if let Some(path) = app_path {
                 path
             } else {
-                let ns_app_name = NSString::alloc(nil).init_str(app_name);
-                let path: id = msg_send![workspace, fullPathForApplication: ns_app_name];
-                let _: () = msg_send![ns_app_name, release];
-
-                if path == nil {
-                    return Ok(None);
+                let candidates = app_name_candidates(app_name);
+                let mut found: Option<String> = None;
+                // 1. The bundle's display name, as before.
+                for candidate in &candidates {
+                    let ns_app_name = NSString::alloc(nil).init_str(candidate);
+                    let path: id = msg_send![workspace, fullPathForApplication: ns_app_name];
+                    let _: () = msg_send![ns_app_name, release];
+                    if path != nil {
+                        found = Some(ns_string_to_owned(path));
+                        break;
+                    }
                 }
-                let path: id = msg_send![path, UTF8String];
-                std::ffi::CStr::from_ptr(path as *const _)
-                    .to_string_lossy()
-                    .into_owned()
+                // 2. A running app's localized name (what capture reports).
+                if found.is_none() {
+                    for candidate in &candidates {
+                        if let Some(path) = running_application_path(workspace, candidate) {
+                            found = Some(path);
+                            break;
+                        }
+                    }
+                }
+                // 3. `<name>.app` in the application folders.
+                if found.is_none() {
+                    for candidate in &candidates {
+                        if let Some(path) = scan_application_folders(candidate) {
+                            found = Some(path);
+                            break;
+                        }
+                    }
+                }
+                let Some(path) = found else {
+                    return Ok(None);
+                };
+                path
             };
 
             let ns_path = NSString::alloc(nil).init_str(&path);
@@ -966,4 +1076,17 @@ pub fn list_installed_apps() -> Vec<String> {
     }
 
     names.into_iter().collect()
+}
+
+#[cfg(test)]
+mod app_name_tests {
+    use super::app_name_candidates;
+
+    #[test]
+    fn app_name_candidates_strip_a_trailing_version() {
+        assert_eq!(app_name_candidates("iTerm2"), vec!["iTerm2", "iTerm"]);
+        assert_eq!(app_name_candidates("Code"), vec!["Code"]);
+        assert_eq!(app_name_candidates(" Google Chrome "), vec!["Google Chrome"]);
+        assert_eq!(app_name_candidates("1Password 8"), vec!["1Password 8", "1Password"]);
+    }
 }
