@@ -1305,6 +1305,19 @@ function createSettingsStore() {
 			needsUpdate = true;
 		}
 
+		// Migration (journal build): the Activities page is hidden from the default
+		// sidebar and its settings section is hidden too, but its headless generator
+		// still ran a Pi session every 15 minutes on stores that had it enabled.
+		// Turn it off once; a user who restores the page can re-enable it there.
+		if (
+			settings.activitiesEnabled === true &&
+			!(settings as any)._activitiesDisabledForJournalBuild
+		) {
+			settings.activitiesEnabled = false;
+			(settings as any)._activitiesDisabledForJournalBuild = true;
+			needsUpdate = true;
+		}
+
 		// Migration: collapse duplicate DeepSeek presets. Runs before the seeding
 		// step below — seeding a preset on top of the duplicates would defeat it.
 		{
