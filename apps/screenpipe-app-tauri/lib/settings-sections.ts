@@ -18,6 +18,7 @@ export type SettingsSection =
   | "ai"
   | "ai-settings"
   | "activities"
+  | "journal"
   | "general"
   | "display"
   | "shortcuts"
@@ -31,7 +32,7 @@ export type SettingsSection =
   | "speakers";
 
 export const ALL_SETTINGS_SECTIONS: SettingsSection[] = [
-  "display", "general", "ai", "ai-settings", "activities", "recording", "audio", "shortcuts", "notifications",
+  "display", "general", "ai", "ai-settings", "journal", "activities", "recording", "audio", "shortcuts", "notifications",
   "usage", "privacy", "permissions", "storage", "speakers",
   "team", "account", "referral",
 ];

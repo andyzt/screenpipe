@@ -18,6 +18,7 @@
 
 /** Canonical order — also the fallback for ids a stored layout never mentioned. */
 export const SIDEBAR_NAV_ORDER = [
+  "journal",
   "home",
   "meetings",
   "timeline",
@@ -29,25 +30,36 @@ export const SIDEBAR_NAV_ORDER = [
 
 export type SidebarNavId = (typeof SIDEBAR_NAV_ORDER)[number];
 
-const PREVIOUS_DEFAULT_SIDEBAR_NAV_ORDER = [
-  "home",
-  "brain",
-  "meetings",
-  "pipes",
-  "timeline",
-  "connections",
-] as const satisfies readonly SidebarNavId[];
+/**
+ * Orders this app has shipped as *its own* default, oldest first.
+ *
+ * An install still carrying one of these never expressed a preference, so it
+ * follows the product to the current default. Anything else is the user's own
+ * arrangement and is left alone.
+ */
+const SHIPPED_DEFAULT_SIDEBAR_NAV_ORDERS = [
+  ["home", "brain", "meetings", "pipes", "timeline", "connections"],
+  ["home", "meetings", "timeline", "activity", "brain", "pipes", "connections"],
+] as const satisfies readonly (readonly SidebarNavId[])[];
 
 export type SidebarNavLayout = {
   /** Ids in render order. May omit ids (they fall back to canonical position). */
   order: SidebarNavId[];
-  /** Ids kept out of the sidebar. Nothing is hidden by default. */
+  /** Ids kept out of the sidebar. Chat ships here; see the default below. */
   hidden: SidebarNavId[];
 };
 
+/**
+ * Journal leads and Chat ships hidden.
+ *
+ * The journal is the landing view, so it is the first row. Chat is not deleted
+ * or unmounted — the always-mounted chat layer in `app/(main)/home/page.tsx` is
+ * untouched, `?section=home` still opens it, and a user can bring the row back
+ * from sidebar options. It is simply not what the app opens on any more.
+ */
 export const DEFAULT_SIDEBAR_NAV_LAYOUT: SidebarNavLayout = {
   order: [...SIDEBAR_NAV_ORDER],
-  hidden: [],
+  hidden: ["home"],
 };
 
 /** At least one row must stay in the sidebar — an empty nav is a dead end. */
@@ -89,18 +101,18 @@ export function normalizeSidebarNavLayout(
     return { order: [...SIDEBAR_NAV_ORDER], hidden };
   }
 
-  // Move installs that still have the previous shipped default to the new
+  // Move installs that still have a previously shipped default to the new
   // default. Any other stored order remains user-owned and untouched.
-  const hadPreviousDefaultOrder =
-    storedOrder.length === PREVIOUS_DEFAULT_SIDEBAR_NAV_ORDER.length &&
-    storedOrder.every(
-      (id, index) => id === PREVIOUS_DEFAULT_SIDEBAR_NAV_ORDER[index],
-    );
+  const hadShippedDefaultOrder = SHIPPED_DEFAULT_SIDEBAR_NAV_ORDERS.some(
+    (shipped) =>
+      storedOrder.length === shipped.length &&
+      storedOrder.every((id, index) => id === shipped[index]),
+  );
 
   // Splice missing ids back at their canonical position: walk the canonical
   // list and, for each id the user never ordered, insert it after the last
   // canonical predecessor that the stored order does contain.
-  const order = hadPreviousDefaultOrder
+  const order = hadShippedDefaultOrder
     ? [...SIDEBAR_NAV_ORDER]
     : [...storedOrder];
   for (const id of SIDEBAR_NAV_ORDER) {
@@ -114,7 +126,16 @@ export function normalizeSidebarNavLayout(
     }
     order.splice(insertAt, 0, id);
   }
-  return { order, hidden };
+  // An install on a shipped default order that also never hid anything has no
+  // preference to preserve, so it inherits the new default hidden set (Chat).
+  // The moment the user hid or restored a single row, their set is kept.
+  const inheritsDefaultHidden = hadShippedDefaultOrder && hidden.length === 0;
+  return {
+    order,
+    hidden: inheritsDefaultHidden
+      ? [...DEFAULT_SIDEBAR_NAV_LAYOUT.hidden]
+      : hidden,
+  };
 }
 
 /**

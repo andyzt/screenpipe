@@ -57,6 +57,7 @@ import {
 	DEFAULT_SIDEBAR_NAV_LAYOUT,
 	type SidebarNavLayout,
 } from "@/lib/utils/sidebar-nav-layout";
+import type { JournalWorkProfile } from "@/lib/journal/types";
 export type VadSensitivity = "low" | "medium" | "high";
 
 export type AIProviderType =
@@ -314,6 +315,19 @@ export type Settings = SettingsStore & {
 	activitiesAiPresetId?: string;
 	/** Next native Activity generation run as an ISO timestamp. */
 	activitiesNextRunAt?: string;
+	/** Run the background daily-journal writer. Default true.
+	 *  Frontend-only today: these five keys ride the Rust `extra` map
+	 *  (`SettingsStore.extra`) so a Rust save round-trips them untouched.
+	 *  Contract: `docs/JOURNAL_API_CONTRACT.md` § Settings. */
+	journalEnabled?: boolean;
+	/** AI preset the journal writer uses. Unset = the default preset. */
+	journalAiPresetId?: string;
+	/** Role, projects and free notes fed to the journal prompts. */
+	journalWorkProfile?: JournalWorkProfile;
+	/** Notification layer for focus divergence. Default false. */
+	focusNudgesEnabled?: boolean;
+	/** How long a divergence must persist before it is classified. Default 10. */
+	focusGraceMinutes?: number;
 	/** Goal used to prioritize the Home cards. Persisted in store.bin. */
 	userGoalCategory?: UserGoalCategory;
 	/** Where the user says they found screenpipe, answered once during setup.
@@ -809,6 +823,10 @@ let DEFAULT_SETTINGS: Settings = {
 			showShortcutOverlay: true,
 			shortcutOverlaySnoozedUntil: null,
 			sidebarNavLayout: { ...DEFAULT_SIDEBAR_NAV_LAYOUT },
+			journalEnabled: true,
+			journalWorkProfile: { role: "", projects: [], notes: "" },
+			focusNudgesEnabled: false,
+			focusGraceMinutes: 10,
 			ignoreIncognitoWindows: true,
 			enhancedIncognitoDetection: false,
 			pauseOnDrmContent: false,

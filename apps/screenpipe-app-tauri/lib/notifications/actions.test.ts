@@ -5,7 +5,10 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  applyFocusOverrideDeeplink,
+  focusOverrideRelationFromDeeplink,
   isActivityDeeplink,
+  isJournalDeeplink,
   routeNotificationDeeplink,
   viewerPathFromNotificationUrl,
   windowForDeeplink,
@@ -34,6 +37,107 @@ describe("activity notification deeplinks", () => {
       "deep-link-received",
       "screenpipe://activity",
     );
+  });
+});
+
+describe("journal notification deeplinks", () => {
+  it("recognizes both forms the app uses for the journal section", () => {
+    expect(isJournalDeeplink("screenpipe://journal")).toBe(true);
+    expect(isJournalDeeplink("screenpipe://home?section=journal")).toBe(true);
+    expect(isJournalDeeplink("screenpipe://home?section=brain")).toBe(false);
+    expect(isJournalDeeplink("screenpipe://activity")).toBe(false);
+  });
+
+  it("routes screenpipe://home?section=journal to Home's journal page", async () => {
+    const showWindowActivated = vi.fn().mockResolvedValue(undefined);
+    const emitEvent = vi.fn().mockResolvedValue(undefined);
+
+    expect(windowForDeeplink("screenpipe://home?section=journal")).toEqual({
+      Home: { page: "journal" },
+    });
+
+    await routeNotificationDeeplink("screenpipe://home?section=journal", {
+      showWindowActivated,
+      emitEvent,
+      sleepMs: vi.fn().mockResolvedValue(undefined),
+    });
+
+    expect(showWindowActivated).toHaveBeenCalledWith({
+      Home: { page: "journal" },
+    });
+    expect(emitEvent).toHaveBeenCalledWith(
+      "deep-link-received",
+      "screenpipe://home?section=journal",
+    );
+  });
+});
+
+describe("focus override notification deeplinks", () => {
+  it("parses the relation the nudge action carries", () => {
+    expect(
+      focusOverrideRelationFromDeeplink(
+        "screenpipe://focus/override?relation=other_work",
+      ),
+    ).toBe("other_work");
+    expect(
+      focusOverrideRelationFromDeeplink(
+        "screenpipe://focus/override?relation=break",
+      ),
+    ).toBe("break");
+    expect(
+      focusOverrideRelationFromDeeplink(
+        "screenpipe://focus/override?relation=supports_intention",
+      ),
+    ).toBeNull();
+    expect(focusOverrideRelationFromDeeplink("screenpipe://activity")).toBeNull();
+  });
+
+  it("applies the override then lands on the journal", async () => {
+    const overrideFocusState = vi.fn().mockResolvedValue({ relation: "break" });
+    const showWindowActivated = vi.fn().mockResolvedValue(undefined);
+
+    const handled = await applyFocusOverrideDeeplink(
+      "screenpipe://focus/override?relation=break",
+      { showWindowActivated, overrideFocusState },
+    );
+
+    expect(handled).toBe(true);
+    expect(overrideFocusState).toHaveBeenCalledWith("break");
+    expect(showWindowActivated).toHaveBeenCalledWith({
+      Home: { page: "journal" },
+    });
+  });
+
+  it("is a no-op for a url that isn't the override deep link", async () => {
+    const overrideFocusState = vi.fn();
+    const handled = await applyFocusOverrideDeeplink("screenpipe://activity", {
+      overrideFocusState,
+    });
+    expect(handled).toBe(false);
+    expect(overrideFocusState).not.toHaveBeenCalled();
+  });
+
+  it("is tried first by routeNotificationDeeplink, ahead of the generic deep-link fallback", async () => {
+    const overrideFocusState = vi.fn().mockResolvedValue({ relation: "other_work" });
+    const showWindowActivated = vi.fn().mockResolvedValue(undefined);
+    const emitEvent = vi.fn().mockResolvedValue(undefined);
+
+    await routeNotificationDeeplink(
+      "screenpipe://focus/override?relation=other_work",
+      {
+        showWindowActivated,
+        emitEvent,
+        overrideFocusState,
+        sleepMs: vi.fn().mockResolvedValue(undefined),
+      },
+    );
+
+    expect(overrideFocusState).toHaveBeenCalledWith("other_work");
+    expect(showWindowActivated).toHaveBeenCalledWith({
+      Home: { page: "journal" },
+    });
+    // Handled entirely by the override branch — no generic navigate/emit.
+    expect(emitEvent).not.toHaveBeenCalled();
   });
 });
 

@@ -17,6 +17,7 @@ import {
   Plug,
   CalendarClock,
   ListTree,
+  NotebookPen,
   ArrowLeft,
 } from "lucide-react";
 import { emit } from "@tauri-apps/api/event";
@@ -115,6 +116,7 @@ import { PlanExpirationNotice } from "@/components/plan-expiration-notice";
 import type { AppUser } from "@/lib/app-entitlement";
 import { ONBOARDING_BRAIN_HANDOFF_EVENT } from "@/lib/live-views/onboarding-activation";
 import { ActivityLedger } from "@/components/activity-ledger";
+import { JournalView } from "@/components/journal/journal-view";
 import { ShortcutKeycap } from "@/components/shortcut-keycap";
 import { ExperimentalShortcutGuide } from "@/components/shortcut-guide";
 import { commandPalette as commandPaletteAnalytics } from "@/lib/analytics/command-palette";
@@ -131,7 +133,7 @@ import {
 } from "@/components/first-run/learning-banner";
 import { blocksTrialActivationApp } from "@/lib/first-run/trial-activation";
 
-type MainSection = "home" | "timeline" | "activity" | "brain" | "pipes" | "connections" | "meetings" | "help";
+type MainSection = "journal" | "home" | "timeline" | "activity" | "brain" | "pipes" | "connections" | "meetings" | "help";
 const TRIAL_ACTIVATION_ALLOWED_SECTIONS = new Set<MainSection>([
   "home",
   "timeline",
@@ -146,7 +148,7 @@ type ConnectionFocusRequest = {
 
 // All valid URL sections for the home page
 const ALL_SECTIONS = [
-  "home", "timeline", "activity", "pipes", "help", "brain", "connections", "meetings", "history",
+  "journal", "home", "timeline", "activity", "pipes", "help", "brain", "connections", "meetings", "history",
   "feedback", // backwards compat → maps to "help"
   "memories", // backwards compat → maps to "brain"
   "artifacts", // backwards compat → maps to "brain"
@@ -157,7 +159,13 @@ const ALL_SECTIONS = [
 // that lived here had already lost `audio`, `ai-settings` and `permissions`,
 // so deep links to those three fell through to the home sidebar and did
 // nothing. `resolveSettingsSection` also follows the legacy storage aliases.
-const isSettingsRoute = (value: string) => resolveSettingsSection(value) !== null;
+//
+// `journal` is both a home section and a settings section. A home-section id
+// always wins for this page's `?section=`, otherwise `/home?section=journal`
+// would bounce straight into Settings and the landing view would be
+// unreachable. The settings deep link is `/settings?section=journal`.
+const isSettingsRoute = (value: string) =>
+  !ALL_SECTIONS.includes(value) && resolveSettingsSection(value) !== null;
 
 function HomeContent() {
   const router = useRouter();
@@ -176,8 +184,11 @@ function HomeContent() {
   // reservation that keeps the top-left action icons clear of them.
   const isFullscreen = useIsFullscreen();
   const reserveTrafficLights = isMac && !isFullscreen;
+  // The journal is the landing view: a URL with no `?section=` opens the day,
+  // not the chat. Chat is still mounted and one click (or `?section=home`)
+  // away — see the always-mounted chat layer below.
   const [activeSection, setActiveSection] = useQueryState("section", {
-    defaultValue: "home",
+    defaultValue: "journal",
     // Sidebar sections are navigation, not disposable filter state. Keeping
     // each user-visible section in browser history lets the native trackpad
     // gesture preview and restore the UI the user actually came from.
@@ -343,9 +354,13 @@ function HomeContent() {
     void emit("chat-load-conversation", { conversationId: id });
   }, [setActiveSection]);
 
-  // Redirect settings sections to the standalone settings page
+  // Redirect settings sections to the standalone settings page. `isSettingsRoute`
+  // (not `resolveSettingsSection`) so an id that is both a home section and a
+  // settings section — `journal` — stays here instead of bouncing to Settings.
   useEffect(() => {
-    const settingsSection = resolveSettingsSection(activeSection);
+    const settingsSection = isSettingsRoute(activeSection)
+      ? resolveSettingsSection(activeSection)
+      : null;
     if (settingsSection) {
       router.push(`/settings?section=${settingsSection}`);
     }
@@ -1031,6 +1046,8 @@ function HomeContent() {
       );
     }
     switch (activeSection) {
+      case "journal":
+        return <JournalView />;
       case "home":
         // Chat is rendered separately below — always-mounted so streaming
         // and Pi event listeners survive navigation. Returning null here
@@ -1117,6 +1134,7 @@ function HomeContent() {
   // (see lib/utils/sidebar-nav-layout); enterprise policy and the
   // timeline-disabled rule decide what is even eligible, and always win.
   const SIDEBAR_SECTION_DEFS: Record<SidebarNavId, { label: string; icon: React.ReactNode }> = {
+    journal: { label: "Journal", icon: <NotebookPen className="h-3.5 w-3.5" /> },
     // The Chat row doubles as "go to chat view + start a fresh conversation".
     // Each click allocates a new session id (empty rows are not reused — that
     // felt like opening an old recent).
@@ -1208,7 +1226,11 @@ function HomeContent() {
     const url = new URL(event.payload.url, window.location.origin);
     const section = url.searchParams.get("section");
     if (!section) return;
-    const settingsSection = resolveSettingsSection(section);
+    // Same precedence as the `?section=` parser above: a home section id wins,
+    // so a `navigate` to /home?section=journal opens the journal, not Settings.
+    const settingsSection = isSettingsRoute(section)
+      ? resolveSettingsSection(section)
+      : null;
     if (settingsSection) {
       openSettings(settingsSection);
     } else {
