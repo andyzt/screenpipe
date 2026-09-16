@@ -32,6 +32,11 @@ import {
   shouldWarnLowHostedAiAllowance,
 } from "@/lib/hooks/use-usage-status";
 import { testAiPresetConnection } from "@/lib/utils/ai-preset-connection";
+import {
+  curatedDeepSeekFallbackModels,
+  curatedModelNote,
+  partitionCuratedModels,
+} from "@/lib/utils/curated-models";
 import { openBusinessUpgradeSurface } from "@/lib/upgrade-flow";
 import { Label } from "../ui/label";
 import { Input } from "../ui/input";
@@ -673,6 +678,7 @@ const AISection = ({
   const [models, setModels] = useState<AIModel[]>([]);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [isModelPickerOpen, setIsModelPickerOpen] = useState(false);
+  const [showAllModelsRequested, setShowAllModelsRequested] = useState(false);
   const [modelSearch, setModelSearch] = useState("");
   const selectedModelMetadata = useMemo(
     () => models.find((candidate) => candidate.id === settingsPreset?.model),
@@ -1100,13 +1106,15 @@ const AISection = ({
           break;
 
         case "deepseek": {
-          // DeepSeek lists models at GET /models (OpenAI shape). The vision
-          // model is always offered even when the key can't list yet.
-          const fallback = [
-            { id: "deepseek/deepseek-v4-flash-vision-exp", name: "deepseek/deepseek-v4-flash-vision-exp", provider: "deepseek" },
-            { id: "deepseek/deepseek-v4-flash", name: "deepseek/deepseek-v4-flash", provider: "deepseek" },
-            { id: "deepseek/deepseek-v4-pro", name: "deepseek/deepseek-v4-pro", provider: "deepseek" },
-          ];
+          // DeepSeek lists models at GET /models (OpenAI shape). The curated
+          // three are always offered even when the key can't list yet, and the
+          // picker below shows them first with the rest behind a toggle.
+          const fallback = curatedDeepSeekFallbackModels((model) => ({
+            id: model.id,
+            name: model.id,
+            description: model.note,
+            provider: "deepseek",
+          }));
           try {
             const resp = await tauriFetchWithDeadline(
               aiEndpointUrl(settingsPreset?.url || "https://api.vsellm.ru/v1", "models"),
@@ -1336,6 +1344,105 @@ const AISection = ({
       diagnosticsAbortRef.current?.abort();
     };
   }, []);
+
+  // The wired gateway lists nine deepseek ids plus other vendors. Three of them
+  // are real choices; the rest are dated variants nobody can pick between here.
+  // So lead with the curated three and keep the full list one click away.
+  const isDeepSeekProvider = settingsPreset?.provider === "deepseek";
+  const nonFreeModels = useMemo(
+    () => (models ?? []).filter((m) => !m.free),
+    [models],
+  );
+  const { curated: curatedModels, rest: otherModels } = useMemo(
+    () =>
+      isDeepSeekProvider
+        ? partitionCuratedModels(nonFreeModels)
+        : { curated: [] as AIModel[], rest: nonFreeModels },
+    [isDeepSeekProvider, nonFreeModels],
+  );
+  // Searching, or already running a model outside the curated set, means the
+  // long list is what the user is looking at — never hide it from them.
+  const showAllModels =
+    !isDeepSeekProvider ||
+    showAllModelsRequested ||
+    modelSearch.trim().length > 0 ||
+    otherModels.some((m) => m.id === settingsPreset?.model);
+
+  const renderModelOption = (model: AIModel) => {
+                          const costLabel = model.cost_tier === 'low' ? '$' : model.cost_tier === 'medium' ? '$$' : model.cost_tier === 'high' ? '$$$' : model.cost_tier === 'very_high' ? '$$$$' : '';
+                          // Effective lock = gateway said so AND we're allowed to surface it.
+                          const locked = !!model.locked && showUpsell;
+                          const cloudflareAllowance = hostedAiAllowanceForModel(usage, model.id);
+                          const lowCloudflareAllowance = shouldWarnLowHostedAiAllowance(cloudflareAllowance);
+                          const lowLegacyAllowance = !usage?.hosted_ai &&
+                            shouldWarnLowQuota(usage, model.query_weight);
+                          const curatedNote = curatedModelNote(model.id);
+                          return (
+                          <CommandItem
+                            key={model.id}
+                            value={model.id}
+                            className={locked ? "opacity-60" : undefined}
+                            onSelect={async () => {
+                              // Locked = above the user's plan. Review the
+                              // native Business offer instead of selecting it.
+                              if (locked) {
+                                setIsModelPickerOpen(false);
+                                await openBusinessUpgradeSurface(
+                                  "locked-model-picker",
+                                );
+                                return;
+                              }
+                              updateSettingsPreset({ model: model.id });
+                              setIsModelPickerOpen(false);
+                            }}
+                          >
+                            <div className="flex flex-col gap-0.5 w-full">
+                              <div className="flex items-center justify-between">
+                                <span className="font-medium">{model.name}</span>
+                                <div className="flex items-center gap-1 ml-2">
+                                  {curatedNote && (
+                                    <Badge variant="outline" className="text-[10px]">{curatedNote}</Badge>
+                                  )}
+                                  {locked && (
+                                    <Badge variant="outline" className="text-[10px] gap-0.5 border-foreground/40 text-foreground/80">
+                                      <Lock className="h-2.5 w-2.5" />
+                                      Business
+                                    </Badge>
+                                  )}
+                                  {!locked && costLabel && <Badge variant="outline" className="text-[10px]">{costLabel}</Badge>}
+                                  {!locked && model.speed === "fast" && <Badge variant="outline" className="text-[10px]">fast</Badge>}
+                                  {/* Cloudflare lanes always show percentage remaining; the badge
+                                      turns yellow near exhaustion. Legacy counters stay quiet until
+                                      they are low. Never render either beside a locked model. */}
+                                  {!locked && (cloudflareAllowance || lowLegacyAllowance) && (
+                                    <Badge
+                                      variant="outline"
+                                      className={`text-[10px] ${lowCloudflareAllowance || lowLegacyAllowance ? "bg-yellow-500/10 text-yellow-700 border-yellow-500/40 dark:text-yellow-400" : ""}`}
+                                      title={cloudflareAllowance
+                                        ? `${formatUsagePercent(cloudflareAllowance.used_percent)} used${cloudflareAllowance.resets_at ? ` — resets ${formatAllowanceReset(cloudflareAllowance.resets_at)}` : ""}`
+                                        : `approaching daily limit${usage?.resets_at ? ` — resets ${formatResetTime(usage.resets_at)}` : ""}`}
+                                    >
+                                      {cloudflareAllowance
+                                        ? `${formatUsagePercent(cloudflareAllowance.remaining_percent)} left`
+                                        : `≈ ${messagesLeftForModel(usage, model.query_weight)} left`}
+                                    </Badge>
+                                  )}
+                                </div>
+                              </div>
+                              <span className="text-xs text-muted-foreground">
+                                {model.description}{model.context_window ? ` · ${Math.round(model.context_window / 1000)}K ctx` : ""}
+                              </span>
+                              {model.recommended_for && model.recommended_for.length > 0 && (
+                                <div className="flex items-center gap-1 mt-0.5">
+                                  {model.recommended_for.map((use) => (
+                                    <span key={use} className="text-[9px] rounded bg-muted px-1 py-0.5 text-muted-foreground">{use}</span>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </CommandItem>
+                          );
+  };
 
   return (
     <div className="w-full space-y-4 py-3">
@@ -1656,79 +1763,31 @@ const AISection = ({
                           ))}
                         </CommandGroup>
                       )}
-                      <CommandGroup heading={showUpsell && models?.some((m) => !m.free && m.locked) ? "More models" : models?.some((m) => m.free) ? "Included with Screenpipe" : "Available Models"}>
-                        {models?.filter((m) => !m.free).slice().sort((a, b) => ((showUpsell && a.locked) ? 1 : 0) - ((showUpsell && b.locked) ? 1 : 0)).map((model) => {
-                          const costLabel = model.cost_tier === 'low' ? '$' : model.cost_tier === 'medium' ? '$$' : model.cost_tier === 'high' ? '$$$' : model.cost_tier === 'very_high' ? '$$$$' : '';
-                          // Effective lock = gateway said so AND we're allowed to surface it.
-                          const locked = !!model.locked && showUpsell;
-                          const cloudflareAllowance = hostedAiAllowanceForModel(usage, model.id);
-                          const lowCloudflareAllowance = shouldWarnLowHostedAiAllowance(cloudflareAllowance);
-                          const lowLegacyAllowance = !usage?.hosted_ai &&
-                            shouldWarnLowQuota(usage, model.query_weight);
-                          return (
+                      {isDeepSeekProvider && curatedModels.length > 0 && (
+                        <CommandGroup heading="Recommended">
+                          {curatedModels.map(renderModelOption)}
+                        </CommandGroup>
+                      )}
+                      {showAllModels ? (
+                        <CommandGroup heading={isDeepSeekProvider ? "All models" : showUpsell && models?.some((m) => !m.free && m.locked) ? "More models" : models?.some((m) => m.free) ? "Included with Screenpipe" : "Available Models"}>
+                          {otherModels
+                            .slice()
+                            .sort((a, b) => ((showUpsell && a.locked) ? 1 : 0) - ((showUpsell && b.locked) ? 1 : 0))
+                            .map(renderModelOption)}
+                        </CommandGroup>
+                      ) : otherModels.length > 0 ? (
+                        <CommandGroup>
                           <CommandItem
-                            key={model.id}
-                            value={model.id}
-                            className={locked ? "opacity-60" : undefined}
-                            onSelect={async () => {
-                              // Locked = above the user's plan. Review the
-                              // native Business offer instead of selecting it.
-                              if (locked) {
-                                setIsModelPickerOpen(false);
-                                await openBusinessUpgradeSurface(
-                                  "locked-model-picker",
-                                );
-                                return;
-                              }
-                              updateSettingsPreset({ model: model.id });
-                              setIsModelPickerOpen(false);
-                            }}
+                            value="show all models"
+                            data-testid="show-all-models"
+                            onSelect={() => setShowAllModelsRequested(true)}
                           >
-                            <div className="flex flex-col gap-0.5 w-full">
-                              <div className="flex items-center justify-between">
-                                <span className="font-medium">{model.name}</span>
-                                <div className="flex items-center gap-1 ml-2">
-                                  {locked && (
-                                    <Badge variant="outline" className="text-[10px] gap-0.5 border-foreground/40 text-foreground/80">
-                                      <Lock className="h-2.5 w-2.5" />
-                                      Business
-                                    </Badge>
-                                  )}
-                                  {!locked && costLabel && <Badge variant="outline" className="text-[10px]">{costLabel}</Badge>}
-                                  {!locked && model.speed === "fast" && <Badge variant="outline" className="text-[10px]">fast</Badge>}
-                                  {/* Cloudflare lanes always show percentage remaining; the badge
-                                      turns yellow near exhaustion. Legacy counters stay quiet until
-                                      they are low. Never render either beside a locked model. */}
-                                  {!locked && (cloudflareAllowance || lowLegacyAllowance) && (
-                                    <Badge
-                                      variant="outline"
-                                      className={`text-[10px] ${lowCloudflareAllowance || lowLegacyAllowance ? "bg-yellow-500/10 text-yellow-700 border-yellow-500/40 dark:text-yellow-400" : ""}`}
-                                      title={cloudflareAllowance
-                                        ? `${formatUsagePercent(cloudflareAllowance.used_percent)} used${cloudflareAllowance.resets_at ? ` — resets ${formatAllowanceReset(cloudflareAllowance.resets_at)}` : ""}`
-                                        : `approaching daily limit${usage?.resets_at ? ` — resets ${formatResetTime(usage.resets_at)}` : ""}`}
-                                    >
-                                      {cloudflareAllowance
-                                        ? `${formatUsagePercent(cloudflareAllowance.remaining_percent)} left`
-                                        : `≈ ${messagesLeftForModel(usage, model.query_weight)} left`}
-                                    </Badge>
-                                  )}
-                                </div>
-                              </div>
-                              <span className="text-xs text-muted-foreground">
-                                {model.description}{model.context_window ? ` · ${Math.round(model.context_window / 1000)}K ctx` : ""}
-                              </span>
-                              {model.recommended_for && model.recommended_for.length > 0 && (
-                                <div className="flex items-center gap-1 mt-0.5">
-                                  {model.recommended_for.map((use) => (
-                                    <span key={use} className="text-[9px] rounded bg-muted px-1 py-0.5 text-muted-foreground">{use}</span>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
+                            <span className="text-xs text-muted-foreground">
+                              show all models ({otherModels.length})
+                            </span>
                           </CommandItem>
-                          );
-                        })}
-                      </CommandGroup>
+                        </CommandGroup>
+                      ) : null}
                     </>
                   )}
                 </CommandList>

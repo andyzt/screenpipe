@@ -1220,6 +1220,33 @@ fn recording_status_text(
     }
 }
 
+/// Whether the "Chat" or "Search" tray item should be shown. Both are gated
+/// on the same three conditions: the shared enterprise `app_ui_hidden` flag,
+/// the per-item `is_tray_item_hidden` policy (checked by the caller, since it
+/// differs per item), and this build's product surface — accountless builds
+/// ship daily journal, focus detection, and MCP as the user path, not chat or
+/// search. `accountless` is threaded through as a parameter (rather than read
+/// from `crate::startup_auth::ACCOUNTLESS_BUILD` here) purely so this stays a
+/// pure, unit-testable predicate.
+fn chat_or_search_item_visible(app_ui_hidden: bool, hidden_by_policy: bool, accountless: bool) -> bool {
+    !app_ui_hidden && !hidden_by_policy && !accountless
+}
+
+/// Build the `page` string for `ShowRewindWindow::Home` that lands on the
+/// daily journal. Mirrors `meeting_page_with_id` in
+/// `commands/native_actions.rs`: `show.rs` formats this into
+/// `/home?section={page}`, so `focus_intent` produces
+/// `/home?section=journal&intent=1`, which the frontend reads on mount to
+/// focus the intention input. The frontend owns interpreting `intent`; this
+/// side only needs to get the query string onto the URL.
+fn journal_page(focus_intent: bool) -> String {
+    if focus_intent {
+        "journal&intent=1".to_string()
+    } else {
+        "journal".to_string()
+    }
+}
+
 fn create_dynamic_menu(
     app: &AppHandle,
     _state: &MenuState,
@@ -1265,19 +1292,34 @@ fn create_dynamic_menu(
     if !data.app_ui_hidden {
         menu_builder = menu_builder
             .item(&MenuItemBuilder::with_id("open_app", "Open screenpipe").build(app)?)
+            .item(&MenuItemBuilder::with_id("show_journal", "Journal").build(app)?)
+            .item(&MenuItemBuilder::with_id("set_intention", "Set intention…").build(app)?)
             .item(&PredefinedMenuItem::separator(app)?);
     }
 
     // --- Primary actions (most-used first) ---
     // Use native accelerators for right-aligned shortcut display (like Notion Calendar)
-    if !data.app_ui_hidden && !is_tray_item_hidden("tray_chat") {
+    // Chat and Search are not part of this build's product surface (journal,
+    // focus detection, and MCP are): accountless builds hide them here in
+    // addition to the enterprise `is_tray_item_hidden` policy below. The
+    // items themselves — and their click handlers — stay in place so an
+    // account-gated build can still show them.
+    if chat_or_search_item_visible(
+        data.app_ui_hidden,
+        is_tray_item_hidden("tray_chat"),
+        crate::startup_auth::ACCOUNTLESS_BUILD,
+    ) {
         let mut item = MenuItemBuilder::with_id("show_chat", "Chat");
         if !chat_shortcut.is_empty() {
             item = item.accelerator(&to_accelerator(chat_shortcut));
         }
         menu_builder = menu_builder.item(&item.build(app)?);
     }
-    if !data.app_ui_hidden && !is_tray_item_hidden("tray_search") {
+    if chat_or_search_item_visible(
+        data.app_ui_hidden,
+        is_tray_item_hidden("tray_search"),
+        crate::startup_auth::ACCOUNTLESS_BUILD,
+    ) {
         let mut item = MenuItemBuilder::with_id("show_search", "Search");
         if !search_shortcut.is_empty() {
             item = item.accelerator(&to_accelerator(search_shortcut));
@@ -1620,6 +1662,8 @@ fn tray_telemetry_item(menu_id: &str) -> Option<(&'static str, &'static str)> {
         "show" => Some(("timeline", "navigation")),
         "show_search" => Some(("search", "navigation")),
         "show_chat" => Some(("chat", "navigation")),
+        "show_journal" => Some(("journal", "navigation")),
+        "set_intention" => Some(("set_intention", "navigation")),
         "open_app" => Some(("open_app", "navigation")),
         "settings" => Some(("settings", "navigation")),
         "feedback" => Some(("feedback", "navigation")),
@@ -1697,6 +1741,8 @@ fn handle_menu_event(app_handle: &AppHandle, event: tauri::menu::MenuEvent) {
             "show"
                 | "show_search"
                 | "show_chat"
+                | "show_journal"
+                | "set_intention"
                 | "open_app"
                 | "settings"
                 | "upgrade"
@@ -1737,6 +1783,33 @@ fn handle_menu_event(app_handle: &AppHandle, event: tauri::menu::MenuEvent) {
                 crate::headless::wake_from_tray(&app);
                 let _ = ShowRewindWindow::Chat.show(&app);
                 let _ = app.emit("tray-show-chat", ());
+            });
+        }
+        "show_journal" => {
+            // Same mechanism as "open_app"/"settings": ShowRewindWindow::Home
+            // creates the Home window on `/home?section=journal` if it isn't
+            // open yet, or — if it's already open — emits the "navigate"
+            // event the deep-link handler also uses, so the existing webview
+            // switches sections in place instead of reloading.
+            let app = app_handle.clone();
+            let _ = app_handle.run_on_main_thread(move || {
+                crate::headless::wake_from_tray(&app);
+                let _ = ShowRewindWindow::Home {
+                    page: Some(journal_page(false)),
+                }
+                .show(&app);
+            });
+        }
+        "set_intention" => {
+            // Same as "show_journal" but with `intent=1` on the URL so the
+            // frontend focuses the intention input on mount.
+            let app = app_handle.clone();
+            let _ = app_handle.run_on_main_thread(move || {
+                crate::headless::wake_from_tray(&app);
+                let _ = ShowRewindWindow::Home {
+                    page: Some(journal_page(true)),
+                }
+                .show(&app);
             });
         }
         "start_recording" | "stop_recording" | "toggle_recording" => {
@@ -2124,9 +2197,68 @@ fn menu_state_needs_update(last_state: &MenuState, new_state: &MenuState) -> boo
     last_state != new_state
 }
 
+/// Minimal shape read from `GET /focus/status` — see
+/// `crates/screenpipe-engine/src/routes/focus.rs::FocusStatusResponse`. Only
+/// the two fields the tooltip renders are declared; unknown fields are
+/// ignored by serde default behavior.
+#[derive(serde::Deserialize)]
+struct FocusStatusIntentionPayload {
+    title: String,
+}
+
+#[derive(serde::Deserialize)]
+struct FocusStatusPayload {
+    intention: Option<FocusStatusIntentionPayload>,
+    #[serde(default)]
+    relation: String,
+}
+
+/// Suffix appended to the tray tooltip naming the active intention, e.g.
+/// " · working on: fix the flaky test (possible distraction)". Empty when
+/// there is no active intention. The relation is shown only when it is not
+/// `unknown` — before the detector's first tick, or with no evidence yet,
+/// there is nothing meaningful to report about how the last stretch compared
+/// to the intention.
+fn intention_tooltip_suffix(title: Option<&str>, relation: &str) -> String {
+    let Some(title) = title.filter(|t| !t.is_empty()) else {
+        return String::new();
+    };
+    let mut suffix = format!(" · working on: {}", title);
+    if !relation.is_empty() && relation != "unknown" {
+        suffix.push_str(&format!(" ({})", relation.replace('_', " ")));
+    }
+    suffix
+}
+
+/// `GET /focus/status` from the engine, turned into a tooltip suffix. Tolerant
+/// of connection errors, non-2xx (an older engine build predates this route,
+/// which 404s), and unexpected bodies — the tray tooltip is best-effort, and a
+/// failure here must never surface as an error from the tick that also
+/// refreshes the recording status.
+async fn fetch_intention_tooltip_suffix(
+    client: &reqwest::Client,
+    api: &crate::recording::LocalApiContext,
+) -> String {
+    let request = api.apply_auth(client.get(api.url("/focus/status")));
+    let Ok(response) = request.send().await else {
+        return String::new();
+    };
+    if !response.status().is_success() {
+        return String::new();
+    }
+    let Ok(payload) = response.json::<FocusStatusPayload>().await else {
+        return String::new();
+    };
+    intention_tooltip_suffix(
+        payload.intention.as_ref().map(|i| i.title.as_str()),
+        &payload.relation,
+    )
+}
+
 async fn update_menu_if_needed(
     app: &AppHandle,
     update_item: Option<&tauri::menu::MenuItem<Wry>>,
+    client: &reqwest::Client,
 ) -> Result<()> {
     #[cfg(target_os = "macos")]
     let _ = update_item;
@@ -2173,6 +2305,17 @@ async fn update_menu_if_needed(
     } else {
         "screenpipe".to_string()
     };
+    // Append the active intention, when there is one, the same way the rest of
+    // this tick reads engine state: local API context + bearer key, tolerant
+    // of 404/connection errors from an older engine build that predates
+    // `/focus/status`. Reuses the caller's client instead of allocating one
+    // per tick.
+    let api = crate::recording::local_api_context_from_app(app);
+    let tooltip = format!(
+        "{}{}",
+        tooltip,
+        fetch_intention_tooltip_suffix(client, &api).await
+    );
     let app_for_tooltip = app.clone();
     let _ = app.run_on_main_thread(move || {
         if let Some(tray) = app_for_tooltip.tray_by_id("screenpipe_main") {
@@ -2262,7 +2405,8 @@ pub(crate) async fn refresh_tray_menu_now(app: &AppHandle) -> Result<()> {
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .clone();
-    update_menu_if_needed(app, update_item.as_ref()).await
+    let client = reqwest::Client::new();
+    update_menu_if_needed(app, update_item.as_ref(), &client).await
 }
 
 #[cfg(feature = "e2e")]
@@ -2279,13 +2423,17 @@ pub fn setup_tray_menu_updater(app: AppHandle, update_item: Option<&tauri::menu:
     let update_item = update_item.cloned();
     tauri::async_runtime::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+        // One client for the whole updater lifetime — every tick reuses it
+        // (including the `/focus/status` tooltip fetch) instead of paying a
+        // fresh connector-pool allocation every 5 seconds.
+        let client = reqwest::Client::new();
         loop {
             interval.tick().await;
             if QUIT_REQUESTED.load(Ordering::SeqCst) {
                 info!("Tray menu updater received quit request, shutting down.");
                 break;
             }
-            if let Err(e) = update_menu_if_needed(&app, update_item.as_ref()).await {
+            if let Err(e) = update_menu_if_needed(&app, update_item.as_ref(), &client).await {
                 let msg = format!("{:#}", e);
                 error!("Failed to update tray menu: {}", msg);
                 // Tauri resource table can go stale after in-place updates on
@@ -2556,5 +2704,110 @@ mod tests {
             assert!(!plan_includes_business(Some(plan)), "{plan} may upsell");
         }
         assert!(!plan_includes_business(None));
+    }
+
+    // --- Journal / Set intention (accountless build) ---
+
+    /// This build's product path is daily journal, focus detection, and MCP —
+    /// not chat or search. Accountless builds must hide both regardless of the
+    /// enterprise `is_tray_item_hidden` policy state.
+    #[test]
+    fn accountless_build_hides_chat_and_search() {
+        assert!(!chat_or_search_item_visible(
+            /* app_ui_hidden */ false,
+            /* hidden_by_policy */ false,
+            /* accountless */ true,
+        ));
+    }
+
+    #[test]
+    fn non_accountless_build_shows_chat_and_search_when_not_otherwise_hidden() {
+        assert!(chat_or_search_item_visible(false, false, false));
+    }
+
+    /// Accountless hiding is additive to — not a replacement for — the
+    /// existing enterprise `app_ui_hidden` / `is_tray_item_hidden` gates.
+    #[test]
+    fn enterprise_policy_still_hides_chat_and_search_independent_of_accountless() {
+        assert!(!chat_or_search_item_visible(true, false, false));
+        assert!(!chat_or_search_item_visible(false, true, false));
+        assert!(!chat_or_search_item_visible(true, true, true));
+    }
+
+    /// This build ships without accounts, so the tray must actually hide
+    /// Chat/Search — not just be capable of it.
+    #[test]
+    fn this_build_is_accountless_so_chat_and_search_are_hidden_in_practice() {
+        assert!(crate::startup_auth::ACCOUNTLESS_BUILD);
+        assert!(!chat_or_search_item_visible(
+            false,
+            is_tray_item_hidden("tray_chat"),
+            crate::startup_auth::ACCOUNTLESS_BUILD,
+        ));
+        assert!(!chat_or_search_item_visible(
+            false,
+            is_tray_item_hidden("tray_search"),
+            crate::startup_auth::ACCOUNTLESS_BUILD,
+        ));
+    }
+
+    #[test]
+    fn show_journal_and_set_intention_are_recognized_tray_item_ids() {
+        assert_eq!(
+            tray_telemetry_item("show_journal"),
+            Some(("journal", "navigation"))
+        );
+        assert_eq!(
+            tray_telemetry_item("set_intention"),
+            Some(("set_intention", "navigation"))
+        );
+    }
+
+    #[test]
+    fn journal_page_targets_the_journal_section() {
+        assert_eq!(journal_page(false), "journal");
+    }
+
+    #[test]
+    fn journal_page_with_intent_focuses_the_intention_input() {
+        // show.rs formats `page` into `/home?section={page}`, so this must
+        // produce `/home?section=journal&intent=1`.
+        assert_eq!(journal_page(true), "journal&intent=1");
+    }
+
+    // --- Tooltip: active intention line ---
+
+    #[test]
+    fn tooltip_omits_intention_line_when_none_active() {
+        assert_eq!(intention_tooltip_suffix(None, "unknown"), "");
+        assert_eq!(intention_tooltip_suffix(Some(""), "unknown"), "");
+    }
+
+    #[test]
+    fn tooltip_shows_intention_without_relation_when_unknown() {
+        assert_eq!(
+            intention_tooltip_suffix(Some("fix the flaky test"), "unknown"),
+            " · working on: fix the flaky test"
+        );
+    }
+
+    #[test]
+    fn tooltip_formats_relation_with_spaces_instead_of_underscores() {
+        assert_eq!(
+            intention_tooltip_suffix(Some("fix the flaky test"), "supports_intention"),
+            " · working on: fix the flaky test (supports intention)"
+        );
+        assert_eq!(
+            intention_tooltip_suffix(Some("fix the flaky test"), "possible_distraction"),
+            " · working on: fix the flaky test (possible distraction)"
+        );
+        assert_eq!(
+            intention_tooltip_suffix(Some("fix the flaky test"), "other_work"),
+            " · working on: fix the flaky test (other work)"
+        );
+        assert_eq!(
+            intention_tooltip_suffix(Some("fix the flaky test"), "break"),
+            " · working on: fix the flaky test (break)"
+        );
     }
 }

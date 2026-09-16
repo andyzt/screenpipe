@@ -199,9 +199,17 @@ function HomeContent() {
       if (value === "artifacts") return "brain"; // backwards compat — artifacts merged into brain
       // Settings sections redirect to /settings page
       if (isSettingsRoute(value)) return value; // handled by redirect effect below
-      return ALL_SECTIONS.includes(value) ? value : "home";
+      // Unknown (or retired) ids land on the journal — the landing view —
+      // not on chat, which no longer ships as a sidebar row.
+      return ALL_SECTIONS.includes(value) ? value : "journal";
     },
     serialize: (value) => value,
+  });
+  // The tray's "Set intention…" item navigates to
+  // `/home?section=journal&intent=1`. It is a one-shot request, so the journal
+  // clears it once handled and a reload opens the plain journal.
+  const [intentionRequest, setIntentionRequest] = useQueryState("intent", {
+    history: "replace",
   });
   const [activityReturnVisible, setActivityReturnVisible] = useState(false);
   const previousSectionRef = useRef(activeSection);
@@ -1047,7 +1055,12 @@ function HomeContent() {
     }
     switch (activeSection) {
       case "journal":
-        return <JournalView />;
+        return (
+          <JournalView
+            focusIntentionRequest={intentionRequest === "1"}
+            onIntentionFocusHandled={() => void setIntentionRequest(null)}
+          />
+        );
       case "home":
         // Chat is rendered separately below — always-mounted so streaming
         // and Pi event listeners survive navigation. Returning null here
@@ -1162,6 +1175,10 @@ function HomeContent() {
   // never both render, and neither survives policy hiding the section.
   const meetingsInSidebar = visibleSidebarIds.includes("meetings");
   const meetingsInToolbar = false;
+  // The embedded list under the nav is chat sessions + scheduled automations.
+  // It belongs to those two rows and comes back with either of them.
+  const chatSidebarVisible =
+    visibleSidebarIds.includes("home") || visibleSidebarIds.includes("pipes");
 
   const persistSidebarLayout = (next: ReturnType<typeof normalizeSidebarNavLayout>) => {
     void updateSettings({ sidebarNavLayout: next });
@@ -1349,7 +1366,10 @@ function HomeContent() {
           toggleSidebar,
           openShortcutGuide: () => setShortcutGuideOpen(true),
           openSettings,
-          sections: availableSidebarIds.map((id) => ({
+          // Only rows the user can actually see. A section hidden from the
+          // sidebar is off the default path, so it is not offered here either;
+          // restoring the row (sidebar options) restores its palette action.
+          sections: visibleSidebarIds.map((id) => ({
             id,
             label: SIDEBAR_SECTION_DEFS[id].label,
           })),
@@ -1571,28 +1591,35 @@ function HomeContent() {
 
               {/* Embedded chat list — sits below the nav, scrolls within
                   its own viewport so the team promo + bottom items stay
-                  pinned. */}
-              <div
-                className={cn(
-                  // pb-6 keeps a clear gap between the recents list
-                  // and the team / settings / help row — pb-3 was
-                  // too tight; the list ran almost flush against the
-                  // bottom nav.
-                  "flex-1 min-h-0 flex flex-col mt-2 -mx-2 border-t pt-2 pb-6",
-                  isTranslucent ? "vibrant-sidebar-border" : "border-border/50"
-                )}
-              >
-                <ChatSidebar
-                  allowedConversationId={
-                    trialActivationLocked ? firstRunLearning.chatId : undefined
-                  }
-                  onViewAll={
-                    trialActivationLocked
-                      ? undefined
-                      : () => setActiveSection("history")
-                  }
-                />
-              </div>
+                  pinned. It lists chat sessions and scheduled automations, so
+                  it follows those rows: when neither is in the sidebar the
+                  list would be a door to sections the user cannot see, and a
+                  plain spacer keeps the bottom items anchored instead. */}
+              {chatSidebarVisible ? (
+                <div
+                  className={cn(
+                    // pb-6 keeps a clear gap between the recents list
+                    // and the team / settings / help row — pb-3 was
+                    // too tight; the list ran almost flush against the
+                    // bottom nav.
+                    "flex-1 min-h-0 flex flex-col mt-2 -mx-2 border-t pt-2 pb-6",
+                    isTranslucent ? "vibrant-sidebar-border" : "border-border/50"
+                  )}
+                >
+                  <ChatSidebar
+                    allowedConversationId={
+                      trialActivationLocked ? firstRunLearning.chatId : undefined
+                    }
+                    onViewAll={
+                      trialActivationLocked
+                        ? undefined
+                        : () => setActiveSection("history")
+                    }
+                  />
+                </div>
+              ) : (
+                <div className="flex-1 min-h-0" />
+              )}
 
               <div
                 className={cn(trialActivationLocked && "pointer-events-none")}

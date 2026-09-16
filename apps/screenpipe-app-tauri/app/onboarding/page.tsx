@@ -219,6 +219,17 @@ const SLIDE_ORDER: SlideKey[] = [
   "recommended-setup",
 ];
 
+/**
+ * Slides kept out of the default flow.
+ *
+ * "recommended-setup" installs and promotes scheduled tasks (daily email
+ * summary, digital clone, speaker reconciliation) — Automations and Meetings,
+ * which are not on the user's path any more. The step itself is untouched:
+ * `FinalSetupStep` still renders for a saved step, and removing the id from
+ * this list puts it back in the flow.
+ */
+const HIDDEN_ONBOARDING_SLIDES: readonly SlideKey[] = ["recommended-setup"];
+
 // endowed progress: the bar first renders on permissions with login already
 // counted done, so it always starts above zero. When the current step reports
 // sub-progress (e.g. one sub per permission grant), its segment splits so the
@@ -417,7 +428,8 @@ export default function OnboardingPage() {
           (s !== "plan" || shouldShowPlanSelection) &&
           // Managed deployments may authenticate with only a license key, so
           // consumer Gmail/Calendar authorization is not available there.
-          (s !== "recommended-setup" || !isManagedDeployment),
+          (s !== "recommended-setup" || !isManagedDeployment) &&
+          !HIDDEN_ONBOARDING_SLIDES.includes(s),
       ),
     [isManagedDeployment, shouldShowPlanSelection, timelineChoiceVisible],
   );
@@ -502,7 +514,10 @@ export default function OnboardingPage() {
                 // at the engine: permissions still have to be granted.
                 "permissions"
               : (mapped === "timeline" && !timelineChoiceVisibleRef.current) ||
-                  (mapped === "plan" && !shouldShowPlanSelection)
+                  (mapped === "plan" && !shouldShowPlanSelection) ||
+                  // A saved step that is no longer in the flow resumes at the
+                  // engine and finishes from there.
+                  HIDDEN_ONBOARDING_SLIDES.includes(mapped)
                 ? "engine"
                 : mapped;
           setCurrentSlide(mappedSlide);

@@ -91,6 +91,49 @@ describe("IntentionBar", () => {
     expect(onIntentionChange).toHaveBeenCalledWith(null);
   });
 
+  it("focuses the title field for the tray's set-intention request", async () => {
+    fetchActiveIntention.mockResolvedValue(null);
+    const onFocusRequestHandled = vi.fn();
+    render(
+      <IntentionBar
+        focusRequest
+        onFocusRequestHandled={onFocusRequestHandled}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("journal-intention-title")).toHaveFocus(),
+    );
+    // The request is spent, so the caller drops `?intent=1` and a reload is a
+    // plain journal open.
+    expect(onFocusRequestHandled).toHaveBeenCalledTimes(1);
+  });
+
+  it("does nothing but spend the request when an intention is already running", async () => {
+    fetchActiveIntention.mockResolvedValue(makeIntention());
+    const onFocusRequestHandled = vi.fn();
+    render(
+      <IntentionBar
+        focusRequest
+        onFocusRequestHandled={onFocusRequestHandled}
+      />,
+    );
+
+    await waitFor(() => expect(onFocusRequestHandled).toHaveBeenCalledTimes(1));
+    expect(screen.queryByTestId("journal-intention-title")).toBeNull();
+    expect(screen.getByTestId("journal-intention-end")).toBeInTheDocument();
+  });
+
+  it("leaves focus alone without the request", async () => {
+    fetchActiveIntention.mockResolvedValue(null);
+    render(<IntentionBar />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("journal-intention-title")).toBeInTheDocument(),
+    );
+    expect(screen.getByTestId("journal-intention-title")).not.toHaveFocus();
+  });
+
   it("surfaces a write failure without losing the form", async () => {
     fetchActiveIntention.mockResolvedValue(null);
     createIntention.mockRejectedValue(new Error("history access denied"));

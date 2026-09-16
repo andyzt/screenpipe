@@ -88,6 +88,11 @@ import {
   type ModelDiscoveryStatus,
 } from "@/components/ui/model-picker";
 import {
+  CURATED_DEEPSEEK_MODEL_IDS,
+  curatedDeepSeekFallbackModels,
+  curatedModelNote,
+} from "@/lib/utils/curated-models";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -519,11 +524,11 @@ export function AIProviderConfig({
     } else if (selectedProvider === "deepseek") {
       (async () => {
         setModelDiscoveryStatus("loading");
-        const known = [
-          { id: "deepseek/deepseek-v4-flash-vision-exp" },
-          { id: "deepseek/deepseek-v4-flash" },
-          { id: "deepseek/deepseek-v4-pro" },
-        ];
+        // Same curated three the picker leads with, so the offline fallback
+        // and the live gateway list agree.
+        const known = curatedDeepSeekFallbackModels((model) => ({
+          id: model.id,
+        }));
         try {
           if (formData.apiKey) {
             const resp = await tauriFetchWithDeadline(
@@ -868,6 +873,8 @@ export function AIProviderConfig({
                 id="model"
                 value={formData.model}
                 models={openaiModels.map((model) => model.id)}
+                curatedIds={CURATED_DEEPSEEK_MODEL_IDS}
+                noteForModel={curatedModelNote}
                 onValueChange={(model) => setFormData({ ...formData, model })}
                 status={modelDiscoveryStatus}
                 errorMessage={modelDiscoveryError}
@@ -1573,9 +1580,16 @@ export const AIPresetsSelector = ({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const aiPresets = useMemo(() => {
     const presets = (settings?.aiPresets || []) as AIPreset[];
+    // One row per preset id. A store that collected duplicates before the
+    // collapse migration ran must not render the same preset twice (and must
+    // not hand React duplicate keys).
+    const unique = presets.filter(
+      (preset, index, all) =>
+        all.findIndex((other) => other.id === preset.id) === index,
+    );
     return isManagedDeployment
-      ? filterPresetsForEnterprisePolicy(presets, aiPresetPolicy)
-      : presets;
+      ? filterPresetsForEnterprisePolicy(unique, aiPresetPolicy)
+      : unique;
   }, [settings?.aiPresets, isManagedDeployment, aiPresetPolicy]);
 
   const selectedPreset = useMemo(() => {

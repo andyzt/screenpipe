@@ -48,6 +48,11 @@ import {
   globalShortcutHint,
   type CommandPaletteDeps,
 } from "@/components/command-palette";
+import {
+  DEFAULT_SIDEBAR_NAV_LAYOUT,
+  SIDEBAR_NAV_ORDER,
+  resolveVisibleSidebarNavIds,
+} from "@/lib/utils/sidebar-nav-layout";
 
 beforeAll(() => {
   // Radix + cmdk in jsdom: pointer events and scrollIntoView don't exist.
@@ -143,6 +148,41 @@ describe("buildPaletteEntries", () => {
     const goTo = entries.filter((e) => e.group === "go to");
     expect(goTo.map((e) => e.id)).toEqual(["go_chat", "go_brain", "go_meetings"]);
     expect(goTo.map((e) => e.label)).toEqual(["Chat", "Library", "Meetings"]);
+  });
+
+  it("offers go-to rows only for the sidebar rows the user can see", () => {
+    // The palette is a second door to the sidebar, not a way around it: the
+    // shipped layout hides chat, meetings, library, automations and activity,
+    // so those sections have no go-to row until the user restores them.
+    const visible = resolveVisibleSidebarNavIds(DEFAULT_SIDEBAR_NAV_LAYOUT, [
+      ...SIDEBAR_NAV_ORDER,
+    ]);
+    const entries = buildPaletteEntries(
+      makeDeps({ sections: visible.map((id) => ({ id, label: id })) }),
+      mocks.settings,
+      true,
+    );
+    const goTo = entries.filter((e) => e.group === "go to");
+    expect(goTo.map((e) => e.id)).toEqual([
+      "go_journal",
+      "go_timeline",
+      "go_connections",
+    ]);
+
+    // …and restoring a row brings its action back.
+    const restored = buildPaletteEntries(
+      makeDeps({
+        sections: [...visible, "pipes" as const].map((id) => ({
+          id,
+          label: id,
+        })),
+      }),
+      mocks.settings,
+      true,
+    );
+    expect(
+      restored.some((entry) => entry.id === "go_scheduled"),
+    ).toBe(true);
   });
 
   it("uses word-form hints for in-app chords off macOS", () => {

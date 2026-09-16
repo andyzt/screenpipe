@@ -12,7 +12,7 @@
  * one intention is active; `POST /focus/intentions` ends the previous one.
  */
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,14 +26,23 @@ import type { Intention } from "@/lib/journal/types";
 
 export function IntentionBar({
   onIntentionChange,
+  /** The tray's "Set intention…" arrived (`?intent=1`): put the cursor in the form. */
+  focusRequest = false,
+  /** Called once the request is spent, so the caller can drop the query param. */
+  onFocusRequestHandled,
 }: {
   onIntentionChange?: (intention: Intention | null) => void;
+  focusRequest?: boolean;
+  onFocusRequestHandled?: () => void;
 }) {
   const [intention, setIntention] = useState<Intention | null>(null);
   const [title, setTitle] = useState("");
   const [project, setProject] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const titleRef = useRef<HTMLInputElement | null>(null);
+  const focusRequestHandledRef = useRef(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -41,14 +50,27 @@ export function IntentionBar({
       .then((next) => {
         if (controller.signal.aborted) return;
         setIntention(next);
+        setLoaded(true);
       })
       .catch(() => {
         // A missing intention is not an error state worth a banner: the form is
         // the fallback, and the day still reads without one.
-        if (!controller.signal.aborted) setIntention(null);
+        if (controller.signal.aborted) return;
+        setIntention(null);
+        setLoaded(true);
       });
     return () => controller.abort();
   }, []);
+
+  // Wait for the fetch: whether there is an intention decides whether there is
+  // a form to focus at all. An intention already running means the user is
+  // working on something, so the request is spent without touching the page.
+  useEffect(() => {
+    if (!focusRequest || !loaded || focusRequestHandledRef.current) return;
+    focusRequestHandledRef.current = true;
+    if (!intention) titleRef.current?.focus();
+    onFocusRequestHandled?.();
+  }, [focusRequest, intention, loaded, onFocusRequestHandled]);
 
   const apply = useCallback(
     (next: Intention | null) => {
@@ -138,6 +160,7 @@ export function IntentionBar({
             working on
           </label>
           <Input
+            ref={titleRef}
             id="journal-intention-title"
             data-testid="journal-intention-title"
             value={title}

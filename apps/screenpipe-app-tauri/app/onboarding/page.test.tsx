@@ -388,7 +388,7 @@ describe("enterprise onboarding authentication", () => {
     expect(screen.queryByText("connect apps")).not.toBeInTheDocument();
   });
 
-  it("shows recommended setup after plan selection for a fresh unentitled control account", async () => {
+  it("finishes after plan selection for a fresh unentitled control account", async () => {
     mocks.enterprisePolicy.isManagedDeployment = false;
     mocks.trialActivationVariant = "control";
     onboardingData.trialActivationFreshInstall = true;
@@ -408,17 +408,14 @@ describe("enterprise onboarding authentication", () => {
     expect(mocks.completeOnboarding).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: "continue free plan" }));
-    expect(await screen.findByText("recommended setup")).toBeInTheDocument();
-    expect(mocks.completeOnboarding).not.toHaveBeenCalled();
-
-    fireEvent.click(
-      screen.getByRole("button", { name: "finish recommended setup" }),
-    );
     await waitFor(() =>
       expect(mocks.completeOnboarding).toHaveBeenCalledWith({
         method: "setup_finished",
       }),
     );
+    // The pipe/meeting promotion step is out of the default flow; setup ends
+    // on plan selection instead (HIDDEN_ONBOARDING_SLIDES).
+    expect(screen.queryByText("recommended setup")).not.toBeInTheDocument();
   });
 
   it("does not expose the control checkout before the authenticated flag resolves", async () => {
@@ -474,7 +471,7 @@ describe("enterprise onboarding authentication", () => {
     act(() => mocks.featureFlagsCallback?.([], {}, {}));
 
     fireEvent.click(screen.getByRole("button", { name: "finish engine" }));
-    expect(await screen.findByText("recommended setup")).toBeInTheDocument();
+    await waitFor(() => expect(mocks.completeOnboarding).toHaveBeenCalled());
     expect(screen.queryByText("plan selection")).not.toBeInTheDocument();
   });
 
@@ -569,12 +566,7 @@ describe("enterprise onboarding authentication", () => {
       await screen.findByRole("button", { name: "finish engine" }),
     );
 
-    expect(await screen.findByText("recommended setup")).toBeInTheDocument();
     expect(screen.queryByText("plan selection")).not.toBeInTheDocument();
-
-    fireEvent.click(
-      screen.getByRole("button", { name: "finish recommended setup" }),
-    );
     await waitFor(() =>
       expect(mocks.setOnboardingStep).toHaveBeenCalledWith(
         "trial-activation-v1-summary",
@@ -603,14 +595,15 @@ describe("enterprise onboarding authentication", () => {
     mocks.trialActivationVariant = "summary_first";
     onboardingData.trialActivationFreshInstall = true;
     mocks.settings.user = { token: "tok" };
-    onboardingData.currentStep = "recommended-setup";
+    // A saved step that left the flow resumes at the engine slide.
+    onboardingData.currentStep = "engine";
     mocks.setOnboardingStep
       .mockResolvedValueOnce({ status: "error", error: "store busy" } as never)
       .mockResolvedValueOnce({ status: "ok", data: null } as never);
 
     render(<OnboardingPage />);
     fireEvent.click(
-      await screen.findByRole("button", { name: "finish recommended setup" }),
+      await screen.findByRole("button", { name: "finish engine" }),
     );
 
     await waitFor(() =>
@@ -626,7 +619,8 @@ describe("enterprise onboarding authentication", () => {
     mocks.trialActivationVariant = "summary_first";
     onboardingData.trialActivationFreshInstall = true;
     mocks.settings.user = { token: "tok" };
-    onboardingData.currentStep = "recommended-setup";
+    // A saved step that left the flow resumes at the engine slide.
+    onboardingData.currentStep = "engine";
     mocks.setOnboardingStep
       .mockResolvedValueOnce({ status: "error", error: "store busy" } as never)
       .mockResolvedValueOnce({ status: "error", error: "store busy" } as never)
@@ -635,7 +629,7 @@ describe("enterprise onboarding authentication", () => {
 
     render(<OnboardingPage />);
     const finish = await screen.findByRole("button", {
-      name: "finish recommended setup",
+      name: "finish engine",
     });
     fireEvent.click(finish);
 
@@ -664,10 +658,6 @@ describe("enterprise onboarding authentication", () => {
     fireEvent.click(
       await screen.findByRole("button", { name: "finish engine" }),
     );
-    expect(await screen.findByText("recommended setup")).toBeInTheDocument();
-    fireEvent.click(
-      screen.getByRole("button", { name: "finish recommended setup" }),
-    );
 
     await waitFor(() => expect(mocks.completeOnboarding).toHaveBeenCalled());
     expect(mocks.setOnboardingStep).not.toHaveBeenCalledWith(
@@ -689,10 +679,6 @@ describe("enterprise onboarding authentication", () => {
     render(<OnboardingPage />);
     fireEvent.click(
       await screen.findByRole("button", { name: "finish engine" }),
-    );
-    expect(await screen.findByText("recommended setup")).toBeInTheDocument();
-    fireEvent.click(
-      screen.getByRole("button", { name: "finish recommended setup" }),
     );
 
     await waitFor(() =>
@@ -724,11 +710,6 @@ describe("enterprise onboarding authentication", () => {
       await screen.findByRole("button", { name: "finish engine" }),
     );
 
-    expect(await screen.findByText("recommended setup")).toBeInTheDocument();
-    expect(mocks.completeOnboarding).not.toHaveBeenCalled();
-    fireEvent.click(
-      screen.getByRole("button", { name: "finish recommended setup" }),
-    );
     await waitFor(() =>
       expect(mocks.completeOnboarding).toHaveBeenCalledWith({
         method: "setup_finished",
@@ -805,11 +786,6 @@ describe("enterprise onboarding authentication", () => {
       await screen.findByRole("button", { name: "finish engine" }),
     );
 
-    expect(await screen.findByText("recommended setup")).toBeInTheDocument();
-    expect(mocks.completeOnboarding).not.toHaveBeenCalled();
-    fireEvent.click(
-      screen.getByRole("button", { name: "finish recommended setup" }),
-    );
     await waitFor(() =>
       expect(mocks.completeOnboarding).toHaveBeenCalledWith({
         method: "setup_finished",
@@ -835,11 +811,6 @@ describe("enterprise onboarding authentication", () => {
         await screen.findByRole("button", { name: "finish engine" }),
       );
 
-      expect(await screen.findByText("recommended setup")).toBeInTheDocument();
-      expect(mocks.completeOnboarding).not.toHaveBeenCalled();
-      fireEvent.click(
-        screen.getByRole("button", { name: "finish recommended setup" }),
-      );
       await waitFor(() =>
         expect(mocks.completeOnboarding).toHaveBeenCalledWith({
           method: "setup_finished",
@@ -865,11 +836,6 @@ describe("enterprise onboarding authentication", () => {
       await screen.findByRole("button", { name: "finish engine" }),
     );
 
-    expect(await screen.findByText("recommended setup")).toBeInTheDocument();
-    expect(mocks.completeOnboarding).not.toHaveBeenCalled();
-    fireEvent.click(
-      screen.getByRole("button", { name: "finish recommended setup" }),
-    );
     await waitFor(() =>
       expect(mocks.completeOnboarding).toHaveBeenCalledWith({
         method: "setup_finished",
@@ -888,11 +854,6 @@ describe("enterprise onboarding authentication", () => {
       await screen.findByRole("button", { name: "finish engine" }),
     );
 
-    expect(await screen.findByText("recommended setup")).toBeInTheDocument();
-    expect(mocks.completeOnboarding).not.toHaveBeenCalled();
-    fireEvent.click(
-      screen.getByRole("button", { name: "finish recommended setup" }),
-    );
     await waitFor(() =>
       expect(mocks.completeOnboarding).toHaveBeenCalledWith({
         method: "setup_finished",
@@ -939,11 +900,6 @@ describe("enterprise onboarding authentication", () => {
       await screen.findByRole("button", { name: "finish engine" }),
     );
 
-    expect(await screen.findByText("recommended setup")).toBeInTheDocument();
-    expect(mocks.completeOnboarding).not.toHaveBeenCalled();
-    fireEvent.click(
-      screen.getByRole("button", { name: "finish recommended setup" }),
-    );
     await waitFor(() =>
       expect(mocks.completeOnboarding).toHaveBeenCalledWith({
         method: "setup_finished",

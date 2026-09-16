@@ -48,7 +48,19 @@ function openJournalSettings() {
   );
 }
 
-export function JournalView() {
+export function JournalView({
+  /**
+   * The tray's "Set intention…" opened this view (`/home?section=journal&intent=1`).
+   * The bar focuses its title field when nothing is running yet; the caller
+   * drops the query param through `onIntentionFocusHandled` so a reload is a
+   * plain journal open again.
+   */
+  focusIntentionRequest = false,
+  onIntentionFocusHandled,
+}: {
+  focusIntentionRequest?: boolean;
+  onIntentionFocusHandled?: () => void;
+} = {}) {
   const [date, setDate] = useState<string>(() => journalDayToday());
   const [day, setDay] = useState<JournalDay | null>(null);
   const [loading, setLoading] = useState(true);
@@ -157,6 +169,8 @@ export function JournalView() {
         <>
           <IntentionBar
             onIntentionChange={() => setIntentionToken((token) => token + 1)}
+            focusRequest={focusIntentionRequest}
+            onFocusRequestHandled={onIntentionFocusHandled}
           />
           <NowStrip refreshToken={intentionToken} />
         </>

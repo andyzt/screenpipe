@@ -15,7 +15,17 @@ vi.mock("@/lib/journal/api", () => ({
 // The live strips own their own polling and are covered by their own tests;
 // stubbing them keeps this file about the day itself.
 vi.mock("./intention-bar", () => ({
-  IntentionBar: () => <div data-testid="stub-intention-bar" />,
+  IntentionBar: ({
+    focusRequest,
+    onFocusRequestHandled,
+  }: {
+    focusRequest?: boolean;
+    onFocusRequestHandled?: () => void;
+  }) => (
+    <div data-testid="stub-intention-bar" data-focus-request={String(!!focusRequest)}>
+      <button onClick={() => onFocusRequestHandled?.()}>handled</button>
+    </div>
+  ),
 }));
 vi.mock("./now-strip", () => ({
   NowStrip: () => <div data-testid="stub-now-strip" />,
@@ -40,6 +50,27 @@ afterEach(() => {
 });
 
 describe("JournalView", () => {
+  it("passes the tray's set-intention request down to the intention bar", async () => {
+    const onIntentionFocusHandled = vi.fn();
+    render(
+      <JournalView
+        focusIntentionRequest
+        onIntentionFocusHandled={onIntentionFocusHandled}
+      />,
+    );
+
+    const bar = await screen.findByTestId("stub-intention-bar");
+    expect(bar).toHaveAttribute("data-focus-request", "true");
+    fireEvent.click(screen.getByRole("button", { name: "handled" }));
+    expect(onIntentionFocusHandled).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not ask for intention focus on a plain open", async () => {
+    render(<JournalView />);
+    const bar = await screen.findByTestId("stub-intention-bar");
+    expect(bar).toHaveAttribute("data-focus-request", "false");
+  });
+
   it("opens on today and asks the engine for that date", async () => {
     render(<JournalView />);
     await waitFor(() => expect(fetchJournalDay).toHaveBeenCalled());

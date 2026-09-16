@@ -22,6 +22,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
+import { partitionCuratedModels } from "@/lib/utils/curated-models";
 
 export type ModelDiscoveryStatus = "idle" | "loading" | "ready" | "error";
 
@@ -29,6 +30,13 @@ interface ModelPickerProps {
   id?: string;
   value?: string;
   models: string[];
+  /**
+   * Ids to show first, in this order, with the rest behind a "show all models"
+   * toggle. Omit it and every model is listed exactly as before.
+   */
+  curatedIds?: readonly string[];
+  /** Short reason to pick a curated model, rendered beside its id. */
+  noteForModel?: (id: string) => string | undefined;
   onValueChange: (value: string) => void;
   status: ModelDiscoveryStatus;
   errorMessage?: string | null;
@@ -44,6 +52,8 @@ export function ModelPicker({
   id,
   value = "",
   models,
+  curatedIds,
+  noteForModel,
   onValueChange,
   status,
   errorMessage,
@@ -56,6 +66,7 @@ export function ModelPicker({
 }: ModelPickerProps) {
   const [open, setOpen] = React.useState(false);
   const [search, setSearch] = React.useState("");
+  const [showAllRequested, setShowAllRequested] = React.useState(false);
   const generatedId = React.useId();
   const statusId = `${id || generatedId}-status`;
   const uniqueModels = React.useMemo(
@@ -65,11 +76,57 @@ export function ModelPicker({
   const exactSearchMatch = uniqueModels.some(
     (model) => model.toLowerCase() === search.trim().toLowerCase(),
   );
+  const isCurated = Boolean(curatedIds && curatedIds.length > 0);
+  const { curated, rest } = React.useMemo(() => {
+    if (!isCurated) {
+      return { curated: [] as string[], rest: uniqueModels };
+    }
+    const split = partitionCuratedModels(
+      uniqueModels.map((model) => ({ id: model })),
+      curatedIds,
+    );
+    return {
+      curated: split.curated.map((model) => model.id),
+      rest: split.rest.map((model) => model.id),
+    };
+  }, [curatedIds, isCurated, uniqueModels]);
+  // Searching, or already running a model outside the curated set, means the
+  // long list is what the user is looking at — never hide it from them.
+  const showAll =
+    !isCurated ||
+    showAllRequested ||
+    search.trim().length > 0 ||
+    rest.includes(value);
 
   const selectModel = (model: string) => {
     onValueChange(model);
     setSearch("");
     setOpen(false);
+  };
+
+  const renderModelItem = (model: string) => {
+    const note = noteForModel?.(model);
+    return (
+      <CommandItem
+        key={model}
+        value={model}
+        className="rounded-none"
+        onSelect={() => selectModel(model)}
+      >
+        <Check
+          className={cn(
+            "mr-2 h-3.5 w-3.5",
+            value === model ? "opacity-100" : "opacity-0",
+          )}
+        />
+        <span className="truncate">{model}</span>
+        {note && (
+          <span className="ml-2 shrink-0 text-[10px] text-muted-foreground">
+            {note}
+          </span>
+        )}
+      </CommandItem>
+    );
   };
 
   const statusText =
@@ -152,26 +209,29 @@ export function ModelPicker({
                       ? idleMessage || "model discovery is not available yet"
                       : emptyMessage || "no matching models"}
                   </CommandEmpty>
-                  {uniqueModels.length > 0 && (
-                    <CommandGroup heading="models">
-                      {uniqueModels.map((model) => (
-                        <CommandItem
-                          key={model}
-                          value={model}
-                          className="rounded-none"
-                          onSelect={() => selectModel(model)}
-                        >
-                          <Check
-                            className={cn(
-                              "mr-2 h-3.5 w-3.5",
-                              value === model ? "opacity-100" : "opacity-0",
-                            )}
-                          />
-                          <span className="truncate">{model}</span>
-                        </CommandItem>
-                      ))}
+                  {curated.length > 0 && (
+                    <CommandGroup heading="recommended">
+                      {curated.map((model) => renderModelItem(model))}
                     </CommandGroup>
                   )}
+                  {showAll
+                    ? rest.length > 0 && (
+                        <CommandGroup heading="models">
+                          {rest.map((model) => renderModelItem(model))}
+                        </CommandGroup>
+                      )
+                    : rest.length > 0 && (
+                        <CommandGroup>
+                          <CommandItem
+                            value="show all models"
+                            data-testid="show-all-models"
+                            className="rounded-none text-muted-foreground"
+                            onSelect={() => setShowAllRequested(true)}
+                          >
+                            show all models ({rest.length})
+                          </CommandItem>
+                        </CommandGroup>
+                      )}
                 </>
               )}
               {allowManualEntry && search.trim() && !exactSearchMatch && (

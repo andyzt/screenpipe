@@ -32,6 +32,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import {
   ALL_SETTINGS_SECTIONS,
   DEFAULT_SETTINGS_SECTION,
+  HIDDEN_SETTINGS_SECTIONS,
+  isHiddenSettingsSection,
   rememberSettingsSection,
   type SettingsSection,
 } from "@/lib/settings-sections";
@@ -99,7 +101,10 @@ const ALL_SETTINGS_FIELDS: IndexedSettingsField[] = [
   ...teamSearchIndex.map((f) => ({ ...f, section: "team" })),
   ...accountSearchIndex.map((f) => ({ ...f, section: "account" })),
   ...referralSearchIndex.map((f) => ({ ...f, section: "referral" })),
-];
+  // Sections that are not in the nav are not searchable either: a hit would
+  // navigate to a row the user cannot get back to. Restore by dropping the id
+  // from HIDDEN_SETTINGS_SECTIONS.
+].filter((f) => !isHiddenSettingsSection(f.section));
 import { useManagedPolicy } from "@/lib/hooks/use-managed-policy";
 import { usePlatform } from "@/lib/hooks/use-platform";
 import posthog from "posthog-js";
@@ -112,7 +117,7 @@ import posthog from "posthog-js";
  * which layout produced a given view. Bump this whenever the grouping or
  * ordering changes so the split is unambiguous in analysis.
  */
-const NAV_LAYOUT_VERSION = "v2-demand-ordered";
+const NAV_LAYOUT_VERSION = "v3-journal-first";
 
 function ReferralSection() {
   return <ReferralCard />;
@@ -188,7 +193,19 @@ function SettingsContent() {
   // every section reachable. Section ids are deliberately unchanged: deep
   // links, enterprise policy filters and `settings-nav-*` E2E selectors all key
   // off the id, not the label.
-  const navGroups = [
+  const navGroupsWithHidden = [
+    {
+      label: "AI",
+      items: [
+        // Journal first, then the one model surface the product still asks the
+        // user about. Everything else in this group is secondary.
+        { id: "journal" as const, label: "Journal", icon: <NotebookPen className="h-4 w-4" /> },
+        { id: "ai" as const, label: "Models & keys", icon: <Brain className="h-4 w-4" /> },
+        { id: "ai-settings" as const, label: "AI features", icon: <SlidersHorizontal className="h-4 w-4" /> },
+        { id: "activities" as const, label: "Activities", icon: <ListChecks className="h-4 w-4" /> },
+        { id: "usage" as const, label: "AI credits", icon: <BarChart3 className="h-4 w-4" /> },
+      ].filter((s) => !isSettingsSectionHidden(s.id)),
+    },
     {
       label: "Capture & data",
       items: [
@@ -202,16 +219,6 @@ function SettingsContent() {
         ...(showPermissions
           ? [{ id: "permissions" as const, label: "Permissions", icon: <KeyRound className="h-4 w-4" /> }]
           : []),
-      ].filter((s) => !isSettingsSectionHidden(s.id)),
-    },
-    {
-      label: "AI",
-      items: [
-        { id: "journal" as const, label: "Journal", icon: <NotebookPen className="h-4 w-4" /> },
-        { id: "activities" as const, label: "Activities", icon: <ListChecks className="h-4 w-4" /> },
-        { id: "ai-settings" as const, label: "AI features", icon: <SlidersHorizontal className="h-4 w-4" /> },
-        { id: "ai" as const, label: "Models & keys", icon: <Brain className="h-4 w-4" /> },
-        { id: "usage" as const, label: "AI credits", icon: <BarChart3 className="h-4 w-4" /> },
       ].filter((s) => !isSettingsSectionHidden(s.id)),
     },
     {
@@ -242,8 +249,23 @@ function SettingsContent() {
     },
   ];
 
+  // Rows for features that are off the default path (Meetings/transcription,
+  // speakers, the Activity ledger) leave the nav here, not the codebase: the
+  // sections still render for a direct `?section=` deep link, and removing an
+  // id from HIDDEN_SETTINGS_SECTIONS restores its row.
+  const navGroups = navGroupsWithHidden.map((group) => ({
+    ...group,
+    items: group.items.filter(
+      (item) => !HIDDEN_SETTINGS_SECTIONS.includes(item.id),
+    ),
+  }));
+
   type NavItem = { id: string; label: string; icon: React.ReactNode };
-  const allItems: NavItem[] = navGroups.flatMap((g) => g.items as NavItem[]);
+  // Labels/icons still resolve for a deep-linked hidden section, so its header
+  // reads "Audio & meetings" rather than a bare "Settings".
+  const allItems: NavItem[] = navGroupsWithHidden.flatMap(
+    (g) => g.items as NavItem[],
+  );
   const currentLabel = allItems.find((s) => s.id === section)?.label ?? "Settings";
 
   // Search state. Overlay pattern (Claude-style): full nav stays rendered;

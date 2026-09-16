@@ -363,10 +363,11 @@ export function DisplaySection() {
             </div>
           </CardContent>
         </Card>
-        {/* Home sidebar layout. Meetings ships as a sidebar row; hiding it is
-            what puts its compact icon in the top-left chrome strip — so this
-            switch and the right-click menu drive the same layout state rather
-            than two competing preferences. */}
+        {/* Home sidebar layout. Meetings now ships hidden — the product is the
+            journal, focus and connections — so this switch is how a user who
+            wants Meetings back brings the row in. It and the sidebar's
+            right-click menu drive the same layout state rather than two
+            competing preferences. */}
         <Card className="border-border bg-card">
           <CardContent className="px-3 py-2.5">
             <div className="space-y-2.5">
@@ -376,12 +377,12 @@ export function DisplaySection() {
                   <div>
                     <h3 className="text-sm font-medium text-foreground flex items-center gap-1.5">
                       Meetings in Sidebar
-                      <HelpTooltip text="Show Meetings as a labelled row in the Home sidebar. Off keeps it as the compact icon in the top-left strip next to search. The live-recording dot shows either way." />
+                      <HelpTooltip text="Show Meetings as a labelled row in the Home sidebar. It ships off; the section and its deep links keep working either way." />
                     </h3>
                     <p className="text-xs text-muted-foreground">
                       {meetingsInSidebar
                         ? "Labelled row in the sidebar"
-                        : "Compact icon next to search"}
+                        : "Not in the sidebar"}
                     </p>
                   </div>
                 </div>

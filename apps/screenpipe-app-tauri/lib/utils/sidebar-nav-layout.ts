@@ -40,6 +40,19 @@ export type SidebarNavId = (typeof SIDEBAR_NAV_ORDER)[number];
 const SHIPPED_DEFAULT_SIDEBAR_NAV_ORDERS = [
   ["home", "brain", "meetings", "pipes", "timeline", "connections"],
   ["home", "meetings", "timeline", "activity", "brain", "pipes", "connections"],
+  [...SIDEBAR_NAV_ORDER],
+] as const satisfies readonly (readonly SidebarNavId[])[];
+
+/**
+ * Hidden sets this app has shipped as *its own* default, oldest first.
+ *
+ * Same rule as the orders above: an install still carrying one of these never
+ * expressed a preference about what belongs in the sidebar, so it follows the
+ * product to the current default. Any other set is the user's own and is kept.
+ */
+const SHIPPED_DEFAULT_SIDEBAR_NAV_HIDDEN = [
+  [],
+  ["home"],
 ] as const satisfies readonly (readonly SidebarNavId[])[];
 
 export type SidebarNavLayout = {
@@ -50,16 +63,19 @@ export type SidebarNavLayout = {
 };
 
 /**
- * Journal leads and Chat ships hidden.
+ * Journal, Timeline and Connections are the shipped sidebar.
  *
- * The journal is the landing view, so it is the first row. Chat is not deleted
- * or unmounted — the always-mounted chat layer in `app/(main)/home/page.tsx` is
- * untouched, `?section=home` still opens it, and a user can bring the row back
- * from sidebar options. It is simply not what the app opens on any more.
+ * The product is the daily journal, distraction detection, and MCP for the
+ * user's own agent. Chat, Meetings, Library, Automations and Activity are not
+ * deleted or unmounted — the always-mounted chat layer in
+ * `app/(main)/home/page.tsx` is untouched, every `?section=` deep link still
+ * opens its view, and any of these rows can be restored from sidebar options
+ * in the top bar (or Appearance settings for Meetings). They are simply not on
+ * the default path any more.
  */
 export const DEFAULT_SIDEBAR_NAV_LAYOUT: SidebarNavLayout = {
   order: [...SIDEBAR_NAV_ORDER],
-  hidden: ["home"],
+  hidden: ["home", "meetings", "activity", "brain", "pipes"],
 };
 
 /** At least one row must stay in the sidebar — an empty nav is a dead end. */
@@ -126,10 +142,16 @@ export function normalizeSidebarNavLayout(
     }
     order.splice(insertAt, 0, id);
   }
-  // An install on a shipped default order that also never hid anything has no
-  // preference to preserve, so it inherits the new default hidden set (Chat).
-  // The moment the user hid or restored a single row, their set is kept.
-  const inheritsDefaultHidden = hadShippedDefaultOrder && hidden.length === 0;
+  // An install on a shipped default order whose hidden set is also one this app
+  // shipped has no preference to preserve, so it inherits the new default
+  // hidden set. The moment the user hid or restored a row we did not ship
+  // hidden, their set is theirs and is kept verbatim.
+  const hadShippedDefaultHidden = SHIPPED_DEFAULT_SIDEBAR_NAV_HIDDEN.some(
+    (shipped) =>
+      hidden.length === shipped.length &&
+      hidden.every((id) => (shipped as readonly SidebarNavId[]).includes(id)),
+  );
+  const inheritsDefaultHidden = hadShippedDefaultOrder && hadShippedDefaultHidden;
   return {
     order,
     hidden: inheritsDefaultHidden

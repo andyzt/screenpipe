@@ -663,6 +663,50 @@ export function makeDefaultPresets(_isPro: boolean): AIPreset[] {
 
 const DEFAULT_DEEPSEEK_PRESET: AIPreset = makeDefaultPresets(false)[0];
 
+/**
+ * Collapse duplicate DeepSeek presets into one canonical keyless preset.
+ *
+ * Before the native store learned the "deepseek" provider it rewrote it to
+ * "custom" on every load, and the seeding step then added a fresh copy each
+ * time — stores accumulated ten or more identical rows. Keep one canonical
+ * keyless gateway preset in the position of the first duplicate; never touch a
+ * preset the user gave an API key, and never touch a non-DeepSeek preset.
+ *
+ * Returns `null` when there is nothing to collapse, so the caller can skip the
+ * write. Pure: it is the one part of the migration worth testing directly, and
+ * it must run before anything seeds a preset.
+ */
+export function collapseDuplicateDeepSeekPresets(
+	value: unknown,
+): AIPreset[] | null {
+	const presets: any[] = Array.isArray(value) ? value : [];
+	const isDeepSeekLike = (p: any) =>
+		p &&
+		(p.provider === "deepseek" ||
+			(p.provider === "custom" &&
+				typeof p.url === "string" &&
+				(p.url.startsWith(DEEPSEEK_API_URL) ||
+					p.url.startsWith("https://api.deepseek.com")) &&
+				typeof p.model === "string" &&
+				p.model.includes("deepseek")));
+	const keyless = presets.filter(
+		(p) => isDeepSeekLike(p) && !(p.apiKey && String(p.apiKey).trim()),
+	);
+	if (keyless.length <= 1 && keyless.every((p) => p.provider === "deepseek")) {
+		return null;
+	}
+	const wasDefault = keyless.some((p) => p.defaultPreset === true);
+	const canonical = {
+		...DEFAULT_DEEPSEEK_PRESET,
+		defaultPreset: wasDefault,
+		prompt: keyless.find((p) => p.prompt)?.prompt ?? "",
+	};
+	const rest = presets.filter((p) => !keyless.includes(p));
+	const firstIndex = presets.findIndex((p) => keyless.includes(p));
+	rest.splice(Math.max(0, Math.min(firstIndex, rest.length)), 0, canonical as any);
+	return rest as AIPreset[];
+}
+
 const DEFAULT_AUDIO_ENGINE = "whisper-large-v3-turbo-quantized";
 
 // "Paid" = any active app entitlement (Basic / Business / Enterprise / Lifetime)
@@ -1261,35 +1305,12 @@ function createSettingsStore() {
 			needsUpdate = true;
 		}
 
-		// Migration: collapse duplicate DeepSeek presets. Before the native store
-		// learned the "deepseek" provider it rewrote it to "custom" on every load,
-		// and the seeding step below then added a fresh copy each time. Keep one
-		// canonical keyless gateway preset; keep any preset the user gave a key.
+		// Migration: collapse duplicate DeepSeek presets. Runs before the seeding
+		// step below — seeding a preset on top of the duplicates would defeat it.
 		{
-			const presets: any[] = Array.isArray(settings.aiPresets) ? settings.aiPresets : [];
-			const isDeepSeekLike = (p: any) =>
-				p &&
-				(p.provider === "deepseek" ||
-					(p.provider === "custom" &&
-						typeof p.url === "string" &&
-						(p.url.startsWith(DEEPSEEK_API_URL) ||
-							p.url.startsWith("https://api.deepseek.com")) &&
-						typeof p.model === "string" &&
-						p.model.includes("deepseek")));
-			const keyless = presets.filter(
-				(p) => isDeepSeekLike(p) && !(p.apiKey && String(p.apiKey).trim())
-			);
-			if (keyless.length > 1 || keyless.some((p) => p.provider !== "deepseek")) {
-				const wasDefault = keyless.some((p) => p.defaultPreset === true);
-				const canonical = {
-					...DEFAULT_DEEPSEEK_PRESET,
-					defaultPreset: wasDefault,
-					prompt: keyless.find((p) => p.prompt)?.prompt ?? "",
-				};
-				const rest = presets.filter((p) => !keyless.includes(p));
-				const firstIndex = presets.findIndex((p) => keyless.includes(p));
-				rest.splice(Math.max(0, Math.min(firstIndex, rest.length)), 0, canonical as any);
-				settings.aiPresets = rest as any;
+			const collapsed = collapseDuplicateDeepSeekPresets(settings.aiPresets);
+			if (collapsed) {
+				settings.aiPresets = collapsed as any;
 				needsUpdate = true;
 			}
 		}

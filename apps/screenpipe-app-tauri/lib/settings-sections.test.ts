@@ -7,6 +7,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ALL_SETTINGS_SECTIONS,
   DEFAULT_SETTINGS_SECTION,
+  HIDDEN_SETTINGS_SECTIONS,
+  isHiddenSettingsSection,
   isSettingsSection,
   readLastSettingsSection,
   rememberSettingsSection,
@@ -43,6 +45,46 @@ describe("resolveSettingsSection", () => {
   );
 });
 
+describe("hidden sections", () => {
+  it("keeps every hidden id canonical so deep links still resolve", () => {
+    for (const section of HIDDEN_SETTINGS_SECTIONS) {
+      expect(ALL_SETTINGS_SECTIONS).toContain(section);
+      expect(resolveSettingsSection(section)).toBe(section);
+      expect(isHiddenSettingsSection(section)).toBe(true);
+    }
+  });
+
+  it("hides the sections for off-path features and the cloud account", () => {
+    expect([...HIDDEN_SETTINGS_SECTIONS].sort()).toEqual([
+      "account",
+      "activities",
+      "audio",
+      "referral",
+      "speakers",
+      "team",
+      "usage",
+    ]);
+    for (const kept of [
+      "journal",
+      "ai",
+      "recording",
+      "privacy",
+      "storage",
+      "notifications",
+      "shortcuts",
+      "general",
+    ] as const) {
+      expect(isHiddenSettingsSection(kept)).toBe(false);
+    }
+  });
+
+  it("never reopens Settings onto a hidden section", () => {
+    const storage = fakeStorage();
+    storage.setItem("screenpipe:settings:last-section", "audio");
+    expect(readLastSettingsSection(storage)).toBe(DEFAULT_SETTINGS_SECTION);
+  });
+});
+
 describe("isSettingsSection", () => {
   it("rejects near-misses and non-strings", () => {
     expect(isSettingsSection("ai_settings")).toBe(false);
@@ -65,9 +107,9 @@ describe("last visited section", () => {
     storage = fakeStorage();
   });
 
-  it("defaults to the most-chosen section, not to General", () => {
+  it("defaults to the Journal section, not to General", () => {
     expect(readLastSettingsSection(storage)).toBe(DEFAULT_SETTINGS_SECTION);
-    expect(DEFAULT_SETTINGS_SECTION).toBe("recording");
+    expect(DEFAULT_SETTINGS_SECTION).toBe("journal");
   });
 
   it("round-trips a remembered section", () => {
