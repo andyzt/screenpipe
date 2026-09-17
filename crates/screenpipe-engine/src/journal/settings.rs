@@ -68,6 +68,8 @@ impl Default for JournalSettings {
 
 /// `"system"`, `"ru-RU"`, `"RU"` or nonsense → one of [`SUPPORTED_LANGUAGES`].
 ///
+/// TWIN: `screenpipe-core/src/pipes/output_language.rs` — keep the two in sync.
+///
 /// `"system"` is resolved against the machine locale, which is where a desktop
 /// app's "same as the system" setting has to end up: the store holds the
 /// user's choice, not the answer.

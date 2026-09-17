@@ -21,6 +21,7 @@ import {
   type NotificationAnalyticsContext,
 } from "@/lib/notification-analytics";
 import { appServerFetch } from "@/lib/notifications/app-server";
+import { useT } from "@/lib/i18n";
 
 // notify_rust on Linux calls block_on for D-Bus inside the tokio runtime,
 // which panics and kills the worker thread. Skip OS notifications on Linux.
@@ -35,6 +36,13 @@ type NotificationRequested = {
 };
 
 const NotificationHandler: React.FC = () => {
+  const t = useT();
+  // The welcome notification fires from a mount-once effect. Reading the
+  // translator through a ref keeps that effect at `[]` — re-running it on a
+  // language change would re-request OS permission and re-register the
+  // listener.
+  const tRef = useRef(t);
+  tRef.current = t;
   const nativeNotificationRef = useRef<NotificationAnalyticsContext | null>(
     null,
   );
@@ -54,8 +62,8 @@ const NotificationHandler: React.FC = () => {
 
           if (!welcomeShown) {
             sendNotification({
-              title: "welcome to screenpipe",
-              body: "thank you for using screenpipe! we're dedicated to help you get the most out of screenpipe.",
+              title: tRef.current("notification.welcome.title"),
+              body: tRef.current("notification.welcome.body"),
             });
             localStorage?.setItem("welcomeNotificationShown", "true");
           }

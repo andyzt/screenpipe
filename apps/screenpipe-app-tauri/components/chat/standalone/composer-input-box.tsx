@@ -11,6 +11,7 @@ import type {
   ComposerMentionsProps,
 } from "./composer-types";
 import { cn } from "@/lib/utils";
+import { useT } from "@/lib/i18n";
 
 export function ComposerInputBox({
   input,
@@ -19,6 +20,7 @@ export function ComposerInputBox({
   input: ComposerInputProps;
   mentions: ComposerMentionsProps;
 }) {
+  const t = useT();
   return (
     <div
       className={cn(
@@ -48,7 +50,7 @@ export function ComposerInputBox({
             </div>
             <button
               type="button"
-              aria-label="Remove connection context"
+              aria-label={t("chat.composer.removeConnection")}
               onClick={input.onClearConnectionChip}
               className="absolute right-2.5 top-2 z-10 text-muted-foreground/60 hover:text-foreground transition-colors shrink-0"
             >
@@ -67,7 +69,7 @@ export function ComposerInputBox({
           placeholder={
             input.disabledReason
               ? input.disabledReason
-              : input.placeholder ?? "Ask a question or describe a task"
+              : (input.placeholder ?? t("chat.composer.placeholder"))
           }
           disabled={!input.canChat}
           spellCheck={false}

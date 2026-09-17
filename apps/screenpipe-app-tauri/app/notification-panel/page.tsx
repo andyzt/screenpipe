@@ -28,6 +28,7 @@ import {
 import { qualifiedValue } from "@/lib/analytics/qualified-value";
 import { NotificationActionButton } from "@/components/notification-action-button";
 import { NotificationFeedback } from "@/components/notification-feedback";
+import { useT } from "@/lib/i18n";
 
 interface NotificationPayload {
   id: string;
@@ -86,6 +87,7 @@ function notificationClipboardText(payload: NotificationPayload): string {
 }
 
 export default function NotificationPanelPage() {
+  const t = useT();
   const [payload, setPayload] = useState<NotificationPayload | null>(null);
   const [visible, setVisible] = useState(false);
   const [progress, setProgress] = useState(100);
@@ -225,7 +227,7 @@ export default function NotificationPanelPage() {
               }
             } else {
               setRestartState("error");
-              setRestartError("server did not respond after restart");
+              setRestartError(t("notification.restart.noResponse"));
             }
           } catch (e) {
             setRestartState("error");
@@ -559,7 +561,9 @@ export default function NotificationPanelPage() {
         >
           <div
             onClick={payload.source_url ? openSource : undefined}
-            title={payload.source_url ? "open source chat" : undefined}
+            title={
+              payload.source_url ? t("notification.openSource") : undefined
+            }
             style={{
               fontSize: "12px",
               fontWeight: 500,
@@ -632,8 +636,8 @@ export default function NotificationPanelPage() {
                           onMouseLeave={(e) => {
                             e.currentTarget.style.color = "rgba(0, 0, 0, 0.35)";
                           }}
-                          title="open in default app"
-                          aria-label="open in default app"
+                          title={t("notification.openInDefaultApp")}
+                          aria-label={t("notification.openInDefaultApp")}
                           style={{
                             marginLeft: "3px",
                             padding: "0 3px",
@@ -681,7 +685,7 @@ export default function NotificationPanelPage() {
                   fontWeight: 500,
                 }}
               >
-                restarting...
+                {t("notification.restart.pending")}
               </span>
             ) : restartState === "success" ? (
               <span
@@ -692,7 +696,7 @@ export default function NotificationPanelPage() {
                   fontWeight: 500,
                 }}
               >
-                restarted successfully
+                {t("notification.restart.success")}
               </span>
             ) : restartState === "error" ? (
               <span
@@ -703,7 +707,11 @@ export default function NotificationPanelPage() {
                   fontWeight: 500,
                 }}
               >
-                restart failed{restartError ? `: ${restartError}` : ""}
+                {restartError
+                  ? t("notification.restart.failedWithReason", {
+                      reason: restartError,
+                    })
+                  : t("notification.restart.failed")}
               </span>
             ) : (
               payload.actions.map((action, index) => {
@@ -711,13 +719,15 @@ export default function NotificationPanelPage() {
                   action.label ||
                   (action.type === "copy"
                     ? copied
-                      ? "copied"
-                      : "copy"
+                      ? t("notification.copied")
+                      : t("notification.copy")
                     : undefined) ||
-                  (action.type === "source" ? "source" : undefined) ||
+                  (action.type === "source"
+                    ? t("notification.source")
+                    : undefined) ||
                   action.action ||
                   action.type ||
-                  "action";
+                  t("notification.action");
                 return (
                   <NotificationActionButton
                     key={action.id || action.action || action.type || index}
@@ -748,7 +758,7 @@ export default function NotificationPanelPage() {
         >
           <button
             onClick={copyNotification}
-            title="copy notification"
+            title={t("notification.copyNotification")}
             style={{
               display: "inline-flex",
               alignItems: "center",
@@ -780,7 +790,7 @@ export default function NotificationPanelPage() {
           {payload.source_url && (
             <button
               onClick={openSource}
-              title="open source chat"
+              title={t("notification.openSource")}
               style={{
                 display: "inline-flex",
                 alignItems: "center",
@@ -804,7 +814,7 @@ export default function NotificationPanelPage() {
               }
             >
               <ExternalLink size={12} strokeWidth={1.8} />
-              source
+              {t("notification.source")}
             </button>
           )}
           <button
@@ -815,7 +825,7 @@ export default function NotificationPanelPage() {
                 await commands.showWindow({ Home: { page: null } });
               } catch {}
             }}
-            title="manage notification settings"
+            title={t("notification.manageSettings")}
             style={{
               display: "inline-flex",
               alignItems: "center",
@@ -840,7 +850,7 @@ export default function NotificationPanelPage() {
             }
           >
             <Bell size={12} strokeWidth={1.8} />
-            manage
+            {t("notification.manage")}
           </button>
         </div>
 
