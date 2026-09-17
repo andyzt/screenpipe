@@ -28,9 +28,10 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { useToast } from "@/components/ui/use-toast";
 import { cn } from "@/lib/utils";
 import { useLocale, useT } from "@/lib/i18n";
 import { DayCanvas } from "./day-canvas";
@@ -38,7 +39,7 @@ import { DayInspector } from "./day-inspector";
 import { IntentionBar } from "./intention-bar";
 import { SegmentedToggle, WeekView, type JournalViewMode } from "./week-view";
 import { mondayOf } from "@/lib/journal/week-layout";
-import { fetchJournalDay } from "@/lib/journal/api";
+import { fetchJournalDay, regenerateJournalDay } from "@/lib/journal/api";
 import { useRolePreset } from "@/lib/journal/use-role-preset";
 import { withEngineWait } from "@/lib/journal/engine-wait";
 import {
@@ -136,6 +137,7 @@ export function JournalView({
   useRolePreset();
   const t = useT();
   const locale = useLocale();
+  const { toast } = useToast();
 
   const [date, setDate] = useState<string>(() => journalDayToday());
   const [localView, setLocalView] = useState<JournalViewMode>(view ?? "day");
@@ -154,6 +156,7 @@ export function JournalView({
   const [selectedId, setSelectedId] = useState<number | null>(selectRequest);
   const [intentionToken, setIntentionToken] = useState(0);
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
+  const [regenerating, setRegenerating] = useState(false);
   // Only the first load of a date blanks the page; a poll refresh must not make
   // the day flicker back to a skeleton under the reader.
   const loadedDateRef = useRef<string | null>(null);
@@ -201,6 +204,45 @@ export function JournalView({
       window.clearInterval(timer);
     };
   }, [date, generating, load]);
+
+  /**
+   * Queue the day the reader is looking at to be written again.
+   *
+   * The reload is deliberate rather than optimistic: the engine answers with
+   * how many windows it reset, and re-reading the day is what turns the
+   * generating mark on — which is also what restarts the 30s poll, so the
+   * cards replace themselves under the reader without another click.
+   */
+  /**
+   * Re-read the day now. The inspector's per-card rewrite hands this back so a
+   * queued card goes straight to being written instead of waiting out a poll.
+   */
+  const refreshDay = useCallback(async () => {
+    setReloadToken((token) => token + 1);
+  }, []);
+
+  const regenerate = useCallback(async () => {
+    setRegenerating(true);
+    try {
+      const result = await regenerateJournalDay(date);
+      toast({
+        description: t("journal.regenerate.queued", {
+          count: result.reset_windows,
+        }),
+      });
+      setReloadToken((token) => token + 1);
+    } catch (reason) {
+      // The engine says why — 429 while a rewrite is already running, 400 for a
+      // day it will not touch — and that sentence is more use than ours.
+      toast({
+        title: t("journal.regenerate.failed"),
+        description: reason instanceof Error ? reason.message : String(reason),
+        variant: "destructive",
+      });
+    } finally {
+      setRegenerating(false);
+    }
+  }, [date, t, toast]);
 
   const today = isJournalDayToday(date, new Date(nowMs));
   const canGoForward = canGoToNextJournalDay(date, new Date(nowMs));
@@ -362,6 +404,21 @@ export function JournalView({
           {t("journal.today")}
         </Button>
 
+        <Button
+          size="sm"
+          variant="outline"
+          data-testid="journal-regenerate"
+          // Queuing a day that is already being written would be refused by
+          // the engine, so the button says so before the click.
+          disabled={generating || regenerating}
+          onClick={() => void regenerate()}
+        >
+          <RefreshCw
+            className={cn("mr-1 h-3.5 w-3.5", regenerating && "animate-spin")}
+          />
+          {t("journal.header.regenerate")}
+        </Button>
+
         <SegmentedToggle
           label={t("journal.viewLabel")}
           testId="journal-view-toggle"
@@ -440,6 +497,7 @@ export function JournalView({
             onClose={() => setSelectedId(null)}
             showNow={today}
             nowRefreshToken={intentionToken}
+            onRegenerate={refreshDay}
           />
         </div>
       ) : null}

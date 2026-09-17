@@ -64,19 +64,58 @@ import type {
   JournalStatus,
   JournalWorkProfile,
 } from "@/lib/journal/types";
-import { categoryLabel, useLocale, useT, type TranslateFn } from "@/lib/i18n";
-import type { SettingsField } from "./settings-search";
+import {
+  categoryLabel,
+  translatorFor,
+  useLocale,
+  useT,
+  type TranslateFn,
+} from "@/lib/i18n";
+import {
+  settingsIndexFactory,
+  type LocalizedSettingsField,
+  type SettingsField,
+} from "./settings-search";
 
-export const searchIndex: SettingsField[] = [
-  { label: "Enable journal", keywords: ["journal", "diary", "daily", "cards"] },
-  { label: "Journal model", keywords: ["preset", "ai", "model", "provider"] },
-  { label: "Work profile", keywords: ["role", "projects", "keywords", "context"] },
-  { label: "Categories", keywords: ["category", "work", "personal", "distraction"] },
-  { label: "Start from a role", keywords: ["role", "preset", "template", "categories"] },
-  { label: "Focus nudges", keywords: ["nudge", "notification", "distraction", "focus"] },
-  { label: "Grace period", keywords: ["grace", "minutes", "divergence", "delay"] },
-  { label: "Regenerate today", keywords: ["regenerate", "rebuild", "reprocess"] },
+export const searchFields: LocalizedSettingsField[] = [
+  {
+    key: "settings.journal.enabled.title",
+    keywords: ["journal", "diary", "daily", "cards", "дневник", "день"],
+  },
+  {
+    key: "settings.journal.model.title",
+    keywords: ["preset", "ai", "model", "provider", "пресет", "модель"],
+  },
+  {
+    key: "settings.journal.profile.title",
+    keywords: ["role", "projects", "keywords", "context", "роль", "проекты"],
+  },
+  {
+    key: "settings.journal.categories.title",
+    keywords: ["category", "work", "personal", "distraction", "категории"],
+  },
+  {
+    key: "settings.journal.preset.placeholder",
+    keywords: ["role", "preset", "template", "categories", "роль", "набор"],
+  },
+  {
+    key: "settings.journal.nudges.title",
+    keywords: ["nudge", "notification", "distraction", "focus", "фокус"],
+  },
+  {
+    key: "settings.journal.grace.title",
+    keywords: ["grace", "minutes", "divergence", "delay", "минуты", "запас"],
+  },
+  {
+    key: "settings.journal.regenerate.title",
+    keywords: ["regenerate", "rebuild", "reprocess", "перезаписать"],
+  },
 ];
+
+export const searchIndexFor = settingsIndexFactory(searchFields);
+
+/** The English index — the dev drift guard and the unit tests read this one. */
+export const searchIndex: SettingsField[] = searchIndexFor(translatorFor("en"));
 
 const DEFAULT_WORK_PROFILE: JournalWorkProfile = {
   role: "",
@@ -85,6 +124,30 @@ const DEFAULT_WORK_PROFILE: JournalWorkProfile = {
 };
 
 const DEFAULT_GRACE_MINUTES = 10;
+
+/**
+ * The description shown for a preset row in the confirm dialog.
+ *
+ * Preset descriptions are engine data — they are stored verbatim and the
+ * classifier prompt reads them — so nothing here rewrites what gets saved, only
+ * what the dialog paints. `Communication` and `Research` mean different things
+ * per role, hence the per-preset key, with a shared key for the two rows
+ * (`Distraction`, `Personal`) every preset carries unchanged.
+ */
+function presetCategoryDescription(
+  t: TranslateFn,
+  presetId: RolePresetId,
+  row: { id: string; description: string },
+): string {
+  for (const key of [
+    `preset.category.${presetId}.${row.id}.description`,
+    `preset.category.shared.${row.id}.description`,
+  ]) {
+    const text = t(key);
+    if (text !== key) return text;
+  }
+  return row.description;
+}
 
 function SettingRow({
   title,
@@ -354,7 +417,9 @@ function RolePresetPicker({
                     {categoryLabel(row.name, locale)}
                   </span>
                   <span className="block text-xs text-muted-foreground">
-                    {row.description}
+                    {pending
+                      ? presetCategoryDescription(t, pending.id, row)
+                      : row.description}
                   </span>
                 </span>
               </li>
@@ -485,6 +550,7 @@ function CategoriesEditor({ reloadKey = 0 }: { reloadKey?: number }) {
                   id: category.id,
                 })}
                 value={category.name}
+                placeholder={t("settings.journal.categories.namePlaceholder")}
                 disabled={category.is_system}
                 className="h-9 w-32"
                 onChange={(event) =>
@@ -496,6 +562,9 @@ function CategoriesEditor({ reloadKey = 0 }: { reloadKey?: number }) {
                   id: category.id,
                 })}
                 value={category.description}
+                placeholder={t(
+                  "settings.journal.categories.descriptionPlaceholder",
+                )}
                 disabled={category.is_system}
                 className="h-9 min-w-0 flex-1"
                 onChange={(event) =>
@@ -507,6 +576,7 @@ function CategoriesEditor({ reloadKey = 0 }: { reloadKey?: number }) {
                   id: category.id,
                 })}
                 value={category.color_hex}
+                placeholder="#RRGGBB"
                 disabled={category.is_system}
                 className="h-9 w-24 font-mono"
                 onChange={(event) =>

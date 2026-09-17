@@ -8,6 +8,7 @@ import { Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { usePlatform } from "@/lib/hooks/use-platform";
 import { searchInputBehaviorProps } from "@/lib/search-input-behavior";
+import { translate, useT, type TranslateFn } from "@/lib/i18n";
 import Fuse, { type IFuseOptions } from "fuse.js";
 
 // Fuzzy match config. Mirrors the WinSTT / MetaMask / KittyCAD desktop patterns:
@@ -58,16 +59,23 @@ const SCORE_FUZZY_CAP = 0.6;
  * file to remember. Forgetting still keeps the setting functional; it just
  * won't appear in search until the entry is added (graceful degradation).
  *
+ * Since the UI is translated, a section declares `searchFields:
+ * LocalizedSettingsField[]` — dictionary keys, not literals — and exports
+ * `searchIndexFor(t)` (see `settingsIndexFactory`) so the page can resolve the
+ * labels for the active locale. `searchIndex` stays as the English resolution
+ * for the dev drift guard and for unit tests.
+ *
  * Adding a new setting field:
- *   1. Add an entry to the `searchIndex` export in the file that renders it.
+ *   1. Add an entry to the `searchFields` export in the file that renders it,
+ *      keyed by the dictionary key of the heading it renders.
  *   2. (Optional) Set `anchor` to a DOM id you also put on the rendered element
  *      so result clicks can scroll to it.
  *
  * Adding a new section entirely:
- *   1. Export `searchIndex: SettingsField[]` from the file alongside its
+ *   1. Export `searchFields` + `searchIndexFor` from the file alongside its
  *      component (any file name — see existing sections for examples).
- *   2. In `app/settings/page.tsx`, import the export and add it to
- *      `ALL_SETTINGS_FIELDS` with the section id.
+ *   2. In `app/(main)/settings/page.tsx`, import `searchIndexFor` and add it to
+ *      `allSettingsFields` with the section id.
  *
  * Fields:
  *   - `label`    exact field heading rendered in the UI. Doubles as the popover
@@ -89,6 +97,56 @@ export type SettingsField = {
 };
 
 /**
+ * What a section actually declares now that the UI is translated.
+ *
+ * `label` above is *rendered* text — and `scrollToSettingsField` finds a field
+ * by comparing that text to the heading on screen, so in a Russian UI it has to
+ * be the Russian heading. A section therefore declares the dictionary key of
+ * its heading and the page resolves it per locale, exactly once per render of
+ * the settings shell.
+ */
+export type LocalizedSettingsField = {
+  /** Dictionary key of the heading this field renders. */
+  key: string;
+  keywords?: string[];
+  anchor?: string;
+  conditional?: boolean;
+};
+
+/**
+ * Resolve a section's declared fields against the active locale.
+ *
+ * The English string is kept as a hidden keyword rather than dropped: people
+ * who learned this app in English, or who paste a term from our docs, type
+ * "language" into a Russian UI and must still land on «Язык». Keywords are
+ * matched but never shown, so the row still reads in the user's language.
+ */
+export function resolveSettingsFields(
+  fields: readonly LocalizedSettingsField[],
+  t: TranslateFn,
+): SettingsField[] {
+  return fields.map(({ key, keywords, ...rest }) => {
+    const label = t(key);
+    const english = translate("en", key);
+    return {
+      ...rest,
+      label,
+      keywords:
+        english && english !== label && english !== key
+          ? [...(keywords ?? []), english]
+          : keywords,
+    };
+  });
+}
+
+/** `searchIndexFor` for a section whose fields are a plain static list. */
+export function settingsIndexFactory(
+  fields: readonly LocalizedSettingsField[],
+): (t: TranslateFn) => SettingsField[] {
+  return (t) => resolveSettingsFields(fields, t);
+}
+
+/**
  * Same as SettingsField with the owning section id attached. Built by the page
  * when it merges per-section indices. The section id matches the SettingsSection
  * union (`display`, `general`, `ai`, …) used by the nav so we can map results
@@ -100,6 +158,11 @@ export type SearchableNavItem = {
   id: string;
   label: string;
   group: string;
+  /**
+   * Hidden alternative spellings of the section name — in practice the English
+   * label, so "storage" still finds «Диск и хранение» in a Russian UI.
+   */
+  aliases?: string[];
 };
 
 export type SearchResult<T extends SearchableNavItem> = {
@@ -186,11 +249,11 @@ export function searchSettingsNav<T extends SearchableNavItem>(
   type Scored = { result: SearchResult<T>; combined: number };
   const scored: Scored[] = [];
   for (const item of items) {
-    let sectionScore = substringScore(q, item.label);
+    let sectionScore = substringScore(q, item.label, item.aliases);
     if (!sectionScore && q.length >= 2) {
       // Fuzzy fallback for the section label itself, so "recodring" still
       // surfaces Recording even when no field index entry matched.
-      const navFuse = new Fuse<T>([item], { threshold: 0.4, ignoreLocation: true, includeScore: true, minMatchCharLength: 2, keys: ["label"] });
+      const navFuse = new Fuse<T>([item], { threshold: 0.4, ignoreLocation: true, includeScore: true, minMatchCharLength: 2, keys: ["label", "aliases"] });
       const hit = navFuse.search(q)[0];
       if (hit) sectionScore = Math.min(SCORE_FUZZY_CAP, 1 - (hit.score ?? 1));
     }
@@ -230,10 +293,12 @@ export function highlightMatch(text: string, query: string): React.ReactNode {
  *
  * TRADEOFF / known limitation: text-based lookup is intentionally chosen over
  * explicit DOM anchors to avoid editing ~50 field wrappers across 12 files. The
- * cost: it depends on index labels matching rendered text exactly, and would
- * break under i18n/localization (not present in this codebase today). To harden
- * later, add `anchor?: string` ids to field wrappers (the SettingsField type
- * already reserves `anchor`) and switch this to `getElementById(anchor)`.
+ * cost: it depends on index labels matching rendered text exactly. That is why
+ * a section declares its fields as dictionary keys and the page resolves them
+ * through the active locale — an index of English literals would navigate to
+ * the right section and then scroll nowhere in a Russian UI. To harden further,
+ * add `anchor?: string` ids to field wrappers (the SettingsField type already
+ * reserves `anchor`) and switch this to `getElementById(anchor)`.
  * The match restricts to elements whose OWN direct text equals the label, so a
  * wrapping container never false-matches; duplicate labels across sections are
  * not a concern because we only ever search within the already-switched section.
@@ -400,6 +465,7 @@ type InputProps = {
 export const SettingsSearchInput = forwardRef<HTMLInputElement, InputProps>(
   function SettingsSearchInput({ value, onChange, onKeyDown, translucent, className }, ref) {
     const { isMac } = usePlatform();
+    const t = useT();
     return (
       <div className={cn("relative", className)}>
         <Search
@@ -423,8 +489,8 @@ export const SettingsSearchInput = forwardRef<HTMLInputElement, InputProps>(
           value={value}
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={onKeyDown}
-          placeholder="Search settings"
-          aria-label="Search settings"
+          placeholder={t("settings.search.placeholder")}
+          aria-label={t("settings.search.placeholder")}
           data-testid="settings-search-input"
           className={cn(
             "w-full pl-8 pr-7 py-1.5 text-xs rounded-md border bg-transparent outline-none transition-colors",
@@ -437,7 +503,7 @@ export const SettingsSearchInput = forwardRef<HTMLInputElement, InputProps>(
           <button
             type="button"
             onClick={() => onChange("")}
-            aria-label="Clear search"
+            aria-label={t("settings.search.clear")}
             className={cn(
               "absolute right-1.5 top-1/2 -translate-y-1/2 p-0.5 rounded transition-colors",
               translucent ? "vibrant-sidebar-fg-muted hover:vibrant-sidebar-fg" : "text-muted-foreground/60 hover:text-foreground",
@@ -477,6 +543,7 @@ type PopoverProps<T extends SearchableNavItem> = {
 export function SettingsSearchPopover<T extends SearchableNavItem>({
   query, results, activeIndex, onHover, onPick, renderIcon, translucent,
 }: PopoverProps<T>) {
+  const t = useT();
   if (!query) return null;
   return (
     <div
@@ -494,9 +561,9 @@ export function SettingsSearchPopover<T extends SearchableNavItem>({
     >
       {results.length === 0 ? (
         <div className="px-3 py-3 text-xs text-muted-foreground text-center">
-          <p>No settings found</p>
+          <p>{t("settings.search.empty.title")}</p>
           <p className="text-[10px] mt-1 opacity-70">
-            try different keywords
+            {t("settings.search.empty.body")}
           </p>
         </div>
       ) : (

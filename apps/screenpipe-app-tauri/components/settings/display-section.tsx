@@ -17,7 +17,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { LOCALE_SETTINGS, useT, type LocaleSetting } from "@/lib/i18n";
+import {
+  LOCALE_SETTINGS,
+  translatorFor,
+  useT,
+  type LocaleSetting,
+} from "@/lib/i18n";
 import { usePlatform } from "@/lib/hooks/use-platform";
 import { HelpTooltip } from "@/components/ui/help-tooltip";
 import { useToast } from "@/components/ui/use-toast";
@@ -25,7 +30,11 @@ import { Button } from "@/components/ui/button";
 import { Settings } from "@/lib/hooks/use-settings";
 import { FONT_SIZE_DEFAULT, FONT_SIZE_OPTIONS } from "@/lib/utils/font-size";
 import { open } from "@tauri-apps/plugin-shell";
-import type { SettingsField } from "./settings-search";
+import {
+  settingsIndexFactory,
+  type LocalizedSettingsField,
+  type SettingsField,
+} from "./settings-search";
 import { ManagedSwitch } from "@/components/enterprise-locked-setting";
 import {
   DEFAULT_SIDEBAR_NAV_LAYOUT,
@@ -36,19 +45,30 @@ import {
   setSidebarNavItemHidden,
 } from "@/lib/utils/sidebar-nav-layout";
 
-/** Settings search index for this section. Co-located with the component so adding a field here means updating one file. See `SettingsField` in `./settings-search` for the schema. */
-export const searchIndex: SettingsField[] = [
-  { label: "Theme", keywords: ["dark", "light", "appearance"] },
-  { label: "Language / Язык", keywords: ["language", "locale", "russian", "русский", "язык", "english"] },
-  { label: "Font Size" },
-  { label: "Chat Always on Top", keywords: ["pin", "window"] },
-  { label: "Shortcut Reminder", keywords: ["overlay", "pill", "pin", "drag", "position"] },
-  { label: "Timeline / rewind", keywords: ["rewind", "timeline", "backend"] },
-  { label: "Overlay Size" },
-  { label: "Hide from screen recordings", keywords: ["capture", "obs", "screen share", "overlay"] },
-  { label: "Sidebar translucency", keywords: ["vibrancy", "translucent"] },
-  { label: "Meetings in Sidebar", keywords: ["meeting", "meetings", "sidebar", "toolbar", "nav", "navigation", "icon", "reorder", "customize"] },
+/**
+ * Settings search index for this section. Co-located with the component so
+ * adding a field here means updating one file. Each entry names the dictionary
+ * key of the heading this file renders: `scrollToSettingsField` locates a field
+ * by comparing the resolved label to the heading text, so a paraphrase would
+ * navigate to the section and then scroll nowhere.
+ */
+export const searchFields: LocalizedSettingsField[] = [
+  { key: "settings.display.theme.title", keywords: ["dark", "light", "appearance", "тема"] },
+  { key: "settings.appearance.language", keywords: ["language", "locale", "russian", "русский", "язык", "english"] },
+  { key: "settings.display.fontSize.title", keywords: ["font", "size", "шрифт"] },
+  { key: "settings.display.chatTop.title", keywords: ["pin", "window", "чат"] },
+  { key: "settings.display.shortcutReminder.title", keywords: ["overlay", "pill", "pin", "drag", "position", "напоминание"], conditional: true },
+  { key: "settings.display.timeline.title", keywords: ["rewind", "timeline", "backend", "таймлайн"] },
+  { key: "settings.display.overlaySize.title", keywords: ["overlay", "size", "оверлей"], conditional: true },
+  { key: "settings.display.hideFromRecordings.title", keywords: ["capture", "obs", "screen share", "overlay", "запись"] },
+  { key: "settings.display.translucentSidebar.title", keywords: ["vibrancy", "translucent", "sidebar translucency", "прозрачность"], conditional: true },
+  { key: "settings.display.meetings.title", keywords: ["meeting", "meetings", "sidebar", "toolbar", "nav", "navigation", "icon", "reorder", "customize", "встречи"] },
 ];
+
+export const searchIndexFor = settingsIndexFactory(searchFields);
+
+/** English index, kept for the dev drift guard and for tests. */
+export const searchIndex: SettingsField[] = searchIndexFor(translatorFor("en"));
 
 /**
  * The one language control, shared by Settings → Appearance and the corner of
@@ -88,6 +108,18 @@ export function LanguageSelect({ compact = false }: { compact?: boolean }) {
   );
 }
 
+/**
+ * `FONT_SIZE_OPTIONS` is plain data shared with the font-size helper, so the
+ * label lives here: the option value is the stable id, the dictionary owns the
+ * word for it.
+ */
+const FONT_SIZE_LABEL_KEYS: Record<string, string> = {
+  "14px": "settings.display.fontSize.option.small",
+  "16px": "settings.display.fontSize.option.medium",
+  "18px": "settings.display.fontSize.option.large",
+  "20px": "settings.display.fontSize.option.xlarge",
+};
+
 export function DisplaySection() {
   const { settings, updateSettings } = useSettings();
   const { theme, setTheme } = useTheme();
@@ -110,16 +142,16 @@ export function DisplaySection() {
   };
 
   const themeOptions = [
-    { value: "system" as const, label: "System", icon: Monitor },
-    { value: "light" as const, label: "Light", icon: Sun },
-    { value: "dark" as const, label: "Dark", icon: Moon },
+    { value: "system" as const, labelKey: "settings.display.theme.option.system", icon: Monitor },
+    { value: "light" as const, labelKey: "settings.display.theme.option.light", icon: Sun },
+    { value: "dark" as const, labelKey: "settings.display.theme.option.dark", icon: Moon },
   ];
 
 
   return (
     <div className="space-y-5">
       <p className="text-muted-foreground text-sm mb-4">
-        Theme, windows, and overlay appearance
+        {t("settings.display.intro")}
       </p>
 
       <div className="space-y-2">
@@ -128,7 +160,9 @@ export function DisplaySection() {
             <div className="space-y-2.5">
               <div className="flex items-center space-x-2.5">
                 <Monitor className="h-4 w-4 text-muted-foreground shrink-0" />
-                <h3 className="text-sm font-medium text-foreground">Theme</h3>
+                <h3 className="text-sm font-medium text-foreground">
+                  {t("settings.display.theme.title")}
+                </h3>
               </div>
               <div className="flex gap-3 ml-[26px]">
                 {themeOptions.map((option) => {
@@ -159,7 +193,7 @@ export function DisplaySection() {
                       </div>
                       <div className="flex items-center space-x-1.5">
                         <IconComponent className="h-3.5 w-3.5 text-muted-foreground" />
-                        <span className="text-sm text-foreground">{option.label}</span>
+                        <span className="text-sm text-foreground">{t(option.labelKey)}</span>
                       </div>
                     </label>
                   );
@@ -197,7 +231,9 @@ export function DisplaySection() {
             <div className="space-y-2.5">
               <div className="flex items-center space-x-2.5">
                 <Type className="h-4 w-4 text-muted-foreground shrink-0" />
-                <h3 className="text-sm font-medium text-foreground">Font Size</h3>
+                <h3 className="text-sm font-medium text-foreground">
+                  {t("settings.display.fontSize.title")}
+                </h3>
               </div>
               <div className="flex gap-2 ml-[26px]">
                 {FONT_SIZE_OPTIONS.map((option) => {
@@ -213,7 +249,9 @@ export function DisplaySection() {
                           : "border-border hover:border-muted-foreground/30"
                       }`}
                     >
-                      <div className="font-medium text-xs text-foreground">{option.label}</div>
+                      <div className="font-medium text-xs text-foreground">
+                        {t(FONT_SIZE_LABEL_KEYS[option.value] ?? option.label)}
+                      </div>
                       <div className="text-muted-foreground mt-0.5" style={{ fontSize: option.value }}>Aa</div>
                     </button>
                   );
@@ -235,10 +273,12 @@ export function DisplaySection() {
                 <EyeOff className="h-4 w-4 text-muted-foreground shrink-0" />
                 <div>
                   <h3 className="text-sm font-medium text-foreground flex items-center gap-1.5">
-                    Timeline / rewind
-                    <HelpTooltip text="Turn off the timeline / rewind feature. Skips the in-memory hot frame cache (warm-up + per-frame/audio buffering) that only the timeline uses, and disables the native macOS Live Text overlay that can otherwise leak a selection layer over other windows (e.g. the chat input) and block typing. Restarts screenpipe to apply." />
+                    {t("settings.display.timeline.title")}
+                    <HelpTooltip text={t("settings.display.timeline.tooltip")} />
                   </h3>
-                  <p className="text-xs text-muted-foreground">Show rewind and keep its background cache work on</p>
+                  <p className="text-xs text-muted-foreground">
+                    {t("settings.display.timeline.description")}
+                  </p>
                 </div>
               </div>
               <ManagedSwitch
@@ -273,13 +313,15 @@ export function DisplaySection() {
                       await new Promise((r) => setTimeout(r, 500));
                       await commands.spawnScreenpipe(null);
                       toast({
-                        title: disabled ? "timeline disabled" : "timeline enabled",
-                        description: "screenpipe restarted to apply the change.",
+                        title: disabled
+                          ? t("settings.display.timeline.toast.off")
+                          : t("settings.display.timeline.toast.on"),
+                        description: t("settings.display.timeline.toast.body"),
                       });
                     } catch (e) {
                       toast({
-                        title: "failed to restart screenpipe",
-                        description: "restart screenpipe manually to apply the change.",
+                        title: t("settings.display.timeline.toast.error"),
+                        description: t("settings.display.timeline.toast.errorBody"),
                         variant: "destructive",
                       });
                     }
@@ -299,16 +341,26 @@ export function DisplaySection() {
                 <Layers className="h-4 w-4 text-muted-foreground shrink-0" />
                 <div>
                   <h3 className="text-sm font-medium text-foreground flex items-center gap-1.5">
-                    Timeline Mode
-                    <HelpTooltip text="Controls how the timeline overlay appears. 'Native' uses a system overlay, 'Tauri' uses the app window." />
+                    {t("settings.display.timelineMode.title")}
+                    <HelpTooltip text={t("settings.display.timelineMode.tooltip")} />
                   </h3>
-                  <p className="text-xs text-muted-foreground">Reopen timeline to apply</p>
+                  <p className="text-xs text-muted-foreground">
+                    {t("settings.display.timelineMode.description")}
+                  </p>
                 </div>
               </div>
               <div className="flex gap-2 ml-[26px]">
                 {([
-                  { value: "fullscreen", label: "Overlay", desc: "Floating panel" },
-                  { value: "window", label: "Window", desc: "Resizable window" },
+                  {
+                    value: "fullscreen",
+                    label: t("settings.display.timelineMode.option.overlay"),
+                    desc: t("settings.display.timelineMode.option.overlayHint"),
+                  },
+                  {
+                    value: "window",
+                    label: t("settings.display.timelineMode.option.window"),
+                    desc: t("settings.display.timelineMode.option.windowHint"),
+                  },
                 ]).map((option) => {
                   const isActive = (settings?.overlayMode ?? "fullscreen") === option.value;
                   return (
@@ -320,8 +372,10 @@ export function DisplaySection() {
                           await commands.resetMainWindow();
                         } catch (_) {}
                         toast({
-                          title: "overlay mode updated",
-                          description: `press the shortcut to open timeline in ${option.label.toLowerCase()} mode.`,
+                          title: t("settings.display.timelineMode.toast"),
+                          description: t("settings.display.timelineMode.toastBody", {
+                            mode: option.label.toLowerCase(),
+                          }),
                         });
                       }}
                       type="button"
@@ -347,8 +401,12 @@ export function DisplaySection() {
               <div className="flex items-center space-x-2.5">
                 <MessageSquare className="h-4 w-4 text-muted-foreground shrink-0" />
                 <div>
-                  <h3 className="text-sm font-medium text-foreground">Chat Always on Top</h3>
-                  <p className="text-xs text-muted-foreground">Keep chat window above other windows</p>
+                  <h3 className="text-sm font-medium text-foreground">
+                    {t("settings.display.chatTop.title")}
+                  </h3>
+                  <p className="text-xs text-muted-foreground">
+                    {t("settings.display.chatTop.description")}
+                  </p>
                 </div>
               </div>
               <Switch
@@ -374,10 +432,12 @@ export function DisplaySection() {
                 <MessageSquare className="h-4 w-4 text-muted-foreground shrink-0" />
                 <div>
                   <h3 className="text-sm font-medium text-foreground flex items-center gap-1.5">
-                    Show Chat Suggestions
-                    <HelpTooltip text="Show the follow-up questions and suggested-prompt chips above the chat input. The X on the chips hides them too." />
+                    {t("settings.display.chatSuggestions.title")}
+                    <HelpTooltip text={t("settings.display.chatSuggestions.tooltip")} />
                   </h3>
-                  <p className="text-xs text-muted-foreground">Follow-up questions and suggested prompts above the input</p>
+                  <p className="text-xs text-muted-foreground">
+                    {t("settings.display.chatSuggestions.description")}
+                  </p>
                 </div>
               </div>
               <Switch
@@ -398,11 +458,11 @@ export function DisplaySection() {
                 <Monitor className="h-4 w-4 text-muted-foreground shrink-0" />
                 <div>
                   <h3 className="text-sm font-medium text-foreground flex items-center gap-1.5">
-                    Hide from screen recordings
-                    <HelpTooltip text="When enabled, only the screenpipe overlay is hidden from OBS, Screen Studio, screenshots, and screen sharing. Other screenpipe windows remain visible." />
+                    {t("settings.display.hideFromRecordings.title")}
+                    <HelpTooltip text={t("settings.display.hideFromRecordings.tooltip")} />
                   </h3>
                   <p className="text-xs text-muted-foreground">
-                    Hide the overlay from OBS, Screen Studio, and screen sharing
+                    {t("settings.display.hideFromRecordings.description")}
                   </p>
                 </div>
               </div>
@@ -418,13 +478,16 @@ export function DisplaySection() {
                     }
                     await commands.resetMainWindow().catch(() => {});
                     toast({
-                      title: hidden ? "overlay hidden from screen recordings" : "overlay visible in screen recordings",
-                      description: "press the shortcut to open the overlay with the new setting.",
+                      title: hidden
+                        ? t("settings.display.hideFromRecordings.toast.hidden")
+                        : t("settings.display.hideFromRecordings.toast.visible"),
+                      description: t("settings.display.hideFromRecordings.toast.body"),
                     });
                   } catch (error) {
                     await updateSettings({ hideOverlayInScreenRecording: !hidden });
                     toast({
-                      title: "could not update overlay capture visibility",
+                      title: t("settings.display.hideFromRecordings.toast.error"),
+                      // Native error text, shown as delivered.
                       description: error instanceof Error ? error.message : String(error),
                       variant: "destructive",
                     });
@@ -447,13 +510,13 @@ export function DisplaySection() {
                   <CalendarClock className="h-4 w-4 text-muted-foreground shrink-0" />
                   <div>
                     <h3 className="text-sm font-medium text-foreground flex items-center gap-1.5">
-                      Meetings in Sidebar
-                      <HelpTooltip text="Show Meetings as a labelled row in the Home sidebar. It ships off; the section and its deep links keep working either way." />
+                      {t("settings.display.meetings.title")}
+                      <HelpTooltip text={t("settings.display.meetings.tooltip")} />
                     </h3>
                     <p className="text-xs text-muted-foreground">
                       {meetingsInSidebar
-                        ? "Labelled row in the sidebar"
-                        : "Not in the sidebar"}
+                        ? t("settings.display.meetings.descriptionOn")
+                        : t("settings.display.meetings.descriptionOff")}
                     </p>
                   </div>
                 </div>
@@ -474,8 +537,7 @@ export function DisplaySection() {
                 />
               </div>
               <p className="ml-[26px] text-xs text-muted-foreground">
-                Drag sidebar rows to reorder them, or right-click one to move,
-                hide, or restore it.
+                {t("settings.display.sidebarLayout.hint")}
               </p>
               {!isSidebarNavLayoutDefault(sidebarLayout) && (
                 <div className="ml-[26px]">
@@ -488,10 +550,10 @@ export function DisplaySection() {
                       handleSettingsChange({
                         sidebarNavLayout: { ...DEFAULT_SIDEBAR_NAV_LAYOUT },
                       });
-                      toast({ title: "sidebar layout reset" });
+                      toast({ title: t("settings.display.sidebarLayout.toast.reset") });
                     }}
                   >
-                    Reset sidebar layout
+                    {t("settings.display.sidebarLayout.reset")}
                   </Button>
                 </div>
               )}
@@ -506,10 +568,12 @@ export function DisplaySection() {
                   <PanelLeft className="h-4 w-4 text-muted-foreground shrink-0" />
                   <div>
                     <h3 className="text-sm font-medium text-foreground flex items-center gap-1.5">
-                      Translucent Sidebar
-                      <HelpTooltip text="Apply a macOS vibrancy effect to the sidebar for a frosted glass look." />
+                      {t("settings.display.translucentSidebar.title")}
+                      <HelpTooltip text={t("settings.display.translucentSidebar.tooltip")} />
                     </h3>
-                    <p className="text-xs text-muted-foreground">Frosted glass sidebar effect</p>
+                    <p className="text-xs text-muted-foreground">
+                      {t("settings.display.translucentSidebar.description")}
+                    </p>
                   </div>
                 </div>
                 <Switch
@@ -517,7 +581,9 @@ export function DisplaySection() {
                   onCheckedChange={(checked) => {
                     handleSettingsChange({ translucentSidebar: checked });
                     toast({
-                      title: checked ? "translucent sidebar enabled" : "translucent sidebar disabled",
+                      title: checked
+                        ? t("settings.display.translucentSidebar.toast.on")
+                        : t("settings.display.translucentSidebar.toast.off"),
                     });
                   }}
                 />
@@ -542,11 +608,11 @@ export function DisplaySection() {
                   <EyeOff className="h-4 w-4 text-muted-foreground shrink-0" />
                   <div>
                     <h3 className="text-sm font-medium text-foreground flex items-center gap-1.5">
-                      Hide Dock Icon
-                      <HelpTooltip text="Run screenpipe as a menu-bar-only app with no icon in the Dock. The menu-bar (tray) icon stays — click it to open screenpipe. Useful if you only need the app occasionally and don't want it in the Dock." />
+                      {t("settings.display.hideDock.title")}
+                      <HelpTooltip text={t("settings.display.hideDock.tooltip")} />
                     </h3>
                     <p className="text-xs text-muted-foreground">
-                      Menu bar only — keep screenpipe out of the Dock
+                      {t("settings.display.hideDock.description")}
                     </p>
                   </div>
                 </div>
@@ -559,10 +625,10 @@ export function DisplaySection() {
                     commands.resetMainWindow().catch(() => {});
                     toast({
                       title: checked
-                        ? "dock icon hidden — menu bar only"
-                        : "dock icon visible",
+                        ? t("settings.display.hideDock.toast.hidden")
+                        : t("settings.display.hideDock.toast.visible"),
                       description: checked
-                        ? "open screenpipe from the menu bar icon."
+                        ? t("settings.display.hideDock.toast.hiddenBody")
                         : undefined,
                     });
                   }}
@@ -589,11 +655,11 @@ export function DisplaySection() {
                   <MinusSquare className="h-4 w-4 text-muted-foreground shrink-0" />
                   <div>
                     <h3 className="text-sm font-medium text-foreground flex items-center gap-1.5">
-                      Minimize to System Tray on Close
-                      <HelpTooltip text="When enabled, clicking the X on the Home window hides it and removes it from the Windows taskbar. screenpipe keeps running in the system tray — click the tray icon to bring the window back." />
+                      {t("settings.display.minimizeToTray.title")}
+                      <HelpTooltip text={t("settings.display.minimizeToTray.tooltip")} />
                     </h3>
                     <p className="text-xs text-muted-foreground">
-                      Keep running in the tray when the window is closed
+                      {t("settings.display.minimizeToTray.description")}
                     </p>
                   </div>
                 </div>
@@ -603,10 +669,10 @@ export function DisplaySection() {
                     handleSettingsChange({ minimizeToTrayOnClose: checked });
                     toast({
                       title: checked
-                        ? "Close button will hide to system tray"
-                        : "Close button will minimize to taskbar",
+                        ? t("settings.display.minimizeToTray.toast.tray")
+                        : t("settings.display.minimizeToTray.toast.taskbar"),
                       description: checked
-                        ? "Click the tray icon to bring screenpipe back."
+                        ? t("settings.display.minimizeToTray.toast.body")
                         : undefined,
                     });
                   }}
@@ -626,9 +692,11 @@ export function DisplaySection() {
               <div className="flex items-center space-x-2.5">
                 <Monitor className="h-4 w-4 text-muted-foreground shrink-0" />
                 <div>
-                  <h3 className="text-sm font-medium text-foreground">Shortcut Reminder</h3>
+                  <h3 className="text-sm font-medium text-foreground">
+                    {t("settings.display.shortcutReminder.title")}
+                  </h3>
                   <p className="text-xs text-muted-foreground">
-                    Show the floating shortcut bar. Recording problems can still surface temporarily.
+                    {t("settings.display.shortcutReminder.description")}
                   </p>
                 </div>
               </div>
@@ -661,15 +729,19 @@ export function DisplaySection() {
               <div className="flex items-center space-x-2.5">
                 <Maximize2 className="h-4 w-4 text-muted-foreground shrink-0" />
                 <div>
-                  <h3 className="text-sm font-medium text-foreground">Overlay Size</h3>
-                  <p className="text-xs text-muted-foreground">Size of the shortcut reminder overlay</p>
+                  <h3 className="text-sm font-medium text-foreground">
+                    {t("settings.display.overlaySize.title")}
+                  </h3>
+                  <p className="text-xs text-muted-foreground">
+                    {t("settings.display.overlaySize.description")}
+                  </p>
                 </div>
               </div>
               <div className="flex gap-2 ml-[26px]">
                 {([
-                  { value: "small", label: "Small" },
-                  { value: "medium", label: "Medium" },
-                  { value: "large", label: "Large" },
+                  { value: "small", label: t("settings.display.overlaySize.option.small") },
+                  { value: "medium", label: t("settings.display.overlaySize.option.medium") },
+                  { value: "large", label: t("settings.display.overlaySize.option.large") },
                 ]).map((option) => {
                   const isActive = (settings?.shortcutOverlaySize ?? "small") === option.value;
                   return (

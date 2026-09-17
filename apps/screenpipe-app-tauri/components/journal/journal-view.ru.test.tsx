@@ -13,18 +13,22 @@
 
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 const fetchJournalDay = vi.fn();
 const fetchActivityDetail = vi.fn();
 const fetchJournalWeek = vi.fn();
+const regenerateJournalDay = vi.fn();
 const updateSettings = vi.fn();
 
 vi.mock("@/lib/journal/api", () => ({
   fetchJournalDay: (...args: unknown[]) => fetchJournalDay(...args),
   fetchActivityDetail: (...args: unknown[]) => fetchActivityDetail(...args),
   fetchJournalWeek: (...args: unknown[]) => fetchJournalWeek(...args),
+  regenerateJournalDay: (...args: unknown[]) => regenerateJournalDay(...args),
 }));
+const toast = vi.fn();
+vi.mock("@/components/ui/use-toast", () => ({ useToast: () => ({ toast }) }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
 vi.mock("@/lib/hooks/use-settings", () => ({
   useSettings: () => ({ settings: { uiLanguage: "ru" }, updateSettings }),
@@ -101,6 +105,22 @@ afterEach(() => {
 });
 
 describe("JournalView in Russian", () => {
+  it("names the regenerate action and declines окно in its toast", async () => {
+    regenerateJournalDay.mockResolvedValue({ reset_windows: 2 });
+    renderRu(<JournalView />);
+    await waitFor(() => expect(fetchJournalDay).toHaveBeenCalled());
+
+    const button = screen.getByTestId("journal-regenerate");
+    expect(button).toHaveTextContent("Пересобрать");
+
+    fireEvent.click(button);
+    await waitFor(() =>
+      expect(toast).toHaveBeenCalledWith({
+        description: "В очередь на перезапись: 2 окна",
+      }),
+    );
+  });
+
   it("writes the day's chrome in Russian", async () => {
     renderRu(<JournalView />);
     await waitFor(() => expect(fetchJournalDay).toHaveBeenCalled());

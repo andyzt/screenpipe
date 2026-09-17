@@ -12,14 +12,30 @@ import { localFetch } from "@/lib/api";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/components/ui/use-toast";
 import { commands } from "@/lib/utils/tauri";
-import type { SettingsField } from "./settings-search";
+import {
+  settingsIndexFactory,
+  type LocalizedSettingsField,
+  type SettingsField,
+} from "./settings-search";
+import { translatorFor, useT } from "@/lib/i18n";
 import { PowerModePreview } from "./setting-previews";
 
-/** Settings search index for this section. Co-located with the component so adding a field here means updating one file. See `SettingsField` in `./settings-search` for the schema. */
-export const searchIndex: SettingsField[] = [
-  { label: "Power & battery", keywords: ["power", "battery", "performance", "saver"] },
-  { label: "Keep computer awake", keywords: ["sleep", "awake", "power"] },
+/**
+ * Settings search index for this section. Co-located with the component so
+ * adding a field here means updating one file. Each `key` is the dictionary
+ * key of the heading this file actually renders — `scrollToSettingsField`
+ * matches the index label against the on-screen text, so a paraphrase would
+ * navigate here and then scroll nowhere.
+ */
+export const searchFields: LocalizedSettingsField[] = [
+  { key: "settings.power.heading", keywords: ["power", "battery", "performance", "saver", "питание", "батарея", "энергия"] },
+  { key: "settings.power.keepAwake.title", keywords: ["sleep", "awake", "power", "сон", "спящий"] },
 ];
+
+export const searchIndexFor = settingsIndexFactory(searchFields);
+
+/** English index, kept for the dev drift guard and for tests. */
+export const searchIndex: SettingsField[] = searchIndexFor(translatorFor("en"));
 
 interface PowerState {
   battery_pct: number | null;
@@ -43,44 +59,34 @@ interface PowerStatus {
 
 type PowerMode = "auto" | "performance" | "battery_saver";
 
-const PROFILE_INFO: Record<ActiveProfile, { label: string; description: string; icon: typeof Zap }> = {
-  performance: {
-    label: "Performance",
-    description: "Full capture quality and frequency",
-    icon: Zap,
-  },
-  balanced: {
-    label: "Balanced",
-    description: "Reduced capture frequency, lower quality encoding",
-    icon: Gauge,
-  },
-  saver: {
-    label: "Battery Saver",
-    description: "Minimal capture, aggressive power saving",
-    icon: Leaf,
-  },
-  audio_paused: {
-    label: "Audio Paused",
-    description: "Battery ≤20% — vision continues, audio + Whisper off",
-    icon: MicOff,
-  },
-  full_pause: {
-    label: "Full Pause",
-    description: "Battery ≤10% or OS low-power — capture paused",
-    icon: PauseCircle,
-  },
+const PROFILE_INFO: Record<
+  ActiveProfile,
+  { key: string; icon: typeof Zap }
+> = {
+  performance: { key: "settings.power.profile.performance", icon: Zap },
+  balanced: { key: "settings.power.profile.balanced", icon: Gauge },
+  saver: { key: "settings.power.profile.saver", icon: Leaf },
+  audio_paused: { key: "settings.power.profile.audioPaused", icon: MicOff },
+  full_pause: { key: "settings.power.profile.fullPause", icon: PauseCircle },
 };
 
 // Fallback for any future Rust profile variant that lands before the UI knows about it.
 const UNKNOWN_PROFILE_INFO = {
-  label: "Unknown",
-  description: "Reported by backend but not recognized by this app version",
+  key: "settings.power.profile.unknown",
   icon: Gauge,
 } as const;
+
+/** The three buttons of the preference selector, in the order they render. */
+const POWER_MODES: { value: PowerMode; key: string }[] = [
+  { value: "auto", key: "settings.power.mode.auto" },
+  { value: "performance", key: "settings.power.mode.performance" },
+  { value: "battery_saver", key: "settings.power.mode.batterySaver" },
+];
 
 export function BatterySaverSection() {
   const { settings, updateSettings } = useSettings();
   const { toast } = useToast();
+  const t = useT();
   const [status, setStatus] = useState<PowerStatus | null>(null);
   const [updating, setUpdating] = useState(false);
   const [keepAwakeUpdating, setKeepAwakeUpdating] = useState(false);
@@ -140,7 +146,8 @@ export function BatterySaverSection() {
     } catch (error) {
       await updateSettings({ keepComputerAwake: previous });
       toast({
-        title: "couldn't update keep-awake",
+        title: t("settings.power.keepAwake.error"),
+        // The backend's own message, shown as delivered.
         description: error instanceof Error ? error.message : String(error),
       });
     } finally {
@@ -158,31 +165,15 @@ export function BatterySaverSection() {
     : null;
   const ProfileIcon = profileInfo?.icon;
 
-  const modes: { value: PowerMode; label: string; description: string }[] = [
-    {
-      value: "auto",
-      label: "Auto",
-      description: "Adjusts based on battery state",
-    },
-    {
-      value: "performance",
-      label: "Performance",
-      description: "Full quality, ignore battery",
-    },
-    {
-      value: "battery_saver",
-      label: "Battery Saver",
-      description: "Maximum power saving",
-    },
-  ];
-
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-sm font-medium text-foreground">power &amp; battery</h3>
+          <h3 className="text-sm font-medium text-foreground">
+            {t("settings.power.heading")}
+          </h3>
           <p className="text-xs text-muted-foreground mt-0.5">
-            controls capture frequency, quality, and transcription to save battery
+            {t("settings.power.description")}
           </p>
         </div>
 
@@ -197,8 +188,10 @@ export function BatterySaverSection() {
               <Battery className="h-3.5 w-3.5" />
             )}
             <span>
-              {state.battery_pct !== null ? `${state.battery_pct}%` : "AC"}
-              {state.on_ac ? " (charging)" : ""}
+              {state.battery_pct !== null
+                ? `${state.battery_pct}%`
+                : t("settings.power.ac")}
+              {state.on_ac ? ` (${t("settings.power.charging")})` : ""}
             </span>
           </div>
         )}
@@ -208,8 +201,12 @@ export function BatterySaverSection() {
       {profileInfo && ProfileIcon && (
         <div className="flex items-center gap-2 px-3 py-2 border border-border bg-card rounded text-xs">
           <ProfileIcon className="h-3.5 w-3.5" />
-          <span className="font-medium text-foreground">{profileInfo.label}</span>
-          <span className="text-muted-foreground">— {profileInfo.description}</span>
+          <span className="font-medium text-foreground">
+            {t(`${profileInfo.key}.label`)}
+          </span>
+          <span className="text-muted-foreground">
+            — {t(`${profileInfo.key}.description`)}
+          </span>
         </div>
       )}
 
@@ -218,10 +215,10 @@ export function BatterySaverSection() {
           <Zap className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
           <div>
             <label htmlFor="keepComputerAwake" className="text-sm font-medium text-foreground">
-              keep computer awake
+              {t("settings.power.keepAwake.title")}
             </label>
             <p className="text-xs text-muted-foreground mt-0.5">
-              keeps recording and scheduled tasks running when you step away. without it, idle sleep pauses capture.
+              {t("settings.power.keepAwake.description")}
             </p>
           </div>
         </div>
@@ -230,13 +227,13 @@ export function BatterySaverSection() {
           checked={keepAwakeEnabled}
           onCheckedChange={setKeepAwake}
           disabled={keepAwakeUpdating}
-          aria-label="keep computer awake"
+          aria-label={t("settings.power.keepAwake.title")}
         />
       </div>
 
       {/* Mode selector */}
       <div className="grid grid-cols-3 gap-2">
-        {modes.map((mode) => (
+        {POWER_MODES.map((mode) => (
           <button
             key={mode.value}
             onClick={() => setMode(mode.value)}
@@ -250,10 +247,10 @@ export function BatterySaverSection() {
             )}
           >
             <span className="text-xs font-medium text-foreground">
-              {mode.label}
+              {t(`${mode.key}.label`)}
             </span>
             <span className="text-[10px] text-muted-foreground mt-0.5">
-              {mode.description}
+              {t(`${mode.key}.description`)}
             </span>
           </button>
         ))}
@@ -264,9 +261,7 @@ export function BatterySaverSection() {
       {/* Thermal warning */}
       {state && (state.thermal_state === "serious" || state.thermal_state === "critical") && (
         <div className="flex items-center gap-2 px-3 py-2 border border-border bg-card rounded text-xs text-muted-foreground">
-          <span>
-            System is thermally throttled — battery saver active regardless of preference
-          </span>
+          <span>{t("settings.power.thermal")}</span>
         </div>
       )}
     </div>

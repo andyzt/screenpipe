@@ -1662,7 +1662,13 @@ function mockJournalApiResponse(
     return Response.json(mockJournalStatus(scenario));
   }
   if (url.pathname === "/journal/regenerate" && method === "POST") {
-    return Response.json({ reset_windows: 12 });
+    // A card's rewrite touches the windows behind that one card; a day's
+    // touches the lot. The two numbers are what make the toast readable in the
+    // browser mock without an engine.
+    const body = parseJsonBody(init);
+    return Response.json({
+      reset_windows: body.activity_id === undefined ? 12 : 1,
+    });
   }
   if (url.pathname === "/journal/categories") {
     if (method === "PUT") {

@@ -38,9 +38,10 @@ use crate::journal::settings::JournalSettings;
 use crate::journal::time::{day_bounds, day_of};
 use crate::server::AppState;
 
-/// `POST /journal/regenerate` accepts one reset per day per minute. Resetting
-/// a day queues every one of its windows; letting a client hold the button
-/// down would pin the worker on history instead of today.
+/// `POST /journal/regenerate` accepts one reset per target (a day, or one
+/// card) per minute. Resetting a day queues every one of its windows; letting
+/// a client hold the button down would pin the worker on history instead of
+/// today. A card reset queues only the windows its span overlaps.
 const REGENERATE_COOLDOWN: Duration = Duration::minutes(1);
 
 type ApiError = (StatusCode, JsonResponse<Value>);
@@ -536,9 +537,20 @@ pub async fn get_journal_status(
 
 #[derive(Debug, Deserialize, OaSchema)]
 pub struct JournalRegenerateRequest {
-    /// Calendar date of the day to reprocess. Defaults to today.
+    /// Calendar date of the day to reprocess. Defaults to today. Ignored when
+    /// `activity_id` is given: the card's own span decides the windows.
     #[serde(default)]
     pub date: Option<String>,
+    /// Reprocess only the windows one card spans instead of the whole day.
+    #[serde(default)]
+    pub activity_id: Option<i64>,
+}
+
+/// What a regenerate request asked to reset; also the cooldown key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum RegenerateTarget {
+    Day(NaiveDate),
+    Activity(i64),
 }
 
 #[derive(Debug, Clone, Serialize, OaSchema)]
@@ -552,29 +564,64 @@ pub async fn regenerate_journal_day(
     JsonResponse(payload): JsonResponse<JournalRegenerateRequest>,
 ) -> Result<JsonResponse<JournalRegenerateResponse>, ApiError> {
     let now = Utc::now();
-    let date = match payload.date.as_deref() {
-        Some(value) => value
-            .trim()
-            .parse::<NaiveDate>()
-            .map_err(|_| bad_request("date must be YYYY-MM-DD"))?,
-        None => day_of(now),
+    let (target, span_start, span_end) = if let Some(activity_id) = payload.activity_id {
+        let (card, _, _) = state
+            .db
+            .get_journal_activity(activity_id, false)
+            .await
+            .map_err(internal)?
+            .ok_or_else(|| {
+                (
+                    StatusCode::NOT_FOUND,
+                    JsonResponse(json!({"error": "activity not found"})),
+                )
+            })?;
+        let span = |value: &str| {
+            DateTime::parse_from_rfc3339(value)
+                .map(|at| at.with_timezone(&Utc))
+                .map_err(|_| {
+                    error!(activity_id, "journal card has an unreadable span");
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        JsonResponse(json!({"error": "card span is unreadable"})),
+                    )
+                })
+        };
+        (
+            RegenerateTarget::Activity(activity_id),
+            span(&card.start_at)?,
+            span(&card.end_at)?,
+        )
+    } else {
+        let date = match payload.date.as_deref() {
+            Some(value) => value
+                .trim()
+                .parse::<NaiveDate>()
+                .map_err(|_| bad_request("date must be YYYY-MM-DD"))?,
+            None => day_of(now),
+        };
+        let (day_start, day_end) = day_bounds(date)
+            .ok_or_else(|| bad_request("date is not a representable local day"))?;
+        (RegenerateTarget::Day(date), day_start, day_end)
     };
-    let (day_start, day_end) =
-        day_bounds(date).ok_or_else(|| bad_request("date is not a representable local day"))?;
-    let (read_start, clamped_out) = clamp(&state.history_access, day_start, day_end, now);
+    let (read_start, clamped_out) = clamp(&state.history_access, span_start, span_end, now);
     if clamped_out {
         return Ok(JsonResponse(JournalRegenerateResponse { reset_windows: 0 }));
     }
-    if !regenerate_allowed(date, now) {
+    if !regenerate_allowed(target, now) {
+        let what = match target {
+            RegenerateTarget::Day(_) => "this day",
+            RegenerateTarget::Activity(_) => "this card",
+        };
         return Err((
             StatusCode::TOO_MANY_REQUESTS,
-            JsonResponse(json!({"error": "this day was already queued in the last minute"})),
+            JsonResponse(json!({"error": format!("{what} was already queued in the last minute")})),
         ));
     }
 
     let reset = state
         .db
-        .reset_journal_windows_in_range(read_start, day_end)
+        .reset_journal_windows_in_range(read_start, span_end)
         .await
         .map_err(internal)?;
     Ok(JsonResponse(JournalRegenerateResponse {
@@ -582,24 +629,24 @@ pub async fn regenerate_journal_day(
     }))
 }
 
-/// One reset per day per minute, tracked in process. Deliberately not
-/// persisted: the limit exists to stop a stuck button, not to be an
-/// authorization boundary.
-fn regenerate_allowed(date: NaiveDate, now: DateTime<Utc>) -> bool {
+/// One reset per target (a day or a single card) per minute, tracked in
+/// process. Deliberately not persisted: the limit exists to stop a stuck
+/// button, not to be an authorization boundary.
+fn regenerate_allowed(target: RegenerateTarget, now: DateTime<Utc>) -> bool {
     use std::collections::HashMap;
     use std::sync::Mutex;
     use std::sync::OnceLock;
 
-    static LAST: OnceLock<Mutex<HashMap<NaiveDate, DateTime<Utc>>>> = OnceLock::new();
+    static LAST: OnceLock<Mutex<HashMap<RegenerateTarget, DateTime<Utc>>>> = OnceLock::new();
     let mut guard = LAST
         .get_or_init(|| Mutex::new(HashMap::new()))
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     guard.retain(|_, at| now - *at < Duration::hours(1));
-    match guard.get(&date) {
+    match guard.get(&target) {
         Some(at) if now - *at < REGENERATE_COOLDOWN => false,
         _ => {
-            guard.insert(date, now);
+            guard.insert(target, now);
             true
         }
     }
@@ -863,12 +910,30 @@ mod tests {
     #[test]
     fn regenerating_the_same_day_twice_in_a_minute_is_refused() {
         let date: NaiveDate = "2029-01-01".parse().unwrap();
+        let day = RegenerateTarget::Day(date);
         let now = Utc::now();
-        assert!(regenerate_allowed(date, now));
-        assert!(!regenerate_allowed(date, now + Duration::seconds(10)));
-        assert!(regenerate_allowed(date, now + Duration::seconds(90)));
+        assert!(regenerate_allowed(day, now));
+        assert!(!regenerate_allowed(day, now + Duration::seconds(10)));
+        assert!(regenerate_allowed(day, now + Duration::seconds(90)));
         // A different day is unaffected.
-        assert!(regenerate_allowed(date.succ_opt().unwrap(), now));
+        assert!(regenerate_allowed(
+            RegenerateTarget::Day(date.succ_opt().unwrap()),
+            now
+        ));
+    }
+
+    #[test]
+    fn regenerating_one_card_has_its_own_cooldown() {
+        let card = RegenerateTarget::Activity(9_000_001);
+        let now = Utc::now();
+        assert!(regenerate_allowed(card, now));
+        assert!(!regenerate_allowed(card, now + Duration::seconds(10)));
+        // Another card, and the day itself, are unaffected by a card reset.
+        assert!(regenerate_allowed(RegenerateTarget::Activity(9_000_002), now));
+        assert!(regenerate_allowed(
+            RegenerateTarget::Day("2031-06-01".parse().unwrap()),
+            now
+        ));
     }
 
     #[test]

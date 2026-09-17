@@ -7,10 +7,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 const fetchActivityDetail = vi.fn();
+const regenerateJournal = vi.fn();
 
 vi.mock("@/lib/journal/api", () => ({
   fetchActivityDetail: (...args: unknown[]) => fetchActivityDetail(...args),
+  regenerateJournal: (...args: unknown[]) => regenerateJournal(...args),
 }));
+const toast = vi.fn();
+vi.mock("@/components/ui/use-toast", () => ({ useToast: () => ({ toast }) }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
 vi.mock("@tauri-apps/api/event", () => ({ emit: vi.fn() }));
 vi.mock("@/lib/hooks/use-timeline-store", () => ({
@@ -23,7 +27,11 @@ vi.mock("./now-strip", () => ({
 }));
 
 import { DayInspector } from "./day-inspector";
-import { makeActivityCard, makeJournalDay } from "@/lib/journal/fixtures";
+import {
+  makeActivityCard,
+  makeCategory,
+  makeJournalDay,
+} from "@/lib/journal/fixtures";
 
 function renderInspector(
   props: Partial<React.ComponentProps<typeof DayInspector>> = {},
@@ -35,6 +43,7 @@ function renderInspector(
       onClose={props.onClose ?? vi.fn()}
       showNow={props.showNow ?? false}
       nowRefreshToken={props.nowRefreshToken}
+      onRegenerate={props.onRegenerate}
     />,
   );
 }
@@ -197,5 +206,75 @@ describe("DayInspector", () => {
     renderInspector({ selected: makeActivityCard(), onClose });
     fireEvent.click(screen.getByTestId("journal-inspector-close"));
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * Rewriting one card is the reader's only recourse when a card is wrong, and
+ * the whole point is that it is aimed at *that* card: the engine resets only
+ * the windows it spans. So the test that matters is which body goes over the
+ * wire, and that the two states where a rewrite would change nothing do not
+ * offer the action at all.
+ */
+describe("DayInspector → regenerate this card", () => {
+  const selected = makeActivityCard({ id: 4105 });
+
+  it("queues the selected card and says how many windows it reset", async () => {
+    const onRegenerate = vi.fn().mockResolvedValue(undefined);
+    regenerateJournal.mockResolvedValue({ reset_windows: 1 });
+    renderInspector({ selected, onRegenerate });
+
+    fireEvent.click(screen.getByTestId("journal-card-regenerate"));
+
+    await waitFor(() =>
+      expect(regenerateJournal).toHaveBeenCalledWith({ activityId: 4105 }),
+    );
+    await waitFor(() =>
+      expect(toast).toHaveBeenCalledWith({
+        description: "Queued 1 window to rewrite",
+      }),
+    );
+    await waitFor(() => expect(onRegenerate).toHaveBeenCalledWith(selected));
+  });
+
+  it("shows what the engine said when it refuses", async () => {
+    regenerateJournal.mockRejectedValue(
+      new Error("this card was already queued in the last minute"),
+    );
+    renderInspector({ selected, onRegenerate: vi.fn() });
+
+    fireEvent.click(screen.getByTestId("journal-card-regenerate"));
+
+    await waitFor(() =>
+      expect(toast).toHaveBeenCalledWith({
+        title: "The rewrite could not be queued",
+        description: "this card was already queued in the last minute",
+        variant: "destructive",
+      }),
+    );
+  });
+
+  it("is not offered for an idle stretch — no model wrote it", () => {
+    renderInspector({
+      selected: makeActivityCard({
+        category: makeCategory({ id: "idle", name: "Idle", is_idle: true }),
+      }),
+      onRegenerate: vi.fn(),
+    });
+    expect(screen.queryByTestId("journal-card-regenerate")).toBeNull();
+    expect(screen.getByTestId("journal-inspector-close")).toBeInTheDocument();
+  });
+
+  it("is not offered for a draft — the engine is still revising it", () => {
+    renderInspector({
+      selected: makeActivityCard({ state: "provisional" }),
+      onRegenerate: vi.fn(),
+    });
+    expect(screen.queryByTestId("journal-card-regenerate")).toBeNull();
+  });
+
+  it("is not offered when nothing above can re-read the day", () => {
+    renderInspector({ selected });
+    expect(screen.queryByTestId("journal-card-regenerate")).toBeNull();
   });
 });

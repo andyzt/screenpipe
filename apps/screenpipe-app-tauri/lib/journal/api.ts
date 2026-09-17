@@ -97,14 +97,38 @@ export function fetchJournalStatus(signal?: AbortSignal): Promise<JournalStatus>
   return requestJson<JournalStatus>("/journal/status", { signal });
 }
 
-export function regenerateJournalDay(
-  date: string,
+/** What a rewrite is aimed at: a whole day, or the windows one card spans. */
+export type JournalRegenerateTarget =
+  | { date: string }
+  | { activityId: number };
+
+/**
+ * Queue a rewrite and answer with how many windows it reset.
+ *
+ * A `date` resets every window in that day; an `activityId` resets only the
+ * windows behind that one card, which is the recourse the inspector offers
+ * when a single card is wrong. The engine refuses with 404 for a card that no
+ * longer exists and 429 for the same card twice inside a minute — both arrive
+ * here as an `Error` carrying the engine's own sentence, which is the one
+ * worth showing.
+ */
+export function regenerateJournal(
+  target: JournalRegenerateTarget,
 ): Promise<{ reset_windows: number }> {
+  const body =
+    "date" in target ? { date: target.date } : { activity_id: target.activityId };
   return requestJson<{ reset_windows: number }>("/journal/regenerate", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ date }),
+    body: JSON.stringify(body),
   });
+}
+
+/** The whole-day rewrite, under the name its callers already use. */
+export function regenerateJournalDay(
+  date: string,
+): Promise<{ reset_windows: number }> {
+  return regenerateJournal({ date });
 }
 
 export async function fetchJournalCategories(

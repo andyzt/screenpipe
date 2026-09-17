@@ -204,9 +204,11 @@ are both null when it does not resolve — `provider_message` then says why.
 
 ## POST /journal/regenerate
 
-Body `{ "date": "YYYY-MM-DD" }`. Resets that day's windows to `pending`
-(cards are replaced as windows complete). Rate-limited to one call per day
-per minute. Returns `{ "reset_windows": 12 }`.
+Body `{ "date": "YYYY-MM-DD" }` resets that day's windows to `pending`
+(cards are replaced as windows complete). Body `{ "activity_id": 4105 }`
+resets only the windows that one card spans (`404` when the card is gone;
+`date` is ignored). Rate-limited to one call per target — a day or a card —
+per minute (`429`). Returns `{ "reset_windows": 12 }`.
 
 ## GET /journal/categories · PUT /journal/categories
 

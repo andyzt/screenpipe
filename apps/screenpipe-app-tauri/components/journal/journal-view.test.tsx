@@ -9,12 +9,16 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 const fetchJournalDay = vi.fn();
 const fetchActivityDetail = vi.fn();
 const fetchJournalWeek = vi.fn();
+const regenerateJournalDay = vi.fn();
 
 vi.mock("@/lib/journal/api", () => ({
   fetchJournalDay: (...args: unknown[]) => fetchJournalDay(...args),
   fetchActivityDetail: (...args: unknown[]) => fetchActivityDetail(...args),
   fetchJournalWeek: (...args: unknown[]) => fetchJournalWeek(...args),
+  regenerateJournalDay: (...args: unknown[]) => regenerateJournalDay(...args),
 }));
+const toast = vi.fn();
+vi.mock("@/components/ui/use-toast", () => ({ useToast: () => ({ toast }) }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
 // The view reconciles a role preset picked during onboarding; with no preset
 // pending the hook is inert, and this keeps the settings context out of a test
@@ -433,6 +437,97 @@ describe("JournalView", () => {
       expect(screen.getByTestId("journal-inspector-card")).toHaveTextContent(
         "Third",
       ),
+    );
+  });
+});
+
+/**
+ * Regenerate is the one write the day view offers, and it is the reader's only
+ * recourse when a card is wrong: it queues the windows behind the day on screen
+ * to be written again. So what has to hold is that it names the day it is
+ * looking at — not today — and that the day re-reads itself afterwards, because
+ * that is what turns the generating mark on and restarts the poll.
+ */
+describe("JournalView → regenerate", () => {
+  it("queues the day on screen and says how many windows it reset", async () => {
+    fetchJournalDay.mockResolvedValue(dayWithCards());
+    regenerateJournalDay.mockResolvedValue({ reset_windows: 3 });
+    render(<JournalView />);
+    await waitFor(() => expect(screen.getByTestId("journal-canvas")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByTestId("journal-regenerate"));
+
+    await waitFor(() =>
+      expect(regenerateJournalDay).toHaveBeenCalledWith(journalDayToday()),
+    );
+    await waitFor(() =>
+      expect(toast).toHaveBeenCalledWith({
+        description: "Queued 3 windows to rewrite",
+      }),
+    );
+  });
+
+  it("queues the day being read, not today", async () => {
+    const yesterday = shiftJournalDay(journalDayToday(), -1);
+    fetchJournalDay.mockResolvedValue(
+      makeJournalDay({ date: yesterday, day_start: at(4) }),
+    );
+    regenerateJournalDay.mockResolvedValue({ reset_windows: 1 });
+    render(<JournalView />);
+    await waitFor(() => expect(screen.getByTestId("journal-canvas")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByTestId("journal-prev-day"));
+    fireEvent.click(screen.getByTestId("journal-regenerate"));
+
+    await waitFor(() =>
+      expect(regenerateJournalDay).toHaveBeenCalledWith(yesterday),
+    );
+  });
+
+  it("re-reads the day so the generating mark and the poll come back", async () => {
+    fetchJournalDay.mockResolvedValue(dayWithCards());
+    regenerateJournalDay.mockResolvedValue({ reset_windows: 2 });
+    render(<JournalView />);
+    await waitFor(() => expect(screen.getByTestId("journal-canvas")).toBeInTheDocument());
+    const before = fetchJournalDay.mock.calls.length;
+
+    fireEvent.click(screen.getByTestId("journal-regenerate"));
+
+    await waitFor(() =>
+      expect(fetchJournalDay.mock.calls.length).toBeGreaterThan(before),
+    );
+  });
+
+  it("will not queue a day that is already being written", async () => {
+    fetchJournalDay.mockResolvedValue(
+      makeJournalDay({
+        date: journalDayToday(),
+        day_start: at(4),
+        generation: { processing: true, pending_windows: 4 },
+      }),
+    );
+    render(<JournalView />);
+    await waitFor(() => expect(screen.getByTestId("journal-canvas")).toBeInTheDocument());
+
+    expect(screen.getByTestId("journal-regenerate")).toBeDisabled();
+  });
+
+  it("shows what the engine said when it refuses", async () => {
+    fetchJournalDay.mockResolvedValue(dayWithCards());
+    regenerateJournalDay.mockRejectedValue(
+      new Error("429 a rewrite is already running for this day"),
+    );
+    render(<JournalView />);
+    await waitFor(() => expect(screen.getByTestId("journal-canvas")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByTestId("journal-regenerate"));
+
+    await waitFor(() =>
+      expect(toast).toHaveBeenCalledWith({
+        title: "The rewrite could not be queued",
+        description: "429 a rewrite is already running for this day",
+        variant: "destructive",
+      }),
     );
   });
 });

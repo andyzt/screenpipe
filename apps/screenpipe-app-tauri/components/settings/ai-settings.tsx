@@ -9,15 +9,23 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { useSettings, type Settings } from "@/lib/hooks/use-settings";
 import { commands } from "@/lib/utils/tauri";
+import { translatorFor, useT } from "@/lib/i18n";
 import { Lock, MessageSquare, Sparkles } from "lucide-react";
 import { CloudMediaAnalysisPreview } from "./setting-previews";
-import type { SettingsField } from "./settings-search";
+import {
+  settingsIndexFactory,
+  type LocalizedSettingsField,
+  type SettingsField,
+} from "./settings-search";
 
-/** Settings search index for this section. Co-located with the component so adding a field here means updating one file. See `SettingsField` in `./settings-search` for the schema. */
-export const searchIndex: SettingsField[] = [
-  { label: "Enhanced AI", keywords: ["cloud", "suggestions", "daily summary", "timeline"] },
+/** Settings search index for this section. Co-located with the component so adding a field here means updating one file. Each entry names the dictionary key of the heading it renders, so a Russian result scrolls to the Russian heading. See `LocalizedSettingsField` in `./settings-search`. */
+export const searchFields: LocalizedSettingsField[] = [
   {
-    label: "AI audio & video analysis",
+    key: "settings.aiFeatures.enhanced.title",
+    keywords: ["cloud", "suggestions", "daily summary", "timeline", "подсказки", "сводка"],
+  },
+  {
+    key: "settings.aiFeatures.media.title",
     keywords: [
       "transcription",
       "transcribe",
@@ -28,13 +36,25 @@ export const searchIndex: SettingsField[] = [
       "media",
       "vision",
       "audio",
+      "расшифровка",
+      "видео",
+      "анклав",
     ],
   },
-  { label: "Auto-generate chat titles", keywords: ["chat", "tokens"] },
+  {
+    key: "settings.aiFeatures.chatTitles.title",
+    keywords: ["chat", "tokens", "чат", "названия"],
+  },
 ];
+
+export const searchIndexFor = settingsIndexFactory(searchFields);
+
+/** English index, kept for the dev drift guard and for tests. */
+export const searchIndex: SettingsField[] = searchIndexFor(translatorFor("en"));
 
 export function AISettings() {
   const { settings, updateSettings } = useSettings();
+  const t = useT();
 
   const handleSettingsChange = useCallback(
     (newSettings: Partial<Settings>) => {
@@ -87,9 +107,7 @@ export function AISettings() {
 
   return (
     <div className="space-y-5" data-testid="section-settings-ai-settings">
-      <p className="text-sm text-muted-foreground">
-        Configure AI analysis and chat preferences
-      </p>
+      <p className="text-sm text-muted-foreground">{t("settings.aiFeatures.intro")}</p>
 
       <Card className="border-border bg-card">
         <CardContent className="px-3 py-2.5">
@@ -97,14 +115,14 @@ export function AISettings() {
             <div className="flex items-center space-x-2.5">
               <Sparkles className="h-4 w-4 text-muted-foreground shrink-0" />
               <div>
-                <h3 className="text-sm font-medium text-foreground">Enhanced AI</h3>
+                <h3 className="text-sm font-medium text-foreground">
+                  {t("settings.aiFeatures.enhanced.title")}
+                </h3>
                 <p className="text-xs text-muted-foreground">
-                  Use AI for smarter suggestions and on-demand daily summaries
+                  {t("settings.aiFeatures.enhanced.description")}
                 </p>
                 <p className="text-[10px] text-muted-foreground/60 mt-0.5">
-                  daily summaries use your configured AI model; suggestions may
-                  use screenpipe cloud. relevant activity is processed only when
-                  needed.
+                  {t("settings.aiFeatures.enhanced.note")}
                 </p>
               </div>
             </div>
@@ -131,11 +149,11 @@ export function AISettings() {
               <Lock className="h-4 w-4 text-muted-foreground shrink-0" />
               <div>
                 <h3 className="text-sm font-medium text-foreground flex items-center gap-1.5">
-                  AI audio &amp; video analysis
-                  <HelpTooltip text="Lets Pi and Claude Code call screenpipe's confidential enclave (Gemma 4 E4B inside a Tinfoil-attested AMD SEV-SNP container, encrypted in flight + at rest, no plaintext at the provider) to transcribe meetings, describe video clips, and analyze image frames from your screenpipe data. When off, the capability is stripped from the agent skill markdown so Pi won't try to use it." />
+                  {t("settings.aiFeatures.media.title")}
+                  <HelpTooltip text={t("settings.aiFeatures.media.tooltip")} />
                 </h3>
                 <p className="text-xs text-muted-foreground">
-                  Transcribe audio and understand video &amp; images in a confidential enclave.
+                  {t("settings.aiFeatures.media.description")}
                 </p>
               </div>
             </div>
@@ -156,9 +174,11 @@ export function AISettings() {
             <div className="flex items-center space-x-2.5">
               <MessageSquare className="h-4 w-4 text-muted-foreground shrink-0" />
               <div>
-                <h3 className="text-sm font-medium text-foreground">Auto-generate chat titles</h3>
+                <h3 className="text-sm font-medium text-foreground">
+                  {t("settings.aiFeatures.chatTitles.title")}
+                </h3>
                 <p className="text-xs text-muted-foreground">
-                  Name new chats with the AI after your first message. Turn off to save tokens.
+                  {t("settings.aiFeatures.chatTitles.description")}
                 </p>
               </div>
             </div>

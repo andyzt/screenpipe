@@ -18,9 +18,11 @@
  */
 
 import React from "react";
+import { RefreshCw } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useToast } from "@/components/ui/use-toast";
 import {
   CardDescription,
   CardHeader,
@@ -38,6 +40,7 @@ import {
   relationLabel,
 } from "@/lib/journal/format";
 import { categoryLabel, useLocale, useT } from "@/lib/i18n";
+import { regenerateJournal } from "@/lib/journal/api";
 import type { ActivityCard, JournalDay } from "@/lib/journal/types";
 
 function openJournalSettings() {
@@ -60,15 +63,57 @@ function Line({ label, children }: { label: string; children: React.ReactNode })
 function CardDetail({
   card,
   onClose,
+  onRegenerate,
 }: {
   card: ActivityCard;
   onClose: () => void;
+  onRegenerate?: (card: ActivityCard) => Promise<void>;
 }) {
   const t = useT();
   const locale = useLocale();
+  const { toast } = useToast();
+  const [regenerating, setRegenerating] = React.useState(false);
   const relation = relationLabel(card.intention_relation, locale);
   const confidence = categoryConfidenceLabel(card.category_confidence, locale);
   const apps = [card.app_primary, card.app_secondary].filter(Boolean).join(" · ");
+
+  /**
+   * Rewriting one card is only offered where it can change something.
+   *
+   * An idle stretch was never written by a model, so there is nothing to
+   * rewrite; a provisional card is still inside the rewrite horizon and the
+   * engine will revise it anyway. Offering the action there would be a button
+   * whose effect the reader cannot tell from doing nothing.
+   */
+  const canRegenerate =
+    Boolean(onRegenerate) &&
+    !card.category.is_idle &&
+    card.state !== "provisional";
+
+  const regenerate = React.useCallback(async () => {
+    setRegenerating(true);
+    try {
+      const result = await regenerateJournal({ activityId: card.id });
+      toast({
+        description: t("journal.regenerate.queued", {
+          count: result.reset_windows,
+        }),
+      });
+      // The day owns the read; this only asks for it now rather than at the
+      // next poll, so the card visibly goes back to being written.
+      await onRegenerate?.(card);
+    } catch (reason) {
+      // 404 for a card retention already removed, 429 for the same card twice
+      // inside a minute — the engine's own sentence says which.
+      toast({
+        title: t("journal.regenerate.failed"),
+        description: reason instanceof Error ? reason.message : String(reason),
+        variant: "destructive",
+      });
+    } finally {
+      setRegenerating(false);
+    }
+  }, [card, onRegenerate, t, toast]);
 
   return (
     <div
@@ -76,8 +121,12 @@ function CardDetail({
       data-card-id={card.id}
       className="journal-selectable flex flex-col gap-3"
     >
-      <CardHeader className="flex-row items-start justify-between gap-2 space-y-0 p-0">
-        <div className="min-w-0 space-y-1.5">
+      {/* The actions wrap onto their own line rather than squeezing the title:
+          the inspector is 380px, and two labelled buttons beside a title left
+          it breaking one word per line. `ml-auto` keeps them right-aligned on
+          whichever line they land on. */}
+      <CardHeader className="flex-row flex-wrap items-start justify-between gap-x-2 gap-y-1 space-y-0 p-0">
+        <div className="min-w-[12rem] flex-1 space-y-1.5">
           <CardTitle className="text-lg font-semibold normal-case tracking-tight">
             {card.title ||
               (card.category.is_idle
@@ -89,14 +138,30 @@ function CardDetail({
             {formatEstimate(card.active_minutes, locale)}
           </CardDescription>
         </div>
-        <Button
-          size="sm"
-          variant="ghost"
-          data-testid="journal-inspector-close"
-          onClick={onClose}
-        >
-          {t("inspector.close")}
-        </Button>
+        <div className="ml-auto flex shrink-0 items-center gap-1">
+          {canRegenerate ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              data-testid="journal-card-regenerate"
+              disabled={regenerating}
+              onClick={() => void regenerate()}
+            >
+              <RefreshCw
+                className={`mr-1 h-3.5 w-3.5${regenerating ? " animate-spin" : ""}`}
+              />
+              {t("inspector.regenerate")}
+            </Button>
+          ) : null}
+          <Button
+            size="sm"
+            variant="ghost"
+            data-testid="journal-inspector-close"
+            onClick={onClose}
+          >
+            {t("inspector.close")}
+          </Button>
+        </div>
       </CardHeader>
 
       <div className="flex flex-wrap items-center gap-2">
@@ -269,6 +334,7 @@ export function DayInspector({
   onClose,
   showNow,
   nowRefreshToken = 0,
+  onRegenerate,
 }: {
   day: JournalDay;
   selected: ActivityCard | null;
@@ -277,6 +343,13 @@ export function DayInspector({
   showNow: boolean;
   /** Bumped when the intention changes, so the strip re-reads immediately. */
   nowRefreshToken?: number;
+  /**
+   * Re-read the day after a card was queued for rewriting — the same refresh
+   * the header's Regenerate uses, since the day's state lives in the view
+   * above. Leaving it out hides the per-card action rather than shipping a
+   * button whose result never appears.
+   */
+  onRegenerate?: (card: ActivityCard) => Promise<void>;
 }) {
   const t = useT();
   return (
@@ -286,7 +359,11 @@ export function DayInspector({
       className="journal-scroll w-full shrink-0 overflow-y-auto rounded-lg border border-border bg-card p-4 text-card-foreground shadow-sm min-[1100px]:h-[calc(100vh-8rem)] min-[1100px]:min-h-[420px] min-[1100px]:w-[380px]"
     >
       {selected ? (
-        <CardDetail card={selected} onClose={onClose} />
+        <CardDetail
+          card={selected}
+          onClose={onClose}
+          onRegenerate={onRegenerate}
+        />
       ) : (
         <DaySummary
           day={day}

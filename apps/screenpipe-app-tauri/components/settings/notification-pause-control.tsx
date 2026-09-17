@@ -11,10 +11,11 @@ import { Moon } from "lucide-react";
 import {
   SNOOZE_PRESETS,
   snoozeUntilMs,
-  formatSnoozeUntil,
+  snoozeUntilParts,
   isQuietActive,
   type QuietHoursPref,
 } from "./notification-registry";
+import { useLocale, useT } from "@/lib/i18n";
 
 /**
  * Do Not Disturb control — the best-in-class "at scale" affordance users
@@ -49,6 +50,8 @@ export function NotificationPauseControl({
   onTurnOff,
   onQuietChange,
 }: NotificationPauseControlProps) {
+  const t = useT();
+  const locale = useLocale();
   // Re-render once a minute so an expiring snooze clears itself in the UI;
   // pause the ticker (null delay) once nothing is snoozed.
   const [, setTick] = React.useState(0);
@@ -65,16 +68,27 @@ export function NotificationPauseControl({
   // a hard off — so only surface the exception count in those states.
   const vipSuffix =
     masterOn && (isSnoozed || quietNow) && vipCount > 0
-      ? ` · ${vipCount} pipe${vipCount === 1 ? "" : "s"} still notify`
+      ? t("settings.notifications.pause.vipSuffix", { count: vipCount })
       : "";
 
+  const until = isSnoozed ? snoozeUntilParts(snoozeUntil, new Date(), locale) : null;
+
   const statusLabel = !masterOn
-    ? "off — until you turn it back on"
-    : isSnoozed
-      ? `paused ${formatSnoozeUntil(snoozeUntil)}${vipSuffix}`
+    ? t("settings.notifications.pause.statusOff")
+    : until
+      ? `${
+          until.day
+            ? t("settings.notifications.pause.statusPausedDay", {
+                day: until.day,
+                time: until.time,
+              })
+            : t("settings.notifications.pause.statusPausedTime", {
+                time: until.time,
+              })
+        }${vipSuffix}`
       : quietNow
-        ? `quiet hours active${vipSuffix}`
-        : "on";
+        ? `${t("settings.notifications.pause.statusQuiet")}${vipSuffix}`
+        : t("settings.notifications.pause.statusOn");
 
   return (
     <div
@@ -86,7 +100,9 @@ export function NotificationPauseControl({
       {/* header / status */}
       <div className="flex items-center justify-between gap-3 px-4 py-3.5">
         <div className="min-w-0">
-          <p className="text-sm font-medium">Notifications</p>
+          <p className="text-sm font-medium">
+            {t("settings.notifications.pause.title")}
+          </p>
           <p className="text-xs text-muted-foreground">{statusLabel}</p>
         </div>
         {paused ? (
@@ -95,7 +111,7 @@ export function NotificationPauseControl({
             onClick={onResume}
             className="border border-foreground px-3 py-1.5 text-[11px] font-medium uppercase tracking-wide transition-colors hover:bg-foreground hover:text-background"
           >
-            Resume
+            {t("settings.notifications.pause.resume")}
           </button>
         ) : (
           <span className="flex h-2 w-2 shrink-0 rounded-full bg-foreground" aria-hidden />
@@ -105,16 +121,18 @@ export function NotificationPauseControl({
       {/* snooze presets — only when not already paused */}
       {!paused && (
         <div className="flex flex-wrap items-center gap-1.5 border-t border-border px-4 py-3">
-          <span className="mr-1 text-[11px] text-muted-foreground">pause for</span>
+          <span className="mr-1 text-[11px] text-muted-foreground">
+            {t("settings.notifications.pause.pauseFor")}
+          </span>
           {SNOOZE_PRESETS.map((p) => (
             <button
-              key={p.label}
+              key={p.id}
               type="button"
-              data-testid={`notification-snooze-${p.label.replace(/\s+/g, "-")}`}
+              data-testid={`notification-snooze-${p.id}`}
               onClick={() => onSnooze(snoozeUntilMs(p))}
               className="border border-border px-2.5 py-1 text-[11px] transition-colors hover:border-foreground hover:bg-foreground hover:text-background"
             >
-              {p.label}
+              {t(p.labelKey)}
             </button>
           ))}
           <button
@@ -123,7 +141,7 @@ export function NotificationPauseControl({
             onClick={onTurnOff}
             className="ml-auto text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
           >
-            turn off
+            {t("settings.notifications.pause.turnOff")}
           </button>
         </div>
       )}
@@ -134,15 +152,15 @@ export function NotificationPauseControl({
           <Moon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
           <div className="min-w-0">
             <p className="text-xs font-medium">
-              Quiet hours
+              {t("settings.notifications.quiet.title")}
               {quietNow && quietHours.enabled && (
                 <span className="ml-1.5 text-[10px] font-normal text-muted-foreground">
-                  active now
+                  {t("settings.notifications.quiet.activeNow")}
                 </span>
               )}
             </p>
             <p className="text-[11px] text-muted-foreground">
-              silence non-critical alerts on a nightly schedule
+              {t("settings.notifications.quiet.description")}
             </p>
           </div>
         </div>
@@ -152,6 +170,7 @@ export function NotificationPauseControl({
             disabled={!quietHours.enabled}
             onChange={(start) => onQuietChange({ ...quietHours, start })}
             testid="quiet-start"
+            label={t("settings.notifications.quiet.startAria")}
           />
           <span className="text-[11px] text-muted-foreground">→</span>
           <TimeInput
@@ -159,6 +178,7 @@ export function NotificationPauseControl({
             disabled={!quietHours.enabled}
             onChange={(end) => onQuietChange({ ...quietHours, end })}
             testid="quiet-end"
+            label={t("settings.notifications.quiet.endAria")}
           />
           <Switch
             data-testid="notification-quiet-hours"
@@ -176,17 +196,20 @@ function TimeInput({
   onChange,
   disabled,
   testid,
+  label,
 }: {
   value: string;
   onChange: (v: string) => void;
   disabled?: boolean;
   testid: string;
+  label: string;
 }) {
   return (
     <input
       type="time"
       value={value}
       disabled={disabled}
+      aria-label={label}
       data-testid={`notification-${testid}`}
       onChange={(e) => onChange(e.target.value)}
       className="border border-border bg-transparent px-1.5 py-1 font-mono text-[11px] text-foreground outline-none transition-colors focus:border-foreground/40 disabled:opacity-40"
