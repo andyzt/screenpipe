@@ -157,10 +157,7 @@ impl DatabaseManager {
         self.get_focus_intention(id).await
     }
 
-    pub async fn get_focus_intention(
-        &self,
-        id: i64,
-    ) -> Result<Option<FocusIntention>, SqlxError> {
+    pub async fn get_focus_intention(&self, id: i64) -> Result<Option<FocusIntention>, SqlxError> {
         let row = sqlx::query_as::<_, RawIntention>(sqlx::AssertSqlSafe(format!(
             "SELECT {INTENTION_COLUMNS} FROM focus_intentions WHERE id = ?1"
         )))
@@ -364,7 +361,10 @@ mod tests {
             .unwrap();
 
         let overlapping = db
-            .list_focus_intentions_overlapping(at("2026-09-16T04:00:00Z"), at("2026-09-17T04:00:00Z"))
+            .list_focus_intentions_overlapping(
+                at("2026-09-16T04:00:00Z"),
+                at("2026-09-17T04:00:00Z"),
+            )
             .await
             .unwrap();
         assert_eq!(overlapping.len(), 1);

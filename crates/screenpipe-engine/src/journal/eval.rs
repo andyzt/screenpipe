@@ -32,7 +32,10 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
-use screenpipe_db::{FocusIntention, JournalCategory};
+use screenpipe_db::{
+    review_label_for_span, FocusIntention, JournalActivityFeedback, JournalCategory,
+    JournalReviewRating, REVIEW_MIXED,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -161,6 +164,15 @@ pub struct WindowLabel {
     pub expected_category: Option<String>,
     #[serde(default)]
     pub expected_relation: Option<String>,
+    /// The user's own review of these minutes, when they marked them
+    /// `focused`, `neutral` or `distracted` and that one rating covers the
+    /// window. `mixed` is not a label and is never written.
+    #[serde(default)]
+    pub expected_review: Option<String>,
+    /// The user gave a card in this window a thumbs down: the output that was
+    /// stored here was wrong, whatever `expected_category` ends up saying.
+    #[serde(default)]
+    pub disputed: bool,
     #[serde(default)]
     pub notes: String,
 }
@@ -204,20 +216,88 @@ impl LabelSet {
 
 /// The skeleton `export` writes next to the fixtures for a human to fill in.
 pub fn labels_skeleton(file_names: &[String]) -> Value {
-    let windows: serde_json::Map<String, Value> = file_names
+    labels_file(
+        &file_names
+            .iter()
+            .cloned()
+            .zip(std::iter::repeat(WindowLabel::default()))
+            .collect::<Vec<_>>(),
+    )
+}
+
+/// The labels file for an export: the skeleton, already carrying whatever the
+/// user themselves said about these windows. A window nobody judged is an
+/// empty entry exactly as before, so a human still fills the file in by hand.
+pub fn labels_file(entries: &[(String, WindowLabel)]) -> Value {
+    let windows: serde_json::Map<String, Value> = entries
         .iter()
-        .map(|name| {
+        .map(|(name, label)| {
             (
                 name.clone(),
                 json!({
-                    "expected_category": Value::Null,
-                    "expected_relation": Value::Null,
-                    "notes": ""
+                    "expected_category": label.expected_category,
+                    "expected_relation": label.expected_relation,
+                    "expected_review": label.expected_review,
+                    "disputed": label.disputed,
+                    "notes": label.notes
                 }),
             )
         })
         .collect();
     json!({ "windows": windows })
+}
+
+/// What the user themselves said about one window: the thumbs on the cards it
+/// covers and the review ratings painted over it.
+///
+/// A thumbs *down* is recorded as `disputed`, not as an expected category —
+/// the user said the card was wrong, not what it should have been, and the
+/// note they left is the only hint. A thumbs *up* confirms the card, so its
+/// category becomes the expected one. A review rating that covers the window
+/// is written as `expected_review`.
+pub fn label_from_user(
+    window: &CompiledWindow,
+    feedback: &[JournalActivityFeedback],
+    ratings: &[JournalReviewRating],
+) -> WindowLabel {
+    let mut label = WindowLabel::default();
+    let mut notes: Vec<String> = Vec::new();
+    for row in feedback {
+        let (Some(start), Some(end)) = (parse_ts(&row.start_at), parse_ts(&row.end_at)) else {
+            continue;
+        };
+        if end <= window.window_start || start >= window.window_end {
+            continue;
+        }
+        let note = row.note.as_deref().unwrap_or("").trim();
+        match row.rating.as_str() {
+            "down" => {
+                label.disputed = true;
+                notes.push(if note.is_empty() {
+                    format!("disputed: \"{}\"", row.title)
+                } else {
+                    format!("disputed: \"{}\" — {note}", row.title)
+                });
+            }
+            "up" => {
+                label
+                    .expected_category
+                    .get_or_insert(row.category_id.clone());
+                notes.push(format!("confirmed: \"{}\"", row.title));
+            }
+            _ => {}
+        }
+    }
+    label.expected_review = review_label_for_span(window.window_start, window.window_end, ratings)
+        .filter(|label| label != REVIEW_MIXED);
+    label.notes = notes.join(" ");
+    label
+}
+
+fn parse_ts(value: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(value)
+        .ok()
+        .map(|value| value.with_timezone(&Utc))
 }
 
 /// Load every compiled window in a directory, sorted by name. Label files and
@@ -274,8 +354,8 @@ fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> anyhow::Result<T> {
 /// run against a fixture directory with no database at all; ids and names must
 /// match `20260916000000_create_journal.sql`.
 pub fn seeded_categories() -> Vec<JournalCategory> {
-    let category = |id: &str, name: &str, description: &str, is_system, is_idle, sort_order| {
-        JournalCategory {
+    let category =
+        |id: &str, name: &str, description: &str, is_system, is_idle, sort_order| JournalCategory {
             id: id.to_string(),
             name: name.to_string(),
             description: description.to_string(),
@@ -283,8 +363,7 @@ pub fn seeded_categories() -> Vec<JournalCategory> {
             is_system,
             is_idle,
             sort_order,
-        }
-    };
+        };
     vec![
         category(
             "work",
@@ -643,8 +722,16 @@ pub fn render_run_report(
         },
         summary.repairs,
         summary.cards,
-        render_ratio(summary.category_accuracy(), summary.category_correct, summary.category_labelled),
-        render_ratio(summary.relation_accuracy(), summary.relation_correct, summary.relation_labelled),
+        render_ratio(
+            summary.category_accuracy(),
+            summary.category_correct,
+            summary.category_labelled
+        ),
+        render_ratio(
+            summary.relation_accuracy(),
+            summary.relation_correct,
+            summary.relation_labelled
+        ),
         summary.mean_latency_ms() as f64 / 1000.0,
         summary.prompt_tokens,
         summary.completion_tokens,
@@ -658,7 +745,8 @@ pub fn render_run_report(
 }
 
 fn render_gates(gates: &[Gate]) -> String {
-    let mut out = String::from("## Gates\n\n| gate | measured | required | result |\n|---|---|---|---|\n");
+    let mut out =
+        String::from("## Gates\n\n| gate | measured | required | result |\n|---|---|---|---|\n");
     for gate in gates {
         out.push_str(&gate.line());
         out.push('\n');
@@ -864,8 +952,7 @@ impl TailSummary {
                 summary.distraction_predicted += 1;
                 summary.distraction_correct += usize::from(outcome.correct());
             }
-            summary.distraction_labelled +=
-                usize::from(outcome.expected == POSSIBLE_DISTRACTION);
+            summary.distraction_labelled += usize::from(outcome.expected == POSSIBLE_DISTRACTION);
             if outcome.thin_evidence {
                 summary.thin_total += 1;
                 summary.thin_unknown += usize::from(outcome.actual == UNKNOWN);
@@ -931,7 +1018,9 @@ pub fn render_tail_report(
     ));
 
     out.push_str("## Per fixture\n\n");
-    out.push_str("| fixture | thin evidence | expected | actual | confidence | latency | reason |\n");
+    out.push_str(
+        "| fixture | thin evidence | expected | actual | confidence | latency | reason |\n",
+    );
     out.push_str("|---|---|---|---|---|---|---|\n");
     for outcome in outcomes {
         out.push_str(&format!(
@@ -1021,7 +1110,12 @@ mod tests {
         assert!(!Gate::new("category", Some(0.79), CATEGORY_ACCURACY_TARGET).passed);
     }
 
-    fn outcome(name: &str, valid: bool, expected: Option<&str>, actual: Option<&str>) -> WindowOutcome {
+    fn outcome(
+        name: &str,
+        valid: bool,
+        expected: Option<&str>,
+        actual: Option<&str>,
+    ) -> WindowOutcome {
         WindowOutcome {
             name: name.to_string(),
             valid,
@@ -1099,7 +1193,11 @@ mod tests {
     #[test]
     fn the_relation_of_a_window_ignores_cards_that_carry_none() {
         let window = load_fixture("split-attention.json");
-        let mut plain = draft("2026-09-16T13:15:00Z", "2026-09-16T13:28:00Z", "no relation");
+        let mut plain = draft(
+            "2026-09-16T13:15:00Z",
+            "2026-09-16T13:28:00Z",
+            "no relation",
+        );
         plain.intention_relation = None;
         let mut relating = draft("2026-09-16T13:28:00Z", "2026-09-16T13:30:00Z", "relating");
         relating.intention_relation = Some("supports_intention".to_string());
@@ -1113,7 +1211,10 @@ mod tests {
     fn fixtures_load_from_the_shared_directory_and_skip_label_files() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/journal");
         let fixtures = load_fixtures(&dir).expect("the shared corpus loads");
-        let names: Vec<&str> = fixtures.iter().map(|fixture| fixture.name.as_str()).collect();
+        let names: Vec<&str> = fixtures
+            .iter()
+            .map(|fixture| fixture.name.as_str())
+            .collect();
         assert!(names.contains(&"focused-morning"), "{names:?}");
         assert!(
             !names.iter().any(|name| name.ends_with(".labels")),
@@ -1133,13 +1234,131 @@ mod tests {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/journal/synthetic.labels.json");
         let labels = load_labels(&path).expect("the synthetic labels load");
-        assert!(labels.intention.is_some(), "relation labels need an intention");
+        assert!(
+            labels.intention.is_some(),
+            "relation labels need an intention"
+        );
         assert!(labels.expects_relations());
-        let by_name = labels.get("focused-morning.json").expect("labelled by file name");
+        let by_name = labels
+            .get("focused-morning.json")
+            .expect("labelled by file name");
         let by_stem = labels.get("focused-morning").expect("and by stem");
         assert_eq!(by_name, by_stem);
         assert_eq!(by_name.expected_category.as_deref(), Some("work"));
         assert!(labels.get("no-such-window").is_none());
+    }
+
+    fn feedback_row(
+        rating: &str,
+        start: &str,
+        end: &str,
+        title: &str,
+        note: Option<&str>,
+    ) -> JournalActivityFeedback {
+        JournalActivityFeedback {
+            activity_id: 1,
+            activity_key: "k1".to_string(),
+            rating: rating.to_string(),
+            note: note.map(str::to_string),
+            day: "2026-09-16".to_string(),
+            start_at: start.to_string(),
+            end_at: end.to_string(),
+            title: title.to_string(),
+            category_id: "personal".to_string(),
+            producer: "llm-v1".to_string(),
+            prompt_version: Some("journal-cards-v4".to_string()),
+            created_at: "2026-09-16T10:02:00Z".to_string(),
+            updated_at: "2026-09-16T10:02:00Z".to_string(),
+        }
+    }
+
+    fn review_row(start: &str, end: &str, rating: &str) -> JournalReviewRating {
+        JournalReviewRating {
+            id: 1,
+            start_at: start.parse().unwrap(),
+            end_at: end.parse().unwrap(),
+            rating: rating.to_string(),
+            source: "app".to_string(),
+            created_at: String::new(),
+            updated_at: String::new(),
+        }
+    }
+
+    #[test]
+    fn an_export_turns_a_thumbs_down_into_a_disputed_label_and_a_rating_into_an_expected_one() {
+        // The shared fixture's window is 08:15–08:30.
+        let window = crate::journal::test_support::compiled_fixture();
+
+        let disputed = label_from_user(
+            &window,
+            &[feedback_row(
+                "down",
+                "2026-09-16T08:15:00Z",
+                "2026-09-16T08:30:00Z",
+                "Reviewed the auth PR",
+                Some("this was a meeting"),
+            )],
+            &[],
+        );
+        assert!(disputed.disputed);
+        assert!(disputed.expected_category.is_none());
+        assert!(disputed
+            .notes
+            .contains("disputed: \"Reviewed the auth PR\""));
+        assert!(disputed.notes.contains("this was a meeting"));
+
+        // A thumbs up confirms the card, so its category is the label.
+        let confirmed = label_from_user(
+            &window,
+            &[feedback_row(
+                "up",
+                "2026-09-16T08:15:00Z",
+                "2026-09-16T08:30:00Z",
+                "Errands",
+                None,
+            )],
+            &[],
+        );
+        assert!(!confirmed.disputed);
+        assert_eq!(confirmed.expected_category.as_deref(), Some("personal"));
+        assert!(confirmed.notes.contains("confirmed: \"Errands\""));
+
+        // Feedback on a card outside the window is somebody else's label.
+        let elsewhere = label_from_user(
+            &window,
+            &[feedback_row(
+                "down",
+                "2026-09-16T11:00:00Z",
+                "2026-09-16T11:30:00Z",
+                "Later",
+                None,
+            )],
+            &[],
+        );
+        assert_eq!(elsewhere, WindowLabel::default());
+
+        // A rating covering the window becomes the expected review.
+        let rated = label_from_user(
+            &window,
+            &[],
+            &[review_row(
+                "2026-09-16T08:00:00Z",
+                "2026-09-16T09:00:00Z",
+                "distracted",
+            )],
+        );
+        assert_eq!(rated.expected_review.as_deref(), Some("distracted"));
+
+        // Two ratings splitting the window are `mixed`, which is not a label.
+        let split = label_from_user(
+            &window,
+            &[],
+            &[
+                review_row("2026-09-16T08:15:00Z", "2026-09-16T08:22:00Z", "focused"),
+                review_row("2026-09-16T08:22:00Z", "2026-09-16T08:30:00Z", "distracted"),
+            ],
+        );
+        assert_eq!(split.expected_review, None);
     }
 
     #[test]
@@ -1148,6 +1367,8 @@ mod tests {
         let entry = &skeleton["windows"]["2026-09-16-0915.json"];
         assert!(entry["expected_category"].is_null());
         assert!(entry["expected_relation"].is_null());
+        assert!(entry["expected_review"].is_null());
+        assert_eq!(entry["disputed"], false);
         assert_eq!(entry["notes"], "");
         // It must round-trip through the loader a human will hand back.
         let parsed: LabelSet = serde_json::from_value(skeleton).expect("skeleton decodes");
@@ -1157,9 +1378,14 @@ mod tests {
 
     #[test]
     fn tail_fixtures_load_labelled_and_convert_to_detector_input() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/focus/tail");
+        let dir =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/focus/tail");
         let fixtures = load_tail_fixtures(&dir).expect("the tail corpus loads");
-        assert!(fixtures.len() >= 6, "expected six tails, got {}", fixtures.len());
+        assert!(
+            fixtures.len() >= 6,
+            "expected six tails, got {}",
+            fixtures.len()
+        );
         assert!(
             fixtures
                 .iter()
@@ -1216,7 +1442,12 @@ mod tests {
         // One false accusation out of two drops precision to 50 % and fails.
         let with_false_positive = vec![
             tail("feed", POSSIBLE_DISTRACTION, POSSIBLE_DISTRACTION, false),
-            tail("research", "supports_intention", POSSIBLE_DISTRACTION, false),
+            tail(
+                "research",
+                "supports_intention",
+                POSSIBLE_DISTRACTION,
+                false,
+            ),
         ];
         let summary = TailSummary::of(&with_false_positive);
         assert_eq!(summary.distraction_precision(), Some(0.5));
@@ -1260,7 +1491,12 @@ mod tests {
         // 200 prompt tokens at $1/M plus 100 completion at $2/M.
         assert!(report.contains("$0.0004"), "{report}");
 
-        let tails = vec![tail("feed", POSSIBLE_DISTRACTION, POSSIBLE_DISTRACTION, false)];
+        let tails = vec![tail(
+            "feed",
+            POSSIBLE_DISTRACTION,
+            POSSIBLE_DISTRACTION,
+            false,
+        )];
         let tail_report = render_tail_report(&header, &tails, &TailSummary::of(&tails));
         assert!(tail_report.contains("distraction precision"));
         assert!(tail_report.contains("All gates passed."));

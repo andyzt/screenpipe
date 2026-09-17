@@ -216,13 +216,21 @@ pub async fn create_focus_intention(
         .await
         .map_err(internal)?;
 
-    reset_focus_state(&state.db, Some(intention.id), "detector has not run yet", now).await?;
+    reset_focus_state(
+        &state.db,
+        Some(intention.id),
+        "detector has not run yet",
+        now,
+    )
+    .await?;
     Ok(JsonResponse(JournalIntention::from(intention)))
 }
 
 /// Validate the body before it reaches SQLite: the title bounds and the
 /// `source` CHECK constraint are both 400s, not 500s.
-fn validate_intention(payload: &CreateFocusIntentionRequest) -> Result<NewFocusIntention, ApiError> {
+fn validate_intention(
+    payload: &CreateFocusIntentionRequest,
+) -> Result<NewFocusIntention, ApiError> {
     let title = payload.title.trim();
     if title.is_empty() || title.chars().count() > MAX_TITLE_CHARS {
         return Err(bad_request("title must be 1-200 characters"));
@@ -328,7 +336,8 @@ async fn apply_override(
         })
         .unwrap_or((None, None));
 
-    if let Some(key) = suppression::task_key(dominant_task_title.as_deref(), dominant_app.as_deref())
+    if let Some(key) =
+        suppression::task_key(dominant_task_title.as_deref(), dominant_app.as_deref())
     {
         suppression::suppress(
             intention.id,
@@ -553,7 +562,10 @@ mod tests {
         assert_eq!(response.dominant_app.as_deref(), Some("Arc"));
 
         // A clock that moved backwards must not produce a negative duration.
-        assert_eq!(divergence_minutes(Some("2026-09-16T10:00:00+00:00"), now), 0.0);
+        assert_eq!(
+            divergence_minutes(Some("2026-09-16T10:00:00+00:00"), now),
+            0.0
+        );
         assert_eq!(divergence_minutes(None, now), 0.0);
         assert_eq!(divergence_minutes(Some("not a timestamp"), now), 0.0);
     }
@@ -561,7 +573,10 @@ mod tests {
     #[test]
     fn an_intention_that_ended_before_the_cutoff_is_invisible() {
         let cutoff = Some(at("2026-09-16T09:00:00Z"));
-        assert!(visible(None, cutoff), "an open intention is always about now");
+        assert!(
+            visible(None, cutoff),
+            "an open intention is always about now"
+        );
         assert!(visible(Some("2026-09-16T09:30:00+00:00"), cutoff));
         assert!(!visible(Some("2026-09-16T08:30:00+00:00"), cutoff));
         // No policy, no clamp.
@@ -584,9 +599,19 @@ mod tests {
         }
         // The detector's own verdicts are not the user's to assert, and an
         // empty string is not an opinion.
-        for relation in ["", "supports_intention", "possible_distraction", "unknown", "nope"] {
+        for relation in [
+            "",
+            "supports_intention",
+            "possible_distraction",
+            "unknown",
+            "nope",
+        ] {
             let error = validate_override(&override_request(relation, None)).unwrap_err();
-            assert_eq!(status(&error), StatusCode::BAD_REQUEST, "relation {relation:?}");
+            assert_eq!(
+                status(&error),
+                StatusCode::BAD_REQUEST,
+                "relation {relation:?}"
+            );
         }
     }
 
@@ -608,7 +633,9 @@ mod tests {
         let now = at("2026-09-16T09:46:00Z");
 
         // Nothing to override before an intention exists.
-        let error = apply_override(&db, "other_work", 30, now).await.unwrap_err();
+        let error = apply_override(&db, "other_work", 30, now)
+            .await
+            .unwrap_err();
         assert_eq!(status(&error), StatusCode::BAD_REQUEST);
 
         let draft = validate_intention(&request("Ship auth fix", "app")).unwrap();
@@ -635,7 +662,10 @@ mod tests {
         assert_eq!(response.divergence_started_at, None);
         assert_eq!(response.divergence_minutes, 0.0);
         // The same shape `GET /focus/status` returns, task and intention kept.
-        assert_eq!(response.dominant_task_title.as_deref(), Some("route-override-task"));
+        assert_eq!(
+            response.dominant_task_title.as_deref(),
+            Some("route-override-task")
+        );
         assert_eq!(response.dominant_app.as_deref(), Some("Arc"));
         assert_eq!(response.intention.map(|i| i.id), Some(intention.id));
         assert!(response.evidence_ok);

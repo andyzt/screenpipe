@@ -17,7 +17,10 @@
 
 use chrono::{DateTime, Utc};
 use oasgen::OaSchema;
-use screenpipe_db::{JournalActivity, JournalCategory, JournalLedgerInterval};
+use screenpipe_db::{
+    JournalActivity, JournalCardFeedback, JournalCategory, JournalLedgerInterval,
+    JournalReviewRating,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -39,7 +42,7 @@ pub const CARD_APPS_LIMIT: usize = 6;
 pub const DAY_APPS_LIMIT: usize = 12;
 
 /// Ledger task kind for the gaps between observations. Never an app.
-const UNOBSERVED_TASK_KIND: &str = "unobserved";
+pub(crate) const UNOBSERVED_TASK_KIND: &str = "unobserved";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, OaSchema)]
 pub struct CardCategory {
@@ -79,6 +82,24 @@ pub struct CardDistraction {
 /// One app (optionally one site inside it) and how long a card or a day spent
 /// there. `minutes` is an estimate like every other minutes figure in this
 /// module.
+/// The user's thumb on a card, plus whatever they wrote with it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, OaSchema)]
+pub struct CardFeedback {
+    pub rating: String,
+    pub note: Option<String>,
+    pub created_at: String,
+}
+
+impl From<JournalCardFeedback> for CardFeedback {
+    fn from(feedback: JournalCardFeedback) -> Self {
+        Self {
+            rating: feedback.rating,
+            note: feedback.note,
+            created_at: feedback.created_at,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, OaSchema)]
 pub struct CardApp {
     pub name: String,
@@ -114,6 +135,22 @@ pub struct ActivityCard {
     pub apps: Vec<CardApp>,
     pub distractions: Vec<CardDistraction>,
     pub evidence_count: i64,
+    /// `null` until the user rates the card.
+    pub feedback: Option<CardFeedback>,
+    /// The user's timeline review over this card's span: one of the three
+    /// ratings, `"mixed"`, or `null` when no rating touches it.
+    pub review: Option<String>,
+}
+
+/// How a day's reviewed minutes split. Every minute of a non-idle card lands
+/// in exactly one bucket, so the four always add up to the reviewed part of
+/// `wall_minutes`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, OaSchema)]
+pub struct ReviewTotals {
+    pub focused_minutes: f64,
+    pub neutral_minutes: f64,
+    pub distracted_minutes: f64,
+    pub unrated_minutes: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, OaSchema)]
@@ -187,7 +224,53 @@ pub fn to_card(activity: JournalActivity, categories: &[JournalCategory]) -> Act
             })
             .collect(),
         evidence_count: activity.evidence_count,
+        feedback: activity.feedback.map(CardFeedback::from),
+        review: activity.review,
     }
+}
+
+/// `wall_minutes` of the day's non-idle cards, split by the review rating
+/// covering each minute. Idle cards are excluded: the user rates what they
+/// were doing, and "the screen was up but nothing happened" is not that.
+///
+/// Ratings never overlap each other (the writer splits them), so the overlaps
+/// are simply summed and whatever a card's span has left over is unrated.
+pub fn compute_review_totals(
+    cards: &[ActivityCard],
+    ratings: &[JournalReviewRating],
+) -> ReviewTotals {
+    let mut totals = ReviewTotals::default();
+    for card in cards {
+        if card.category.is_idle {
+            continue;
+        }
+        let (Some(start), Some(end)) = (parse(&card.start_at), parse(&card.end_at)) else {
+            continue;
+        };
+        if end <= start {
+            continue;
+        }
+        let mut rated = 0.0;
+        for rating in ratings {
+            let from = rating.start_at.max(start);
+            let to = rating.end_at.min(end);
+            if to <= from {
+                continue;
+            }
+            let minutes = minutes_between(from, to);
+            rated += minutes;
+            match rating.rating.as_str() {
+                "focused" => totals.focused_minutes += minutes,
+                "neutral" => totals.neutral_minutes += minutes,
+                "distracted" => totals.distracted_minutes += minutes,
+                // A rating value the schema does not know is not silently
+                // folded into one of the three: it is simply not counted.
+                _ => rated -= minutes,
+            }
+        }
+        totals.unrated_minutes += (minutes_between(start, end) - rated).max(0.0);
+    }
+    totals
 }
 
 /// The category deterministic cards and orphaned cards land in: the first
@@ -297,7 +380,10 @@ pub fn compute_by_app(cards: &[ActivityCard]) -> Vec<CardApp> {
 
 /// Descending by minutes, then by name and host so equal minutes never
 /// reorder between two reads of the same day.
-fn rank_apps(minutes: HashMap<(String, Option<String>), f64>, limit: usize) -> Vec<CardApp> {
+pub(crate) fn rank_apps(
+    minutes: HashMap<(String, Option<String>), f64>,
+    limit: usize,
+) -> Vec<CardApp> {
     let mut apps: Vec<CardApp> = minutes
         .into_iter()
         .map(|((name, host), minutes)| CardApp {
@@ -320,7 +406,7 @@ fn rank_apps(minutes: HashMap<(String, Option<String>), f64>, limit: usize) -> V
 
 /// The app a ledger interval belongs to: the task's own `app_name`, falling
 /// back to the parent task's title (the ledger's per-app grouping row).
-fn app_name_of(interval: &JournalLedgerInterval) -> Option<String> {
+pub(crate) fn app_name_of(interval: &JournalLedgerInterval) -> Option<String> {
     interval
         .app_name
         .as_deref()
@@ -347,7 +433,7 @@ fn app_name_of(interval: &JournalLedgerInterval) -> Option<String> {
 /// names and hit the same shape (`auth.rs`), so a file-extension denylist
 /// rejects them. The cost of the ambiguity is a `null` host, never a wrong
 /// app name.
-fn host_of_title(title: &str) -> Option<String> {
+pub(crate) fn host_of_title(title: &str) -> Option<String> {
     let value = title.trim().to_lowercase();
     if value.is_empty() || value.len() > 253 || value.contains(char::is_whitespace) {
         return None;
@@ -458,27 +544,54 @@ pub fn compute_day_totals(cards: &[ActivityCard]) -> DayTotals {
 /// The longest run of focus once spans closer than five minutes are treated as
 /// one sitting: a thirty-second glance at a notification does not end a block.
 fn longest_focus_block(spans: &mut Vec<(DateTime<Utc>, DateTime<Utc>)>) -> f64 {
+    merge_focus_blocks(spans)
+        .into_iter()
+        .map(|(start, end)| minutes_between(start, end))
+        .fold(0.0f64, f64::max)
+}
+
+/// The focus blocks themselves, in order: focus spans sorted and merged
+/// whenever they are closer together than [`FOCUS_BLOCK_MERGE_GAP`].
+/// `longest_focus_block` is the longest of these, so the weekly dashboard's
+/// `focus_blocks` and a day's `longest_focus_block_minutes` are the same
+/// arithmetic seen from two sides.
+pub(crate) fn merge_focus_blocks(
+    spans: &mut Vec<(DateTime<Utc>, DateTime<Utc>)>,
+) -> Vec<(DateTime<Utc>, DateTime<Utc>)> {
     if spans.is_empty() {
-        return 0.0;
+        return Vec::new();
     }
     spans.sort_by_key(|(start, _)| *start);
-    let mut best = 0.0f64;
+    let mut blocks = Vec::new();
     let (mut block_start, mut block_end) = spans[0];
     for &(start, end) in spans.iter().skip(1) {
         if start - block_end < FOCUS_BLOCK_MERGE_GAP {
             block_end = block_end.max(end);
         } else {
-            best = best.max(minutes_between(block_start, block_end));
+            blocks.push((block_start, block_end));
             block_start = start;
             block_end = end;
         }
     }
-    best.max(minutes_between(block_start, block_end))
+    blocks.push((block_start, block_end));
+    blocks
+}
+
+/// The stretches of a card that count as focus: its span minus its own
+/// `distractions[]`. Exactly the spans [`compute_day_totals`] folds into
+/// `longest_focus_block_minutes`, exposed so the weekly dashboard cannot
+/// arrive at a different set.
+pub(crate) fn card_focus_spans(
+    card: &ActivityCard,
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+) -> Vec<(DateTime<Utc>, DateTime<Utc>)> {
+    subtract(start, end, &clipped_detours(card, start, end))
 }
 
 /// A card's `distractions[]`, clipped to the card and sorted, so arithmetic on
 /// them cannot run past the card's own span.
-fn clipped_detours(
+pub(crate) fn clipped_detours(
     card: &ActivityCard,
     start: DateTime<Utc>,
     end: DateTime<Utc>,
@@ -504,7 +617,7 @@ fn clipped_detours(
     merged
 }
 
-fn subtract(
+pub(crate) fn subtract(
     start: DateTime<Utc>,
     end: DateTime<Utc>,
     holes: &[(DateTime<Utc>, DateTime<Utc>)],
@@ -523,11 +636,11 @@ fn subtract(
     out
 }
 
-fn minutes_between(start: DateTime<Utc>, end: DateTime<Utc>) -> f64 {
+pub(crate) fn minutes_between(start: DateTime<Utc>, end: DateTime<Utc>) -> f64 {
     (end - start).num_milliseconds().max(0) as f64 / 60_000.0
 }
 
-fn parse(value: &str) -> Option<DateTime<Utc>> {
+pub(crate) fn parse(value: &str) -> Option<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(value)
         .ok()
         .map(|value| value.with_timezone(&Utc))
@@ -570,11 +683,61 @@ mod tests {
             apps: Vec::new(),
             distractions: Vec::new(),
             evidence_count: 0,
+            feedback: None,
+            review: None,
         }
     }
 
     fn work(start: &str, end: &str) -> ActivityCard {
         card(start, end, category("work", "Work", false, false))
+    }
+
+    #[test]
+    fn review_totals_split_the_day_by_what_the_user_said_about_it() {
+        let rating = |start: &str, end: &str, label: &str| JournalReviewRating {
+            id: 1,
+            start_at: start.parse().unwrap(),
+            end_at: end.parse().unwrap(),
+            rating: label.to_string(),
+            source: "app".to_string(),
+            created_at: String::new(),
+            updated_at: String::new(),
+        };
+        let cards = vec![
+            work("2026-09-16T08:00:00Z", "2026-09-16T09:00:00Z"),
+            work("2026-09-16T09:00:00Z", "2026-09-16T10:00:00Z"),
+            // Idle minutes are nobody's review.
+            card(
+                "2026-09-16T10:00:00Z",
+                "2026-09-16T11:00:00Z",
+                category("idle", "Idle", true, true),
+            ),
+        ];
+        let totals = compute_review_totals(
+            &cards,
+            &[
+                rating("2026-09-16T08:00:00Z", "2026-09-16T08:45:00Z", "focused"),
+                rating("2026-09-16T09:30:00Z", "2026-09-16T11:00:00Z", "distracted"),
+            ],
+        );
+        assert_eq!(totals.focused_minutes, 45.0);
+        assert_eq!(totals.distracted_minutes, 30.0);
+        assert_eq!(totals.neutral_minutes, 0.0);
+        // 15 minutes of the first card and half of the second.
+        assert_eq!(totals.unrated_minutes, 45.0);
+        // The four buckets account for every non-idle wall minute.
+        assert_eq!(
+            totals.focused_minutes
+                + totals.neutral_minutes
+                + totals.distracted_minutes
+                + totals.unrated_minutes,
+            120.0
+        );
+
+        // No ratings at all: everything non-idle is unrated.
+        let empty = compute_review_totals(&cards, &[]);
+        assert_eq!(empty.unrated_minutes, 120.0);
+        assert_eq!(empty.focused_minutes, 0.0);
     }
 
     #[test]

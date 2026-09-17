@@ -39,6 +39,9 @@ import {
   buildFocusStatusResult,
   buildJournalActivityResult,
   buildJournalDayResult,
+  buildJournalRecapResult,
+  buildJournalReviewResult,
+  buildJournalWeekResult,
   buildSetIntentionResult,
 } from "./journal-tools";
 import {
@@ -561,6 +564,88 @@ const TOOLS: Tool[] = [
           type: "boolean",
           description: "Set true to end the currently active intention instead of starting a new one.",
           default: false,
+        },
+      },
+    },
+  },
+  {
+    name: "journal-recap",
+    description:
+      "Daily recap: one LLM-written summary of a day's final journal cards — a short narrative, what got done, what's still open, and a note on the biggest detour. " +
+      "USE WHEN: the user asks for a recap, a summary of their day, or 'what did I get done today/yesterday?' — this reads faster than walking every journal-day card. " +
+      "DO NOT USE for: the individual cards themselves (use journal-day) or a whole week (use journal-week). " +
+      "Regenerates automatically when there is no stored recap yet or the stored one is stale (a card changed after it was written); pass regenerate: true to force a fresh one regardless. " +
+      "If the result says journal is unavailable, fall back to journal-day or activity-summary — older screenpipe builds do not have this feature yet.",
+    annotations: {
+      title: "Journal Recap",
+      readOnlyHint: false,
+      destructiveHint: false,
+      openWorldHint: false,
+      idempotentHint: false,
+    },
+    inputSchema: {
+      type: "object",
+      properties: {
+        date: {
+          type: "string",
+          description: "Calendar date as YYYY-MM-DD. Defaults to today. A journal day runs local 04:00 to the next local 04:00.",
+        },
+        regenerate: {
+          type: "boolean",
+          description: "Force a fresh recap even if a ready one is already stored.",
+          default: false,
+        },
+      },
+    },
+  },
+  {
+    name: "journal-review",
+    description:
+      "Mark a span of the day as focused, neutral, or distracted — the user's own judgment, layered on top of the automatic category and intention-relation labels. Ratings never overlap: a new one splits or replaces whatever it previously covered. " +
+      "USE WHEN: the user corrects or confirms how a stretch of time went ('mark 9 to 10:30 as focused', 'that whole afternoon was distracted'). Pass rating: null to clear a span instead of setting one. " +
+      "This is the only tool on this list besides set-intention that changes app state. Rating a span does not itself rewrite existing card text — regenerating a card is a separate, engine-side action. " +
+      "If the result says journal is unavailable, this feature does not exist on this screenpipe build yet.",
+    annotations: {
+      title: "Journal Review",
+      readOnlyHint: false,
+      destructiveHint: false,
+      openWorldHint: false,
+      idempotentHint: true,
+    },
+    inputSchema: {
+      type: "object",
+      properties: {
+        start: {
+          type: "string",
+          description: "Start of the span, ISO-8601 timestamp (e.g. 2026-09-16T09:00:00Z). Must be before end.",
+        },
+        end: {
+          type: "string",
+          description: "End of the span, ISO-8601 timestamp. Span is at most 24 hours.",
+        },
+        rating: {
+          type: ["string", "null"],
+          enum: ["focused", "neutral", "distracted", null],
+          description: "Rating to apply to the span, or null to clear whatever rating currently covers it.",
+        },
+      },
+      required: ["start", "end", "rating"],
+    },
+  },
+  {
+    name: "journal-week",
+    description:
+      "Analytical week dashboard: totals with week-over-week deltas, the top categories and apps by time, the week's five longest focus blocks, and how each active intention's time split between supporting it, other work, and distraction. " +
+      "USE WHEN: the user asks about a week, 'how was my week', wants a trend versus the previous week, or wants a breakdown by category/app instead of a chronological read. " +
+      "DO NOT USE for: one specific day's cards (use journal-day) or a short narrative summary (use journal-recap). " +
+      "If the result says journal is unavailable, fall back to journal-day for individual days or activity-summary — older screenpipe builds do not have this feature yet.",
+    annotations: { title: "Journal Week", readOnlyHint: true, openWorldHint: false, idempotentHint: true },
+    inputSchema: {
+      type: "object",
+      properties: {
+        start: {
+          type: "string",
+          description: "First day of the week as YYYY-MM-DD. Defaults to the Monday of the current local journal week.",
         },
       },
     },
@@ -1913,6 +1998,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "set-intention": {
         const result = await buildSetIntentionResult(args, callAPI);
+        return { content: [{ type: "text", text: result.text }] };
+      }
+
+      case "journal-recap": {
+        const result = await buildJournalRecapResult(args, callAPI);
+        return { content: [{ type: "text", text: result.text }] };
+      }
+
+      case "journal-review": {
+        const result = await buildJournalReviewResult(args, callAPI);
+        return { content: [{ type: "text", text: result.text }] };
+      }
+
+      case "journal-week": {
+        const result = await buildJournalWeekResult(args, callAPI);
         return { content: [{ type: "text", text: result.text }] };
       }
 

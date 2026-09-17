@@ -249,7 +249,8 @@ impl Segment {
     fn absorb(&mut self, other: &Segment) {
         self.start_at = self.start_at.min(other.start_at);
         self.end_at = self.end_at.max(other.end_at);
-        self.interval_keys.extend(other.interval_keys.iter().cloned());
+        self.interval_keys
+            .extend(other.interval_keys.iter().cloned());
     }
 }
 
@@ -317,7 +318,10 @@ fn fold_short(mut segments: Vec<Segment>) -> Vec<Segment> {
 /// "<app> · <window or host>" — the deterministic stand-in for a summary. It
 /// is deliberately mechanical: an honest label beats an invented sentence.
 fn describe(interval: &CompiledInterval) -> String {
-    let app = interval.app.clone().unwrap_or_else(|| "Unknown app".to_string());
+    let app = interval
+        .app
+        .clone()
+        .unwrap_or_else(|| "Unknown app".to_string());
     let detail = interval
         .window_title
         .clone()
@@ -366,6 +370,7 @@ mod tests {
             context_start: at("2026-09-16T08:00:00Z"),
             active_minutes: 0.0,
             intervals,
+            reviews: Vec::new(),
         }
     }
 
@@ -392,9 +397,24 @@ mod tests {
     #[test]
     fn runs_shorter_than_two_minutes_fold_into_the_longer_neighbour() {
         let compiled = window(vec![
-            interval("long", "auth", "2026-09-16T08:00:00Z", "2026-09-16T08:30:00Z"),
-            interval("blip", "finder", "2026-09-16T08:30:00Z", "2026-09-16T08:30:30Z"),
-            interval("short", "docs", "2026-09-16T08:30:30Z", "2026-09-16T08:40:00Z"),
+            interval(
+                "long",
+                "auth",
+                "2026-09-16T08:00:00Z",
+                "2026-09-16T08:30:00Z",
+            ),
+            interval(
+                "blip",
+                "finder",
+                "2026-09-16T08:30:00Z",
+                "2026-09-16T08:30:30Z",
+            ),
+            interval(
+                "short",
+                "docs",
+                "2026-09-16T08:30:30Z",
+                "2026-09-16T08:40:00Z",
+            ),
         ]);
         let cards = deterministic_cards(&compiled, "work");
         assert_eq!(cards.len(), 2);

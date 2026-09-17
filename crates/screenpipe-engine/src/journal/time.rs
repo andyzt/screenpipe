@@ -153,8 +153,11 @@ mod tests {
             at("2026-09-16T08:01:30Z"),
         ];
         // 30 s of the first gap plus the whole 60 s second gap.
-        let minutes =
-            active_minutes_in_span(&stamps, at("2026-09-16T08:00:00Z"), at("2026-09-16T09:00:00Z"));
+        let minutes = active_minutes_in_span(
+            &stamps,
+            at("2026-09-16T08:00:00Z"),
+            at("2026-09-16T09:00:00Z"),
+        );
         assert!((minutes - 1.5).abs() < 1e-9);
     }
 
@@ -169,13 +172,22 @@ mod tests {
     #[test]
     fn day_of_puts_the_small_hours_on_the_previous_day() {
         // 03:30 Berlin on the 17th is still the 16th's journal day.
-        assert_eq!(day_of_in(at("2026-09-17T01:30:00Z"), &Berlin), date("2026-09-16"));
+        assert_eq!(
+            day_of_in(at("2026-09-17T01:30:00Z"), &Berlin),
+            date("2026-09-16")
+        );
         // 04:30 Berlin on the 17th has crossed over.
-        assert_eq!(day_of_in(at("2026-09-17T02:30:00Z"), &Berlin), date("2026-09-17"));
+        assert_eq!(
+            day_of_in(at("2026-09-17T02:30:00Z"), &Berlin),
+            date("2026-09-17")
+        );
         // Round trip: every instant inside a day's bounds maps back to it.
         let (start, end) = day_bounds_in(date("2026-09-16"), &Berlin).unwrap();
         assert_eq!(day_of_in(start, &Berlin), date("2026-09-16"));
-        assert_eq!(day_of_in(end - Duration::seconds(1), &Berlin), date("2026-09-16"));
+        assert_eq!(
+            day_of_in(end - Duration::seconds(1), &Berlin),
+            date("2026-09-16")
+        );
     }
 
     #[test]

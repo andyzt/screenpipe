@@ -132,9 +132,7 @@ impl CardIssue {
     /// about it rather than only what went wrong.
     pub fn reminder(&self) -> &'static str {
         match self {
-            CardIssue::Empty => {
-                "Return at least one card covering the supplied observations."
-            }
+            CardIssue::Empty => "Return at least one card covering the supplied observations.",
             CardIssue::TimeCoverage(_) | CardIssue::MissingEvidenceCoverage(_) => {
                 "You MUST ensure your output cards collectively cover ALL time periods from the \
                  previous cards and the observations. Do not drop any time segments. Find every \
@@ -250,13 +248,8 @@ pub fn validate_cards(cards: &[CardDraft], bounds: &EvidenceBounds) -> Vec<CardI
 
     // Observed time is not a draft: a whole missing minute is a hole in the
     // person's day, wherever it falls.
-    if let Some(detail) = coverage_detail(
-        cards,
-        &evidence,
-        &outputs,
-        OUTPUT_TOLERANCE,
-        "observed",
-    ) {
+    if let Some(detail) = coverage_detail(cards, &evidence, &outputs, OUTPUT_TOLERANCE, "observed")
+    {
         issues.push(CardIssue::MissingEvidenceCoverage(detail));
     }
 
@@ -439,7 +432,11 @@ fn gap_issues(
 /// Merge overlapping spans, joining those separated by no more than
 /// `tolerance`.
 pub fn merge_spans(spans: &[Span], tolerance: Duration) -> Vec<Span> {
-    let mut sorted: Vec<Span> = spans.iter().filter(|span| span.end > span.start).copied().collect();
+    let mut sorted: Vec<Span> = spans
+        .iter()
+        .filter(|span| span.end > span.start)
+        .copied()
+        .collect();
     sorted.sort_by_key(|span| (span.start, span.end));
     let mut merged: Vec<Span> = Vec::new();
     for span in sorted {
@@ -512,7 +509,11 @@ mod tests {
         let cases = vec![
             Case {
                 name: "a fresh segment covered by one card is valid",
-                cards: vec![draft("2026-09-16T09:00:00Z", "2026-09-16T09:30:00Z", "One session")],
+                cards: vec![draft(
+                    "2026-09-16T09:00:00Z",
+                    "2026-09-16T09:30:00Z",
+                    "One session",
+                )],
                 previous: vec![],
                 observations: vec![span("2026-09-16T09:00:00Z", "2026-09-16T09:30:00Z")],
                 expected: vec![],
@@ -530,8 +531,16 @@ mod tests {
             Case {
                 name: "a non-final card under ten minutes is rejected",
                 cards: vec![
-                    draft("2026-09-16T09:00:00Z", "2026-09-16T09:08:00Z", "Short first"),
-                    draft("2026-09-16T09:08:00Z", "2026-09-16T09:30:00Z", "Long second"),
+                    draft(
+                        "2026-09-16T09:00:00Z",
+                        "2026-09-16T09:08:00Z",
+                        "Short first",
+                    ),
+                    draft(
+                        "2026-09-16T09:08:00Z",
+                        "2026-09-16T09:30:00Z",
+                        "Long second",
+                    ),
                 ],
                 previous: vec![],
                 observations: vec![span("2026-09-16T09:00:00Z", "2026-09-16T09:30:00Z")],
@@ -550,8 +559,16 @@ mod tests {
             Case {
                 name: "two short cards are both reported, not just the first",
                 cards: vec![
-                    draft("2026-09-16T09:00:00Z", "2026-09-16T09:08:00Z", "Short first"),
-                    draft("2026-09-16T09:08:00Z", "2026-09-16T09:13:00Z", "Short middle"),
+                    draft(
+                        "2026-09-16T09:00:00Z",
+                        "2026-09-16T09:08:00Z",
+                        "Short first",
+                    ),
+                    draft(
+                        "2026-09-16T09:08:00Z",
+                        "2026-09-16T09:13:00Z",
+                        "Short middle",
+                    ),
                     draft("2026-09-16T09:13:00Z", "2026-09-16T09:30:00Z", "Long last"),
                 ],
                 previous: vec![],
@@ -560,14 +577,22 @@ mod tests {
             },
             Case {
                 name: "a card longer than an hour is rejected",
-                cards: vec![draft("2026-09-16T09:00:00Z", "2026-09-16T10:15:00Z", "Marathon")],
+                cards: vec![draft(
+                    "2026-09-16T09:00:00Z",
+                    "2026-09-16T10:15:00Z",
+                    "Marathon",
+                )],
                 previous: vec![],
                 observations: vec![span("2026-09-16T09:00:00Z", "2026-09-16T10:15:00Z")],
                 expected: vec!["DURATION ERROR"],
             },
             Case {
                 name: "a card that ends before it starts is rejected",
-                cards: vec![draft("2026-09-16T09:30:00Z", "2026-09-16T09:00:00Z", "Reversed")],
+                cards: vec![draft(
+                    "2026-09-16T09:30:00Z",
+                    "2026-09-16T09:00:00Z",
+                    "Reversed",
+                )],
                 previous: vec![],
                 observations: vec![span("2026-09-16T09:00:00Z", "2026-09-16T09:30:00Z")],
                 expected: vec!["DURATION ERROR", "TIME COVERAGE ERROR"],
@@ -594,7 +619,11 @@ mod tests {
             },
             Case {
                 name: "a cross-midnight merge is ordinary arithmetic on absolute instants",
-                cards: vec![draft("2026-09-16T23:50:00Z", "2026-09-17T00:05:00Z", "Cross-midnight")],
+                cards: vec![draft(
+                    "2026-09-16T23:50:00Z",
+                    "2026-09-17T00:05:00Z",
+                    "Cross-midnight",
+                )],
                 previous: vec![
                     span("2026-09-16T23:50:00Z", "2026-09-17T00:00:00Z"),
                     span("2026-09-17T00:00:00Z", "2026-09-17T00:05:00Z"),
@@ -614,7 +643,11 @@ mod tests {
             },
             Case {
                 name: "a sub-minute seam in the evidence is one connected session",
-                cards: vec![draft("2026-09-16T09:00:00Z", "2026-09-16T09:20:00Z", "One session")],
+                cards: vec![draft(
+                    "2026-09-16T09:00:00Z",
+                    "2026-09-16T09:20:00Z",
+                    "One session",
+                )],
                 previous: vec![],
                 observations: vec![
                     span("2026-09-16T09:00:00Z", "2026-09-16T09:10:00Z"),
@@ -624,7 +657,11 @@ mod tests {
             },
             Case {
                 name: "a card bridging a material evidence gap is rejected",
-                cards: vec![draft("2026-09-16T09:00:00Z", "2026-09-16T09:30:00Z", "Bridged gap")],
+                cards: vec![draft(
+                    "2026-09-16T09:00:00Z",
+                    "2026-09-16T09:30:00Z",
+                    "Bridged gap",
+                )],
                 previous: vec![],
                 observations: vec![
                     span("2026-09-16T09:00:00Z", "2026-09-16T09:10:00Z"),
@@ -647,21 +684,33 @@ mod tests {
             },
             Case {
                 name: "an invented lead-in outside the evidence is rejected",
-                cards: vec![draft("2026-09-16T08:55:00Z", "2026-09-16T09:20:00Z", "Invented lead-in")],
+                cards: vec![draft(
+                    "2026-09-16T08:55:00Z",
+                    "2026-09-16T09:20:00Z",
+                    "Invented lead-in",
+                )],
                 previous: vec![],
                 observations: vec![span("2026-09-16T09:00:00Z", "2026-09-16T09:20:00Z")],
                 expected: vec!["OUT OF BOUNDS ERROR"],
             },
             Case {
                 name: "dropping the newest observation tail is rejected",
-                cards: vec![draft("2026-09-16T09:00:00Z", "2026-09-16T09:27:00Z", "Incomplete")],
+                cards: vec![draft(
+                    "2026-09-16T09:00:00Z",
+                    "2026-09-16T09:27:00Z",
+                    "Incomplete",
+                )],
                 previous: vec![],
                 observations: vec![span("2026-09-16T09:00:00Z", "2026-09-16T09:30:00Z")],
                 expected: vec!["TIME COVERAGE ERROR"],
             },
             Case {
                 name: "dropping the older observations of the prompt window is rejected",
-                cards: vec![draft("2026-09-16T09:15:00Z", "2026-09-16T09:30:00Z", "Newest only")],
+                cards: vec![draft(
+                    "2026-09-16T09:15:00Z",
+                    "2026-09-16T09:30:00Z",
+                    "Newest only",
+                )],
                 previous: vec![],
                 observations: vec![
                     span("2026-09-16T08:50:00Z", "2026-09-16T09:00:00Z"),
@@ -671,28 +720,44 @@ mod tests {
             },
             Case {
                 name: "dropping time a previous card already covered is rejected",
-                cards: vec![draft("2026-09-16T09:15:00Z", "2026-09-16T09:45:00Z", "New only")],
+                cards: vec![draft(
+                    "2026-09-16T09:15:00Z",
+                    "2026-09-16T09:45:00Z",
+                    "New only",
+                )],
                 previous: vec![span("2026-09-16T08:55:00Z", "2026-09-16T09:15:00Z")],
                 observations: vec![span("2026-09-16T09:15:00Z", "2026-09-16T09:45:00Z")],
                 expected: vec!["TIME COVERAGE ERROR"],
             },
             Case {
                 name: "a sub-minute drift against the observations is rounding, not a hole",
-                cards: vec![draft("2026-09-16T09:00:30Z", "2026-09-16T09:30:00Z", "Slightly late")],
+                cards: vec![draft(
+                    "2026-09-16T09:00:30Z",
+                    "2026-09-16T09:30:00Z",
+                    "Slightly late",
+                )],
                 previous: vec![],
                 observations: vec![span("2026-09-16T09:00:00Z", "2026-09-16T09:30:00Z")],
                 expected: vec![],
             },
             Case {
                 name: "a previous card's boundary may move by two minutes",
-                cards: vec![draft("2026-09-16T09:02:00Z", "2026-09-16T09:30:00Z", "Redrawn boundary")],
+                cards: vec![draft(
+                    "2026-09-16T09:02:00Z",
+                    "2026-09-16T09:30:00Z",
+                    "Redrawn boundary",
+                )],
                 previous: vec![span("2026-09-16T09:00:00Z", "2026-09-16T09:30:00Z")],
                 observations: vec![span("2026-09-16T09:02:00Z", "2026-09-16T09:30:00Z")],
                 expected: vec![],
             },
             Case {
                 name: "a whole missing minute inside the observations is not rounding",
-                cards: vec![draft("2026-09-16T09:02:00Z", "2026-09-16T09:30:00Z", "Two minutes late")],
+                cards: vec![draft(
+                    "2026-09-16T09:02:00Z",
+                    "2026-09-16T09:30:00Z",
+                    "Two minutes late",
+                )],
                 previous: vec![],
                 observations: vec![span("2026-09-16T09:00:00Z", "2026-09-16T09:30:00Z")],
                 expected: vec!["TIME COVERAGE ERROR"],
@@ -706,7 +771,11 @@ mod tests {
             },
             Case {
                 name: "a window with no observations at all cannot invent rules",
-                cards: vec![draft("2026-09-16T09:00:00Z", "2026-09-16T09:30:00Z", "Only card")],
+                cards: vec![draft(
+                    "2026-09-16T09:00:00Z",
+                    "2026-09-16T09:30:00Z",
+                    "Only card",
+                )],
                 previous: vec![],
                 observations: vec![],
                 expected: vec![],
@@ -727,7 +796,11 @@ mod tests {
             vec![span("2026-09-16T09:00:00Z", "2026-09-16T09:30:00Z")],
         );
         let issues = validate_cards(
-            &[draft("2026-09-16T09:00:00Z", "2026-09-16T09:18:00Z", "Incomplete")],
+            &[draft(
+                "2026-09-16T09:00:00Z",
+                "2026-09-16T09:18:00Z",
+                "Incomplete",
+            )],
             &bounds,
         );
         let detail = issues[0].detail();
@@ -746,12 +819,22 @@ mod tests {
         );
         let issues = validate_cards(
             &[
-                draft("2026-09-16T09:00:00Z", "2026-09-16T09:06:30Z", "Short first"),
-                draft("2026-09-16T09:06:30Z", "2026-09-16T09:30:00Z", "Long second"),
+                draft(
+                    "2026-09-16T09:00:00Z",
+                    "2026-09-16T09:06:30Z",
+                    "Short first",
+                ),
+                draft(
+                    "2026-09-16T09:06:30Z",
+                    "2026-09-16T09:30:00Z",
+                    "Long second",
+                ),
             ],
             &bounds,
         );
-        assert!(issues[0].detail().contains("Card 1 'Short first' is only 6.5 minutes"));
+        assert!(issues[0]
+            .detail()
+            .contains("Card 1 'Short first' is only 6.5 minutes"));
         assert!(issues[0].reminder().contains("at least 10 minutes"));
     }
 
@@ -766,7 +849,10 @@ mod tests {
             SOURCE_CONNECTION,
         );
         assert_eq!(merged.len(), 2);
-        assert_eq!(merged[0], span("2026-09-16T09:00:00Z", "2026-09-16T09:20:00Z"));
+        assert_eq!(
+            merged[0],
+            span("2026-09-16T09:00:00Z", "2026-09-16T09:20:00Z")
+        );
     }
 
     #[test]

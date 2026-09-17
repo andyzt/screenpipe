@@ -47,9 +47,9 @@ use super::generator::{
 };
 use super::json::extract_json;
 use super::prompt::{self, PROMPT_VERSION, SYSTEM_PROMPT};
+use super::repair::{repair_cards, RepairNote};
 use super::schema::{self, response_schema};
 use super::settings::JournalSettings;
-use super::repair::{repair_cards, RepairNote};
 use super::validate::{validate_cards, CardIssue, EvidenceBounds, Span};
 
 /// Producer stamped on cards written by a provider.
@@ -80,7 +80,9 @@ pub fn journal_model_for(provider: &str, model: &str) -> String {
         if model.contains('/') {
             DEEPSEEK_JOURNAL_MODEL.to_string()
         } else {
-            DEEPSEEK_JOURNAL_MODEL.trim_start_matches("deepseek/").to_string()
+            DEEPSEEK_JOURNAL_MODEL
+                .trim_start_matches("deepseek/")
+                .to_string()
         }
     } else {
         model.to_string()
@@ -119,13 +121,19 @@ impl std::fmt::Display for ChatError {
                 write!(formatter, "could not reach the ai provider: {message}")
             }
             ChatError::Auth(message) => {
-                write!(formatter, "the ai provider rejected the credentials: {message}")
+                write!(
+                    formatter,
+                    "the ai provider rejected the credentials: {message}"
+                )
             }
             ChatError::RateLimit(message) => {
                 write!(formatter, "the ai provider is rate limiting: {message}")
             }
             ChatError::BadResponse(message) => {
-                write!(formatter, "the ai provider returned an unusable answer: {message}")
+                write!(
+                    formatter,
+                    "the ai provider returned an unusable answer: {message}"
+                )
             }
         }
     }
@@ -192,7 +200,12 @@ impl ChatClient {
 
     /// Client against an explicit endpoint. Used by the tests and by any
     /// caller that already has a URL rather than a preset.
-    pub fn new(url: String, api_key: Option<String>, model: String, schema_supported: bool) -> Self {
+    pub fn new(
+        url: String,
+        api_key: Option<String>,
+        model: String,
+        schema_supported: bool,
+    ) -> Self {
         Self {
             client: reqwest::Client::builder()
                 .timeout(REQUEST_TIMEOUT)
@@ -433,7 +446,9 @@ pub fn resolve_journal_preset(
 fn block_reason(preset: Option<&ResolvedPreset>, preset_id: Option<&str>) -> Option<String> {
     let Some(preset) = preset else {
         return Some(match preset_id {
-            Some(id) => format!("the journal's AI preset '{id}' no longer exists — {SETTINGS_HINT}"),
+            Some(id) => {
+                format!("the journal's AI preset '{id}' no longer exists — {SETTINGS_HINT}")
+            }
             None => format!("no AI preset is configured — {SETTINGS_HINT}"),
         });
     };
@@ -553,10 +568,15 @@ impl CardGenerator for LlmGenerator {
         previous_cards: &[ActivityCard],
         ctx: &GenerationContext,
     ) -> anyhow::Result<Vec<CardDraft>> {
-        let client = self
-            .client
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("{}", self.readiness.message.clone().unwrap_or_else(|| "no ai provider configured".to_string())))?;
+        let client = self.client.as_ref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "{}",
+                self.readiness
+                    .message
+                    .clone()
+                    .unwrap_or_else(|| "no ai provider configured".to_string())
+            )
+        })?;
 
         let base = prompt::build_prompt(compiled, previous_cards, ctx);
         let mode = prompt::segment_mode(compiled, previous_cards);
@@ -567,7 +587,9 @@ impl CardGenerator for LlmGenerator {
         let mut last_issues: Vec<CardIssue> = Vec::new();
         for attempt in 1..=self.max_attempts {
             let started = std::time::Instant::now();
-            let result = client.complete_json(SYSTEM_PROMPT, &user, Some(&schema)).await;
+            let result = client
+                .complete_json(SYSTEM_PROMPT, &user, Some(&schema))
+                .await;
             let latency_ms = started.elapsed().as_millis() as i64;
             let request_chars = (SYSTEM_PROMPT.len() + user.len()) as i64;
 
@@ -682,7 +704,10 @@ impl LlmGenerator {
 /// What the output is checked against. Previous cards are clamped to the
 /// rewritten range: a card that started before the horizon is not evidence
 /// that the model may write outside it.
-pub fn evidence_bounds(compiled: &CompiledWindow, previous_cards: &[ActivityCard]) -> EvidenceBounds {
+pub fn evidence_bounds(
+    compiled: &CompiledWindow,
+    previous_cards: &[ActivityCard],
+) -> EvidenceBounds {
     let observations: Vec<Span> = compiled
         .intervals
         .iter()
@@ -717,14 +742,25 @@ mod tests {
             journal_model_for("deepseek", "deepseek/deepseek-v4-flash-vision-exp"),
             "deepseek/deepseek-v4-flash"
         );
-        assert_eq!(journal_model_for("deepseek", "deepseek-v4-flash-vision-exp"), "deepseek-v4-flash");
-        assert_eq!(journal_model_for("deepseek", "deepseek/deepseek-v4-pro"), "deepseek/deepseek-v4-pro");
+        assert_eq!(
+            journal_model_for("deepseek", "deepseek-v4-flash-vision-exp"),
+            "deepseek-v4-flash"
+        );
+        assert_eq!(
+            journal_model_for("deepseek", "deepseek/deepseek-v4-pro"),
+            "deepseek/deepseek-v4-pro"
+        );
         assert_eq!(journal_model_for("openai", "gpt-vision"), "gpt-vision");
-        assert_eq!(journal_model_for("native-ollama", "qwen3-vision"), "qwen3-vision");
+        assert_eq!(
+            journal_model_for("native-ollama", "qwen3-vision"),
+            "qwen3-vision"
+        );
     }
 
     use super::*;
-    use crate::journal::test_support::{at, compiled_fixture, context, interval, load_fixture, previous_card};
+    use crate::journal::test_support::{
+        at, compiled_fixture, context, interval, load_fixture, previous_card,
+    };
     use wiremock::matchers::{body_string_contains, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -819,7 +855,11 @@ mod tests {
             ),
             (
                 "any OpenAI-compatible url",
-                Some(preset(Some("custom"), Some("https://example.test/v1"), Some("k"))),
+                Some(preset(
+                    Some("custom"),
+                    Some("https://example.test/v1"),
+                    Some("k"),
+                )),
                 Some("custom"),
                 true,
                 "",
@@ -853,8 +893,14 @@ mod tests {
             Some("deepseek"),
         );
         assert_eq!(generator.producer(), "llm-v1");
-        assert_eq!(generator.prompt_version().as_deref(), Some("journal-cards-v3"));
-        assert_eq!(generator.model().as_deref(), Some("deepseek/deepseek-v4-flash"));
+        assert_eq!(
+            generator.prompt_version().as_deref(),
+            Some("journal-cards-v4")
+        );
+        assert_eq!(
+            generator.model().as_deref(),
+            Some("deepseek/deepseek-v4-flash")
+        );
     }
 
     #[tokio::test]
@@ -871,9 +917,11 @@ mod tests {
             .await;
         Mock::given(method("POST"))
             .and(path("/v1/chat/completions"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(answer(json!([
-                card("2026-09-16T08:00:00Z", "2026-09-16T08:30:00Z", "Fixed the refresh-token retry")
-            ]))))
+            .respond_with(ResponseTemplate::new(200).set_body_json(answer(json!([card(
+                "2026-09-16T08:00:00Z",
+                "2026-09-16T08:30:00Z",
+                "Fixed the refresh-token retry"
+            )]))))
             .with_priority(2)
             .mount(&server)
             .await;
@@ -892,7 +940,11 @@ mod tests {
         assert_eq!(usage.total_tokens, 3680);
 
         let requests = server.received_requests().await.unwrap();
-        assert_eq!(requests.len(), 2, "one rejected schema call, one json_object call");
+        assert_eq!(
+            requests.len(),
+            2,
+            "one rejected schema call, one json_object call"
+        );
         let second = String::from_utf8_lossy(&requests[1].body);
         assert!(second.contains("json_object"));
         assert!(!second.contains("json_schema"));
@@ -946,9 +998,11 @@ mod tests {
         // The correction round is recognised by the block the prompt appends.
         Mock::given(method("POST"))
             .and(body_string_contains("PREVIOUS ATTEMPT FAILED"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(answer(json!([
-                card("2026-09-16T08:00:00Z", "2026-09-16T08:30:00Z", "Fixed the refresh-token retry")
-            ]))))
+            .respond_with(ResponseTemplate::new(200).set_body_json(answer(json!([card(
+                "2026-09-16T08:00:00Z",
+                "2026-09-16T08:30:00Z",
+                "Fixed the refresh-token retry"
+            )]))))
             .with_priority(1)
             .mount(&server)
             .await;
@@ -956,8 +1010,16 @@ mod tests {
         // invalid journal.
         Mock::given(method("POST"))
             .respond_with(ResponseTemplate::new(200).set_body_json(answer(json!([
-                card("2026-09-16T08:00:00Z", "2026-09-16T08:04:00Z", "Opened the repo"),
-                card("2026-09-16T08:04:00Z", "2026-09-16T08:30:00Z", "Fixed the retry")
+                card(
+                    "2026-09-16T08:00:00Z",
+                    "2026-09-16T08:04:00Z",
+                    "Opened the repo"
+                ),
+                card(
+                    "2026-09-16T08:04:00Z",
+                    "2026-09-16T08:30:00Z",
+                    "Fixed the retry"
+                )
             ]))))
             .with_priority(2)
             .mount(&server)
@@ -981,12 +1043,26 @@ mod tests {
         assert_eq!(drafts[0].interval_keys, vec!["i1", "i2"]);
 
         let attempts = generator.drain_attempts();
-        assert_eq!(attempts.len(), 2, "both the failed and the good call are audited");
+        assert_eq!(
+            attempts.len(),
+            2,
+            "both the failed and the good call are audited"
+        );
         assert!(!attempts[0].ok);
-        assert!(attempts[0].error.as_deref().unwrap().contains("DURATION ERROR"));
+        assert!(attempts[0]
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("DURATION ERROR"));
         assert!(attempts[1].ok);
-        assert!(attempts[1].request_chars > attempts[0].request_chars, "the correction is longer");
-        assert!(generator.drain_attempts().is_empty(), "draining is destructive");
+        assert!(
+            attempts[1].request_chars > attempts[0].request_chars,
+            "the correction is longer"
+        );
+        assert!(
+            generator.drain_attempts().is_empty(),
+            "draining is destructive"
+        );
     }
 
     /// The live 21:23–21:39 window, end to end: the model described the work
@@ -1001,15 +1077,30 @@ mod tests {
             context_start: at("2026-09-16T07:40:00Z"),
             active_minutes: 35.0,
             intervals: vec![
-                interval("i1", "2026-09-16T08:00:00Z", "2026-09-16T08:15:00Z", "Code", "auth.rs"),
-                interval("i2", "2026-09-16T08:25:00Z", "2026-09-16T08:45:00Z", "Code", "auth.rs"),
+                interval(
+                    "i1",
+                    "2026-09-16T08:00:00Z",
+                    "2026-09-16T08:15:00Z",
+                    "Code",
+                    "auth.rs",
+                ),
+                interval(
+                    "i2",
+                    "2026-09-16T08:25:00Z",
+                    "2026-09-16T08:45:00Z",
+                    "Code",
+                    "auth.rs",
+                ),
             ],
+            reviews: Vec::new(),
         };
         let server = MockServer::start().await;
         Mock::given(method("POST"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(answer(json!([
-                card("2026-09-16T08:00:00Z", "2026-09-16T08:45:00Z", "Fixed the refresh-token retry")
-            ]))))
+            .respond_with(ResponseTemplate::new(200).set_body_json(answer(json!([card(
+                "2026-09-16T08:00:00Z",
+                "2026-09-16T08:45:00Z",
+                "Fixed the refresh-token retry"
+            )]))))
             .mount(&server)
             .await;
 
@@ -1019,7 +1110,10 @@ mod tests {
             "m".to_string(),
             true,
         ));
-        let drafts = generator.generate(&compiled, &[], &context(None)).await.unwrap();
+        let drafts = generator
+            .generate(&compiled, &[], &context(None))
+            .await
+            .unwrap();
 
         assert_eq!(
             server.received_requests().await.unwrap().len(),
@@ -1031,7 +1125,10 @@ mod tests {
         assert_eq!(drafts[0].end_at, at("2026-09-16T08:15:00Z"));
         assert_eq!(drafts[1].start_at, at("2026-09-16T08:25:00Z"));
         assert_eq!(drafts[1].end_at, at("2026-09-16T08:45:00Z"));
-        assert_eq!(drafts[0].title, drafts[1].title, "the model's words are untouched");
+        assert_eq!(
+            drafts[0].title, drafts[1].title,
+            "the model's words are untouched"
+        );
         assert_eq!(drafts[0].interval_keys, vec!["i1"]);
         assert_eq!(drafts[1].interval_keys, vec!["i2"]);
         assert!(drafts[0].detailed_summary.is_some());
@@ -1041,16 +1138,22 @@ mod tests {
         assert_eq!(attempts.len(), 1);
         assert!(attempts[0].ok);
         assert_eq!(attempts[0].repairs.len(), 1, "{:?}", attempts[0].repairs);
-        assert!(attempts[0].repairs[0].starts_with("source gap: "), "{:?}", attempts[0].repairs);
+        assert!(
+            attempts[0].repairs[0].starts_with("source gap: "),
+            "{:?}",
+            attempts[0].repairs
+        );
     }
 
     #[tokio::test]
     async fn output_that_never_validates_fails_the_window_after_three_attempts() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(answer(json!([
-                card("2026-09-16T05:00:00Z", "2026-09-16T05:20:00Z", "Invented hour")
-            ]))))
+            .respond_with(ResponseTemplate::new(200).set_body_json(answer(json!([card(
+                "2026-09-16T05:00:00Z",
+                "2026-09-16T05:20:00Z",
+                "Invented hour"
+            )]))))
             .mount(&server)
             .await;
 
@@ -1111,7 +1214,11 @@ mod tests {
         let compiled = compiled_fixture();
         let bounds = evidence_bounds(
             &compiled,
-            &[previous_card("2026-09-16T06:00:00Z", "2026-09-16T08:00:00Z", "Older")],
+            &[previous_card(
+                "2026-09-16T06:00:00Z",
+                "2026-09-16T08:00:00Z",
+                "Older",
+            )],
         );
         assert_eq!(bounds.previous.len(), 1);
         assert_eq!(bounds.previous[0].start, compiled.context_start);
@@ -1120,7 +1227,11 @@ mod tests {
 
     #[test]
     fn the_fixtures_the_eval_reads_still_decode() {
-        for name in ["focused-morning.json", "split-attention.json", "call-and-gap.json"] {
+        for name in [
+            "focused-morning.json",
+            "split-attention.json",
+            "call-and-gap.json",
+        ] {
             let window = load_fixture(name);
             assert!(!window.intervals.is_empty(), "{name}");
             assert!(window.observed_minutes() > 0.0, "{name}");
@@ -1128,12 +1239,16 @@ mod tests {
         // The call fixture carries a real twelve-minute hole: the validators
         // must be able to see it.
         let gap = load_fixture("call-and-gap.json");
-        assert_eq!(gap.intervals[1].start_at - gap.intervals[0].end_at, chrono::Duration::minutes(15));
+        assert_eq!(
+            gap.intervals[1].start_at - gap.intervals[0].end_at,
+            chrono::Duration::minutes(15)
+        );
     }
 
     #[test]
     fn a_key_in_a_provider_message_is_redacted_before_it_is_stored() {
-        let message = provider_message(r#"{"error":{"message":"bad request at ?key=sk-live-123 &x=1"}}"#);
+        let message =
+            provider_message(r#"{"error":{"message":"bad request at ?key=sk-live-123 &x=1"}}"#);
         assert!(message.contains("key=[redacted]"));
         assert!(!message.contains("sk-live-123"));
     }
@@ -1151,8 +1266,8 @@ mod tests {
 #[cfg(test)]
 mod live {
     use super::*;
-    use crate::journal::schema;
     use crate::journal::repair::repair_cards;
+    use crate::journal::schema;
     use crate::journal::test_support::{context, load_fixture};
     use crate::journal::validate::validate_cards;
 

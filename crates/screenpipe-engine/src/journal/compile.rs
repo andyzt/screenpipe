@@ -28,7 +28,7 @@
 use chrono::{DateTime, Duration, Utc};
 use screenpipe_db::{
     evenly_spaced_indices, DatabaseManager, JournalEvidenceDraft, JournalFrameSample,
-    JournalLedgerInterval,
+    JournalLedgerInterval, JournalReviewRating,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -69,6 +69,22 @@ pub struct CompiledWindow {
     pub context_start: DateTime<Utc>,
     pub active_minutes: f64,
     pub intervals: Vec<CompiledInterval>,
+    /// What the user said about these minutes themselves: the review ratings
+    /// overlapping the window, clipped to it. Empty unless they rated
+    /// something, so a window nobody reviewed serializes exactly as before and
+    /// its evidence fingerprint is unchanged.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reviews: Vec<CompiledReview>,
+}
+
+/// One reviewed stretch as the generator sees it: a span and the user's
+/// verdict, with the row's id and audit columns left behind — they are not
+/// evidence and would only churn the window's fingerprint.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompiledReview {
+    pub start_at: DateTime<Utc>,
+    pub end_at: DateTime<Utc>,
+    pub rating: String,
 }
 
 impl CompiledWindow {
@@ -150,6 +166,7 @@ pub async fn compile_window_from(
     let intervals = db
         .list_journal_ledger_intervals(context_start, window_end)
         .await?;
+    let reviews = db.list_review_ratings(context_start, window_end).await?;
     let frames = db.journal_frame_samples(context_start, window_end).await?;
     let ui_events = db.journal_ui_event_marks(context_start, window_end).await?;
     let audio = db.journal_audio_marks(context_start, window_end).await?;
@@ -163,6 +180,7 @@ pub async fn compile_window_from(
         &ui_events,
         &audio,
     );
+    attach_review_ratings(&mut compiled, &reviews);
 
     let sample_ids = snippet_frame_ids(&compiled, &frames);
     let wanted: Vec<i64> = sample_ids.values().flatten().copied().collect();
@@ -309,7 +327,31 @@ pub fn plan_window_from(
         context_start,
         active_minutes,
         intervals: compiled,
+        reviews: Vec::new(),
     }
+}
+
+/// Attach the user's review ratings, clipped to the compiled span and ordered.
+///
+/// Kept out of [`plan_window_from`] so the live focus detector, which reuses
+/// that planner for a two-minute tail, does not have to carry ratings it has
+/// no use for.
+pub fn attach_review_ratings(compiled: &mut CompiledWindow, ratings: &[JournalReviewRating]) {
+    let (from, to) = (compiled.context_start, compiled.window_end);
+    let mut reviews: Vec<CompiledReview> = ratings
+        .iter()
+        .filter_map(|rating| {
+            let start = rating.start_at.max(from);
+            let end = rating.end_at.min(to);
+            (end > start).then(|| CompiledReview {
+                start_at: start,
+                end_at: end,
+                rating: rating.rating.clone(),
+            })
+        })
+        .collect();
+    reviews.sort_by_key(|review| (review.start_at, review.end_at));
+    compiled.reviews = reviews;
 }
 
 /// Which frames each interval should quote, given its share of the budget.
@@ -327,7 +369,9 @@ pub fn snippet_frame_ids(
         }
         let candidates: Vec<i64> = frames
             .iter()
-            .filter(|frame| frame.timestamp >= interval.start_at && frame.timestamp < interval.end_at)
+            .filter(|frame| {
+                frame.timestamp >= interval.start_at && frame.timestamp < interval.end_at
+            })
             .map(|frame| frame.id)
             .collect();
         let picks = evenly_spaced_indices(candidates.len(), wanted)
@@ -524,7 +568,12 @@ mod tests {
 
     #[test]
     fn unobserved_ledger_intervals_never_become_content() {
-        let mut gap = interval("gap", "Unobserved", "2026-09-16T08:45:00Z", "2026-09-16T08:50:00Z");
+        let mut gap = interval(
+            "gap",
+            "Unobserved",
+            "2026-09-16T08:45:00Z",
+            "2026-09-16T08:50:00Z",
+        );
         gap.kind = "unobserved".to_string();
         let compiled = plan_window(
             at("2026-09-16T08:45:00Z"),
@@ -542,8 +591,18 @@ mod tests {
         let window_start = at("2026-09-16T08:45:00Z");
         let window_end = at("2026-09-16T09:00:00Z");
         let intervals = vec![
-            interval("busy", "auth.rs", "2026-09-16T08:45:00Z", "2026-09-16T08:57:00Z"),
-            interval("brief", "docs", "2026-09-16T08:57:00Z", "2026-09-16T09:00:00Z"),
+            interval(
+                "busy",
+                "auth.rs",
+                "2026-09-16T08:45:00Z",
+                "2026-09-16T08:57:00Z",
+            ),
+            interval(
+                "brief",
+                "docs",
+                "2026-09-16T08:57:00Z",
+                "2026-09-16T09:00:00Z",
+            ),
         ];
         let frames = frames("2026-09-16T08:45:00Z", 15, 60);
         let mut compiled = plan_window(window_start, window_end, &intervals, &frames, &[], &[]);
@@ -551,7 +610,12 @@ mod tests {
         let sample_ids = snippet_frame_ids(&compiled, &frames);
         let texts: HashMap<i64, String> = frames
             .iter()
-            .map(|frame| (frame.id, format!("frame {} {}", frame.id, "x".repeat(50_000))))
+            .map(|frame| {
+                (
+                    frame.id,
+                    format!("frame {} {}", frame.id, "x".repeat(50_000)),
+                )
+            })
             .collect();
         attach_snippets(&mut compiled, &sample_ids, &texts);
 
@@ -590,10 +654,87 @@ mod tests {
         assert_eq!(compiled.intervals[0].text_snippets.len(), 1);
     }
 
+    fn review(start: &str, end: &str, rating: &str) -> JournalReviewRating {
+        JournalReviewRating {
+            id: 1,
+            start_at: at(start),
+            end_at: at(end),
+            rating: rating.to_string(),
+            source: "app".to_string(),
+            created_at: String::new(),
+            updated_at: String::new(),
+        }
+    }
+
+    #[test]
+    fn user_review_ratings_are_clipped_to_the_compiled_span() {
+        let mut compiled = plan_window(
+            at("2026-09-16T08:45:00Z"),
+            at("2026-09-16T09:00:00Z"),
+            &[interval(
+                "k1",
+                "auth.rs",
+                "2026-09-16T08:45:00Z",
+                "2026-09-16T09:00:00Z",
+            )],
+            &frames("2026-09-16T08:45:00Z", 15, 60),
+            &[],
+            &[],
+        );
+        assert!(
+            compiled.reviews.is_empty(),
+            "nothing is attached by planning"
+        );
+
+        attach_review_ratings(
+            &mut compiled,
+            &[
+                // Starts before the context horizon and ends inside it.
+                review("2026-09-16T07:00:00Z", "2026-09-16T08:30:00Z", "focused"),
+                review("2026-09-16T08:50:00Z", "2026-09-16T09:30:00Z", "distracted"),
+                // Entirely after the window.
+                review("2026-09-16T10:00:00Z", "2026-09-16T11:00:00Z", "neutral"),
+            ],
+        );
+        assert_eq!(
+            compiled.reviews,
+            vec![
+                CompiledReview {
+                    start_at: compiled.context_start,
+                    end_at: at("2026-09-16T08:30:00Z"),
+                    rating: "focused".to_string(),
+                },
+                CompiledReview {
+                    start_at: at("2026-09-16T08:50:00Z"),
+                    end_at: at("2026-09-16T09:00:00Z"),
+                    rating: "distracted".to_string(),
+                },
+            ]
+        );
+
+        // An unreviewed window serializes exactly as it did before the field
+        // existed, so its evidence fingerprint is unchanged and a fixture
+        // written before the field still loads.
+        let mut unreviewed = compiled.clone();
+        unreviewed.reviews.clear();
+        let json = serde_json::to_string(&unreviewed).unwrap();
+        assert!(!json.contains("reviews"));
+        let round_tripped: CompiledWindow = serde_json::from_str(&json).unwrap();
+        assert!(round_tripped.reviews.is_empty());
+        assert_eq!(round_tripped.window_start, unreviewed.window_start);
+        assert_eq!(round_tripped.intervals.len(), unreviewed.intervals.len());
+    }
+
     #[test]
     fn hosts_come_out_of_urls_without_credentials_or_ports() {
-        assert_eq!(host_of("https://github.com/a/b?x=1"), Some("github.com".into()));
-        assert_eq!(host_of("http://user@Example.COM:8080/x"), Some("example.com".into()));
+        assert_eq!(
+            host_of("https://github.com/a/b?x=1"),
+            Some("github.com".into())
+        );
+        assert_eq!(
+            host_of("http://user@Example.COM:8080/x"),
+            Some("example.com".into())
+        );
         assert_eq!(host_of(""), None);
     }
 }

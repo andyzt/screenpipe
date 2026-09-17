@@ -36,6 +36,7 @@
 //! Copyright (c) 2025 Jerry Liu.
 
 pub mod compile;
+pub mod dashboard;
 pub mod day;
 pub mod eval;
 pub mod generator;
@@ -43,6 +44,7 @@ pub mod idle;
 pub mod json;
 pub mod llm;
 pub mod prompt;
+pub mod recap;
 pub mod repair;
 pub mod schema;
 pub mod settings;

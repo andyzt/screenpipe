@@ -28,8 +28,8 @@ pub fn at(value: &str) -> DateTime<Utc> {
 
 /// The seeded category list: Work, Personal, Distraction, Idle, System.
 pub fn categories() -> Vec<JournalCategory> {
-    let category = |id: &str, name: &str, is_system: bool, is_idle: bool, sort_order: i64| {
-        JournalCategory {
+    let category =
+        |id: &str, name: &str, is_system: bool, is_idle: bool, sort_order: i64| JournalCategory {
             id: id.to_string(),
             name: name.to_string(),
             description: String::new(),
@@ -37,8 +37,7 @@ pub fn categories() -> Vec<JournalCategory> {
             is_system,
             is_idle,
             sort_order,
-        }
-    };
+        };
     vec![
         category("work", "Work", false, false, 0),
         category("personal", "Personal", false, false, 1),
@@ -118,6 +117,7 @@ pub fn compiled_fixture() -> CompiledWindow {
                 "github.com/screenpipe/pull/42",
             ),
         ],
+        reviews: Vec::new(),
     }
 }
 
@@ -201,5 +201,7 @@ pub fn previous_card(start: &str, end: &str, title: &str) -> ActivityCard {
         apps: Vec::new(),
         distractions: Vec::new(),
         evidence_count: 4,
+        feedback: None,
+        review: None,
     }
 }

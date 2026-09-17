@@ -38,6 +38,7 @@ import { DayCanvas } from "./day-canvas";
 import { DayInspector } from "./day-inspector";
 import { IntentionBar } from "./intention-bar";
 import { SegmentedToggle, WeekView, type JournalViewMode } from "./week-view";
+import { WeekDashboard } from "./week-dashboard";
 import { mondayOf } from "@/lib/journal/week-layout";
 import { fetchJournalDay, regenerateJournalDay } from "@/lib/journal/api";
 import { useRolePreset } from "@/lib/journal/use-role-preset";
@@ -350,6 +351,19 @@ export function JournalView({
     ? t("journal.datePill", { date: formatJournalDate(date, locale) })
     : formatJournalDate(date, locale);
 
+  if (activeView === "dashboard") {
+    return (
+      <div className="flex flex-col gap-4" data-testid="section-journal">
+        <WeekDashboard
+          weekStart={activeWeek}
+          onWeekStartChange={setWeek}
+          onViewChange={setView}
+          onOpenDay={(nextDate) => openDay(nextDate)}
+        />
+      </div>
+    );
+  }
+
   if (activeView === "week") {
     return (
       <div className="flex flex-col gap-4" data-testid="section-journal">
@@ -422,13 +436,14 @@ export function JournalView({
         <SegmentedToggle
           label={t("journal.viewLabel")}
           testId="journal-view-toggle"
-          value="day"
+          value={"day" as JournalViewMode}
           options={[
             { value: "day", label: t("journal.view.day") },
             { value: "week", label: t("journal.view.week") },
+            { value: "dashboard", label: t("journal.view.dashboard") },
           ]}
           onChange={(next) => {
-            if (next === "week") setWeek(mondayOf(date));
+            if (next === "week" || next === "dashboard") setWeek(mondayOf(date));
             setView(next as JournalViewMode);
           }}
         />
@@ -498,6 +513,7 @@ export function JournalView({
             showNow={today}
             nowRefreshToken={intentionToken}
             onRegenerate={refreshDay}
+            onReviewChange={refreshDay}
           />
         </div>
       ) : null}

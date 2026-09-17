@@ -9,8 +9,14 @@ import {
   formatFocusStatus,
   formatJournalActivity,
   formatJournalDay,
+  formatJournalRecap,
+  formatJournalReview,
+  formatJournalWeek,
   type ActivityDetailPayload,
   type JournalDayPayload,
+  type RecapPayload,
+  type ReviewRating,
+  type WeekDashboardPayload,
 } from "./journal-format";
 
 // Fixtures below are built from the examples in docs/JOURNAL_API_CONTRACT.md.
@@ -458,5 +464,249 @@ describe("intention echoes", () => {
       source: "mcp",
     });
     expect(text).toContain("Ended intention: Ship auth fix (ran 30 min).");
+  });
+});
+
+describe("formatJournalRecap", () => {
+  function readyFixture(): RecapPayload {
+    return {
+      date: "2026-09-16",
+      status: "ready",
+      generated_at: "2026-09-16T18:05:00Z",
+      summary: "A focused morning on the auth fix.",
+      done: ["Shipped the refresh-token fix (PR #412)"],
+      next: ["Re-run the flaky session test on CI"],
+      focus_note: "One 20-minute detour to news around 15:00.",
+      source_cards: 11,
+      model: "deepseek/deepseek-v4-flash",
+      prompt_version: "journal-recap-v1",
+      error: null,
+      markdown: "## 2026-09-16\n\n**Done**\n- Shipped the refresh-token fix (PR #412)\n\n**Next**\n- Re-run the flaky session test on CI",
+    };
+  }
+
+  it("returns the markdown verbatim followed by a status line", () => {
+    const text = formatJournalRecap(readyFixture());
+
+    expect(text.startsWith(readyFixture().markdown!)).toBe(true);
+    expect(text).toContain("Status: generated 11:05 local, 11 source cards.");
+  });
+
+  it("notes staleness without dropping the (previous) markdown", () => {
+    const fixture = readyFixture();
+    fixture.status = "stale";
+    const text = formatJournalRecap(fixture);
+
+    expect(text).toContain(fixture.markdown!);
+    expect(text).toContain("stale — a card changed after this was generated");
+  });
+
+  it("surfaces the failure error in the status line", () => {
+    const text = formatJournalRecap({
+      date: "2026-09-16",
+      status: "failed",
+      error: "provider timeout",
+      markdown: "## previous successful recap",
+    });
+
+    expect(text).toContain("## previous successful recap");
+    expect(text).toContain("Status: failed: provider timeout.");
+  });
+
+  it("says plainly when there is no recap yet", () => {
+    const text = formatJournalRecap({ date: "2026-09-16", status: "none" });
+
+    expect(text).toContain("No recap available for 2026-09-16 yet — pass regenerate: true to generate one.");
+    expect(text).toContain("Status: none.");
+  });
+});
+
+describe("formatJournalReview", () => {
+  it("confirms a rating was set and lists the day's ratings", () => {
+    const items: ReviewRating[] = [
+      { start_at: "2026-09-16T09:00:00Z", end_at: "2026-09-16T10:30:00Z", rating: "focused" },
+      { start_at: "2026-09-16T11:00:00Z", end_at: "2026-09-16T11:20:00Z", rating: "distracted" },
+    ];
+    const text = formatJournalReview(items, {
+      start: "2026-09-16T09:00:00Z",
+      end: "2026-09-16T10:30:00Z",
+      rating: "focused",
+    });
+
+    expect(text).toContain("Marked 02:00–03:30 as focused.");
+    expect(text).toContain("Ratings for that day:");
+    expect(text).toContain("  02:00–03:30: focused");
+    expect(text).toContain("  04:00–04:20: distracted");
+  });
+
+  it("confirms a cleared rating", () => {
+    const text = formatJournalReview([], {
+      start: "2026-09-16T09:00:00Z",
+      end: "2026-09-16T10:30:00Z",
+      rating: null,
+    });
+
+    expect(text).toContain("Cleared the rating for 02:00–03:30.");
+    expect(text).toContain("No ratings remain for that day.");
+  });
+
+  it("orders ratings by start_at regardless of input order", () => {
+    const items: ReviewRating[] = [
+      { start_at: "2026-09-16T11:00:00Z", end_at: "2026-09-16T11:20:00Z", rating: "distracted" },
+      { start_at: "2026-09-16T09:00:00Z", end_at: "2026-09-16T10:30:00Z", rating: "focused" },
+    ];
+    const text = formatJournalReview(items, {
+      start: "2026-09-16T09:00:00Z",
+      end: "2026-09-16T10:30:00Z",
+      rating: "focused",
+    });
+
+    const focusedIndex = text.indexOf("02:00–03:30: focused");
+    const distractedIndex = text.indexOf("04:00–04:20: distracted");
+    expect(focusedIndex).toBeGreaterThan(-1);
+    expect(distractedIndex).toBeGreaterThan(focusedIndex);
+  });
+});
+
+describe("formatJournalWeek", () => {
+  function dashboardFixture(): WeekDashboardPayload {
+    return {
+      start: "2026-09-14",
+      end: "2026-09-20",
+      days: [
+        {
+          date: "2026-09-14",
+          active_minutes: 312.0,
+          focus_minutes: 240.0,
+          distraction_minutes: 22.0,
+          longest_focus_block_minutes: 84.0,
+          switches: 37,
+        },
+        {
+          date: "2026-09-15",
+          active_minutes: 300.0,
+          focus_minutes: 200.0,
+          distraction_minutes: 10.0,
+          longest_focus_block_minutes: 60.0,
+          switches: 20,
+        },
+      ],
+      totals: {
+        active_minutes: 1840.0,
+        focus_minutes: 1420.0,
+        distraction_minutes: 130.0,
+        longest_focus_block_minutes: 96.0,
+        switches: 212,
+        focus_share: 0.77,
+      },
+      compare: {
+        active_minutes: 1700.0,
+        focus_minutes: 1200.0,
+        distraction_minutes: 180.0,
+        longest_focus_block_minutes: 71.0,
+        switches: 260,
+        focus_share: 0.71,
+      },
+      categories: [
+        { category_id: "personal", name: "Personal", minutes: 300.0, share: 0.16 },
+        { category_id: "work", name: "Work", minutes: 1420.0, share: 0.77 },
+      ],
+      apps: [
+        { name: "Slack", host: null, minutes: 120.0, share: 0.07 },
+        { name: "Code", host: null, minutes: 900.0, share: 0.49 },
+      ],
+      focus_blocks: [
+        { start_at: "2026-09-14T15:00:00Z", end_at: "2026-09-14T16:00:00Z", minutes: 60.0, title: "Short block", category_id: "work" },
+        {
+          start_at: "2026-09-16T08:15:00Z",
+          end_at: "2026-09-16T09:51:00Z",
+          minutes: 96.0,
+          title: "Auth fix",
+          category_id: "work",
+        },
+      ],
+      intentions: [
+        { id: 7, title: "Ship auth fix", supporting_minutes: 300.0, other_minutes: 40.0, distraction_minutes: 12.0 },
+      ],
+    };
+  }
+
+  it("renders the header and totals with week-over-week deltas", () => {
+    const text = formatJournalWeek(dashboardFixture());
+
+    expect(text).toContain("Journal week — 2026-09-14 to 2026-09-20");
+    expect(text).toContain("Active 30h 40m (+2h 20m vs. last week)");
+    expect(text).toContain("Focus 23h 40m (+3h 40m vs. last week)");
+    expect(text).toContain("Distraction 2h 10m (-50m vs. last week)");
+    expect(text).toContain("Longest focus block 1h 36m (+25m vs. last week)");
+    expect(text).toContain("Switches 212 (-48 vs. last week)");
+    expect(text).toContain("Focus share 77% (+6pp vs. last week)");
+  });
+
+  it("omits comparisons entirely when compare is null", () => {
+    const fixture = dashboardFixture();
+    fixture.compare = null;
+    const text = formatJournalWeek(fixture);
+
+    expect(text).toContain("Active 30h 40m");
+    expect(text).not.toContain("vs. last week");
+  });
+
+  it("renders a per-day line for every day, ordered by date", () => {
+    const text = formatJournalWeek(dashboardFixture());
+
+    const day14 = text.indexOf("2026-09-14 — active 5h 12m");
+    const day15 = text.indexOf("2026-09-15 — active 5h");
+    expect(day14).toBeGreaterThan(-1);
+    expect(day15).toBeGreaterThan(day14);
+    expect(text).toContain(
+      "2026-09-14 — active 5h 12m · focus 4h · distraction 22m · longest block 1h 24m · switches 37",
+    );
+  });
+
+  it("orders top categories and apps by minutes descending, not input order", () => {
+    const text = formatJournalWeek(dashboardFixture());
+
+    const workIndex = text.indexOf("Work 23h 40m (77%)");
+    const personalIndex = text.indexOf("Personal 5h (16%)");
+    expect(workIndex).toBeGreaterThan(-1);
+    expect(personalIndex).toBeGreaterThan(workIndex);
+
+    const codeIndex = text.indexOf("Code 15h (49%)");
+    const slackIndex = text.indexOf("Slack 2h (7%)");
+    expect(codeIndex).toBeGreaterThan(-1);
+    expect(slackIndex).toBeGreaterThan(codeIndex);
+  });
+
+  it("orders focus blocks by minutes descending", () => {
+    const text = formatJournalWeek(dashboardFixture());
+
+    const authFixIndex = text.indexOf("01:15–02:51 (1h 36m) [work] Auth fix");
+    const shortBlockIndex = text.indexOf("08:00–09:00 (1h) [work] Short block");
+    expect(authFixIndex).toBeGreaterThan(-1);
+    expect(shortBlockIndex).toBeGreaterThan(authFixIndex);
+  });
+
+  it("renders the supporting/other/distraction split per intention", () => {
+    const text = formatJournalWeek(dashboardFixture());
+
+    expect(text).toContain(
+      "Ship auth fix — supporting 5h · other 40m · distraction 12m",
+    );
+  });
+
+  it("renders 'none' placeholders instead of crashing on empty sections", () => {
+    const text = formatJournalWeek({
+      start: "2026-09-14",
+      end: "2026-09-20",
+      days: [],
+      totals: { active_minutes: 0, focus_minutes: 0, distraction_minutes: 0, longest_focus_block_minutes: 0, switches: 0 },
+    });
+
+    expect(text).toContain("No days returned.");
+    expect(text).toContain("Top categories:\n  none");
+    expect(text).toContain("Top apps:\n  none");
+    expect(text).toContain("Longest focus blocks:\n  none");
+    expect(text).toContain("Intentions:\n  none");
   });
 });

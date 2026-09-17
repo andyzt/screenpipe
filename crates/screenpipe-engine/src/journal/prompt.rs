@@ -39,7 +39,7 @@ use super::validate::CardIssue;
 
 /// Prompt identity. Stored on cards and windows; a bump makes previously
 /// generated windows eligible for regeneration the next time they are touched.
-pub const PROMPT_VERSION: &str = "journal-cards-v3";
+pub const PROMPT_VERSION: &str = "journal-cards-v4";
 
 /// Guard rail on the *evidence* half of the prompt: the rendered observations
 /// plus the previous cards. The instruction blocks are a fixed ~11k characters
@@ -195,6 +195,17 @@ RIGHT: card 1, 09:10–09:50, Work, "Rewrote the parser's error recovery"; card 
 
 Don't label related sub-tasks as distractions. Searching an error message while debugging isn't a distraction, it's part of debugging."#;
 
+/// The rules that turn the user's own review of a span into card geometry.
+/// Only rendered when they reviewed something: a heading about ratings that do
+/// not exist invites the model to invent one.
+const REVIEW_RULES: &str = r#"The person marked these stretches of their own day. This is what they say it was, not something inferred from the screen, so it outranks anything you would conclude from the observations for those minutes:"#;
+
+const REVIEW_EFFECTS: &str = r#"Treat each line as ground truth for the category and the relation of the minutes it covers:
+- A stretch marked distracted is a Distraction-category card of its own when it runs for 10 minutes or more, and a distractions[] entry inside the surrounding card when it is shorter. Never call it focused work.
+- A stretch marked focused is never possible_distraction and never a distractions[] entry. Categorize it as the work or activity the observations show.
+- A stretch marked neutral only rules out the other two: categorize it from the observations as usual.
+Where a rating covers part of a card, follow the rating for those minutes and split the card if that is what it takes."#;
+
 const APP_SITES_BLOCK: &str = r#"## App Sites
 
 Identify the main app or website for each card.
@@ -270,8 +281,7 @@ pub fn language_instruction(language: &str) -> Option<&'static str> {
 
 /// The prompt section carrying [`language_instruction`].
 pub fn language_section(language: &str) -> Option<String> {
-    language_instruction(language)
-        .map(|instruction| format!("## Output language\n\n{instruction}"))
+    language_instruction(language).map(|instruction| format!("## Output language\n\n{instruction}"))
 }
 
 /// The five relations and when each one applies. Shared verbatim with the
@@ -312,12 +322,21 @@ pub fn build_prompt(
         observations = observations.chars().take(budget).collect::<String>();
         observations.push_str("\n[observation list truncated: too many intervals]");
     }
-    render(&observations, &previous, ctx, mode)
+    // The user's own review is never trimmed: it is a handful of lines and it
+    // is the one input that outranks the observations.
+    render(
+        &observations,
+        &previous,
+        review_section(compiled),
+        ctx,
+        mode,
+    )
 }
 
 fn render(
     observations: &str,
     previous: &str,
+    review: Option<String>,
     ctx: &GenerationContext,
     mode: SegmentMode,
 ) -> String {
@@ -338,6 +357,9 @@ fn render(
     push_section(&mut prompt, DETAILED_BLOCK);
     push_section(&mut prompt, &categories_section(&ctx.categories));
     push_section(&mut prompt, DISTRACTIONS_BLOCK);
+    if let Some(section) = review.as_deref() {
+        push_section(&mut prompt, section);
+    }
     push_section(&mut prompt, APP_SITES_BLOCK);
     push_section(&mut prompt, CONTINUITY_BLOCK);
     if let Some(section) = intention_section(ctx.active_intention.as_ref()) {
@@ -464,12 +486,23 @@ pub fn categories_section(categories: &[JournalCategory]) -> String {
 /// relation to nothing produces a fabricated one.
 pub fn intention_section(intention: Option<&FocusIntention>) -> Option<String> {
     let intention = intention?;
-    let mut section = String::from("## Relation to the stated intention\n\nThe person set out to: ");
+    let mut section =
+        String::from("## Relation to the stated intention\n\nThe person set out to: ");
     section.push_str(intention.title.trim());
-    if let Some(project) = intention.project.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
+    if let Some(project) = intention
+        .project
+        .as_deref()
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+    {
         section.push_str(&format!("\nProject: {project}"));
     }
-    if let Some(notes) = intention.notes.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
+    if let Some(notes) = intention
+        .notes
+        .as_deref()
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+    {
         section.push_str(&format!("\nNotes: {notes}"));
     }
     section.push_str(&format!(
@@ -487,8 +520,16 @@ pub fn intention_section(intention: Option<&FocusIntention>) -> Option<String> {
 /// `journalWorkProfile` as prose: who this person is, what they are working
 /// on, and which words belong to which project.
 pub fn work_profile_section(profile: &Value) -> Option<String> {
-    let role = profile.get("role").and_then(Value::as_str).unwrap_or("").trim();
-    let notes = profile.get("notes").and_then(Value::as_str).unwrap_or("").trim();
+    let role = profile
+        .get("role")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    let notes = profile
+        .get("notes")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
     let projects: Vec<String> = profile
         .get("projects")
         .and_then(Value::as_array)
@@ -541,6 +582,38 @@ pub fn work_profile_section(profile: &Value) -> Option<String> {
          an activity belongs to a project the observations do not show.",
     );
     Some(section)
+}
+
+/// The `User review` block: the ratings overlapping this window, as clock
+/// ranges in the same 24-hour UTC the observation lines use. `None` when the
+/// person has not reviewed any of these minutes.
+pub fn review_section(compiled: &CompiledWindow) -> Option<String> {
+    let lines = render_reviews(compiled)?;
+    Some(format!(
+        "## User review\n\n{REVIEW_RULES}\n\n{lines}\n\n{REVIEW_EFFECTS}"
+    ))
+}
+
+/// One line per reviewed stretch: `09:00–10:30 marked focused`.
+pub fn render_reviews(compiled: &CompiledWindow) -> Option<String> {
+    if compiled.reviews.is_empty() {
+        return None;
+    }
+    Some(
+        compiled
+            .reviews
+            .iter()
+            .map(|review| {
+                format!(
+                    "{}–{} marked {}",
+                    review.start_at.format("%H:%M"),
+                    review.end_at.format("%H:%M"),
+                    review.rating
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
 }
 
 /// One line per compiled interval:
@@ -843,7 +916,9 @@ mod tests {
         assert!(section.contains(
             "Only use \"Idle\" when the user is idle for more than half of the timeframe"
         ));
-        assert!(section.contains("Allowed values: [\"Work\", \"Personal\", \"Distraction\", \"Idle\", \"System\"]"));
+        assert!(section.contains(
+            "Allowed values: [\"Work\", \"Personal\", \"Distraction\", \"Idle\", \"System\"]"
+        ));
         assert!(categories_section(&[]).contains("No categories are configured"));
     }
 
@@ -873,7 +948,11 @@ mod tests {
 
         let ongoing = build_prompt(
             &compiled_fixture(),
-            &[previous_card("2026-09-16T07:45:00Z", "2026-09-16T08:00:00Z", "Earlier")],
+            &[previous_card(
+                "2026-09-16T07:45:00Z",
+                "2026-09-16T08:00:00Z",
+                "Earlier",
+            )],
             &context(None),
         );
         assert!(ongoing.contains(
@@ -918,13 +997,19 @@ mod tests {
             .collect();
 
         let prompt = build_prompt(&compiled, &[], &context(None));
-        let evidence = prompt.split("Observations:\n").nth(1).expect("observations are rendered");
+        let evidence = prompt
+            .split("Observations:\n")
+            .nth(1)
+            .expect("observations are rendered");
         assert!(
             evidence.chars().count() <= MAX_EVIDENCE_CHARS,
             "evidence was {} chars",
             evidence.chars().count()
         );
-        assert!(!prompt.contains(&"x".repeat(400)), "the snippets were dropped");
+        assert!(
+            !prompt.contains(&"x".repeat(400)),
+            "the snippets were dropped"
+        );
         // The rules are what keep the answer valid; they stay.
         assert!(prompt.contains("DEFAULT TO MERGING"));
         assert!(prompt.contains("[08:00–08:15] Code · auth.rs — screenpipe"));
@@ -991,8 +1076,42 @@ mod tests {
     }
 
     #[test]
+    fn the_user_review_block_appears_only_when_they_reviewed_something() {
+        let mut compiled = compiled_fixture();
+        let without = build_prompt(&compiled, &[], &context(None));
+        assert!(!without.contains("## User review"));
+        assert!(!without.contains("marked focused"));
+        assert!(review_section(&compiled).is_none());
+
+        compiled.reviews = vec![
+            crate::journal::compile::CompiledReview {
+                start_at: at("2026-09-16T08:00:00Z"),
+                end_at: at("2026-09-16T08:20:00Z"),
+                rating: "focused".to_string(),
+            },
+            crate::journal::compile::CompiledReview {
+                start_at: at("2026-09-16T08:20:00Z"),
+                end_at: at("2026-09-16T08:30:00Z"),
+                rating: "distracted".to_string(),
+            },
+        ];
+        let with = build_prompt(&compiled, &[], &context(None));
+        assert!(with.contains("## User review"));
+        assert!(with.contains("08:00–08:20 marked focused"));
+        assert!(with.contains("08:20–08:30 marked distracted"));
+        // It is ground truth, and it says what that means for the geometry.
+        assert!(with.contains("This is what they say it was"));
+        assert!(with.contains(
+            "A stretch marked distracted is a Distraction-category card of its own when it runs \
+             for 10 minutes or more"
+        ));
+        assert!(with.contains("A stretch marked focused is never possible_distraction"));
+        assert!(with.contains("A stretch marked neutral only rules out the other two"));
+    }
+
+    #[test]
     fn the_prompt_version_is_the_one_stored_on_cards() {
-        assert_eq!(PROMPT_VERSION, "journal-cards-v3");
+        assert_eq!(PROMPT_VERSION, "journal-cards-v4");
         assert_eq!(CONNECTED_GAP, Duration::minutes(5));
         assert!(SYSTEM_PROMPT.contains("Return only the requested JSON"));
         assert!(at("2026-09-16T08:00:00Z") < at("2026-09-16T08:15:00Z"));

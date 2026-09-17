@@ -8,7 +8,12 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 
 import { DayCanvas } from "./day-canvas";
 import { MINUTE_PX } from "@/lib/journal/canvas-layout";
-import { makeActivityCard, makeJournalDay, makeTotals } from "@/lib/journal/fixtures";
+import {
+  makeActivityCard,
+  makeJournalDay,
+  makeReviewRating,
+  makeTotals,
+} from "@/lib/journal/fixtures";
 import type { JournalDay } from "@/lib/journal/types";
 
 /** Local wall clock: the canvas is drawn in local hours, like the day itself. */
@@ -240,5 +245,77 @@ describe("DayCanvas", () => {
     expect(hours[0]).toBe("08:00");
     expect(hours[hours.length - 1]).toBe("20:00");
     expect(screen.queryAllByTestId("journal-canvas-block")).toHaveLength(0);
+  });
+});
+
+
+/**
+ * The review strip is the person's own verdict drawn beside the engine's.
+ *
+ * It shares the cards' y-scale on purpose — a rating and the block it covers
+ * have to line up, or the strip says nothing — and it is deliberately not part
+ * of the range arithmetic: a rating cannot stretch the canvas.
+ */
+describe("DayCanvas → review strip", () => {
+  it("paints one block per rating, in the token each rating owns", () => {
+    renderCanvas({
+      day: day({
+        reviews: [
+          makeReviewRating({
+            id: 1,
+            start_at: at(9).toISOString(),
+            end_at: at(10).toISOString(),
+            rating: "focused",
+          }),
+          makeReviewRating({
+            id: 2,
+            start_at: at(10).toISOString(),
+            end_at: at(10, 30).toISOString(),
+            rating: "neutral",
+          }),
+          makeReviewRating({
+            id: 3,
+            start_at: at(10, 30).toISOString(),
+            end_at: at(11).toISOString(),
+            rating: "distracted",
+          }),
+        ],
+      }),
+    });
+
+    const strip = screen.getByTestId("journal-review-strip");
+    const blocks = within(strip).getAllByTestId("journal-review-block");
+    expect(blocks).toHaveLength(3);
+    expect(blocks[0].className).toContain("bg-primary");
+    expect(blocks[1].className).toContain("bg-muted-foreground/40");
+    expect(blocks[2].className).toContain("bg-destructive");
+    // The same scale as the cards: 09:00 is an hour into a range that starts
+    // at 08:00, and an hour of rating is an hour of pixels.
+    expect(blocks[0].style.top).toBe(`${60 * MINUTE_PX}px`);
+    expect(blocks[0].style.height).toBe(`${60 * MINUTE_PX}px`);
+    expect(blocks[0].getAttribute("title")).toContain("Focused");
+  });
+
+  it("is not drawn at all on a day nobody rated", () => {
+    renderCanvas();
+    expect(screen.queryByTestId("journal-review-strip")).toBeNull();
+  });
+
+  it("never stretches the canvas to reach a rating outside the day's cards", () => {
+    const rated = day({
+      reviews: [
+        makeReviewRating({
+          id: 9,
+          start_at: at(5).toISOString(),
+          end_at: at(6).toISOString(),
+          rating: "focused",
+        }),
+      ],
+    });
+    const { container } = renderCanvas({ day: rated });
+    const body = container.querySelector("[data-testid='journal-canvas'] > div");
+    // 08:00 → 11:00 around the single 09:00 card, exactly as with no ratings.
+    expect((body as HTMLElement).style.height).toBe(`${180 * MINUTE_PX}px`);
+    expect(screen.queryAllByTestId("journal-review-block")).toHaveLength(0);
   });
 });

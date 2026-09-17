@@ -18,10 +18,17 @@
  */
 
 import React from "react";
-import { RefreshCw } from "lucide-react";
+import {
+  Copy,
+  Loader2,
+  RefreshCw,
+  ThumbsDown,
+  ThumbsUp,
+} from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/ui/use-toast";
 import {
   CardDescription,
@@ -32,16 +39,36 @@ import { Separator } from "@/components/ui/separator";
 import { DayOverview } from "./day-overview";
 import { EvidenceList } from "./evidence-list";
 import { NowStrip } from "./now-strip";
+import { SegmentedToggle } from "./week-view";
 import {
   categoryConfidenceLabel,
   dataStatusCopy,
+  formatClock,
   formatClockRange,
   formatEstimate,
+  formatMinutes,
   relationLabel,
 } from "@/lib/journal/format";
 import { categoryLabel, useLocale, useT } from "@/lib/i18n";
-import { regenerateJournal } from "@/lib/journal/api";
-import type { ActivityCard, JournalDay } from "@/lib/journal/types";
+import {
+  fetchRecap,
+  generateRecap,
+  putCardFeedback,
+  putReview,
+  regenerateJournal,
+} from "@/lib/journal/api";
+import type {
+  ActivityCard,
+  CardFeedback,
+  CardFeedbackRating,
+  JournalDay,
+  JournalRecap,
+  RecapStatus,
+  ReviewRatingValue,
+} from "@/lib/journal/types";
+
+/** The note a thumbs-down can carry. The contract caps it; so does the field. */
+const FEEDBACK_NOTE_MAX = 500;
 
 function openJournalSettings() {
   window.dispatchEvent(
@@ -60,19 +87,67 @@ function Line({ label, children }: { label: string; children: React.ReactNode })
   );
 }
 
+/**
+ * One thumb. Filled and on `bg-secondary` when it is the card's rating, so the
+ * state reads without colour and a second press visibly takes it back.
+ */
+function FeedbackButton({
+  testId,
+  label,
+  active,
+  icon: Icon,
+  onClick,
+}: {
+  testId: string;
+  label: string;
+  active: boolean;
+  icon: typeof ThumbsUp;
+  onClick: () => void;
+}) {
+  return (
+    <Button
+      size="sm"
+      variant="ghost"
+      data-testid={testId}
+      aria-label={label}
+      aria-pressed={active}
+      title={label}
+      className={`h-8 w-8 p-0${active ? " bg-secondary text-foreground" : ""}`}
+      onClick={onClick}
+    >
+      <Icon
+        className="h-3.5 w-3.5"
+        {...(active ? { fill: "currentColor" } : {})}
+      />
+    </Button>
+  );
+}
+
 function CardDetail({
   card,
   onClose,
   onRegenerate,
+  onReviewChange,
 }: {
   card: ActivityCard;
   onClose: () => void;
   onRegenerate?: (card: ActivityCard) => Promise<void>;
+  /** Re-read the day after a review rating was written. */
+  onReviewChange?: () => Promise<void>;
 }) {
   const t = useT();
   const locale = useLocale();
   const { toast } = useToast();
   const [regenerating, setRegenerating] = React.useState(false);
+  // Feedback and the review rating are shown optimistically: both are one
+  // small write the person is watching, and a spinner on a thumb would be
+  // slower to read than the state it is about to reach.
+  const [feedback, setFeedback] = React.useState<CardFeedback | null>(
+    card.feedback ?? null,
+  );
+  const [noteOpen, setNoteOpen] = React.useState(false);
+  const [note, setNote] = React.useState(card.feedback?.note ?? "");
+  const [review, setReview] = React.useState(card.review ?? null);
   const relation = relationLabel(card.intention_relation, locale);
   const confidence = categoryConfidenceLabel(card.category_confidence, locale);
   const apps = [card.app_primary, card.app_secondary].filter(Boolean).join(" · ");
@@ -115,6 +190,79 @@ function CardDetail({
     }
   }, [card, onRegenerate, t, toast]);
 
+  /**
+   * A card the model never wrote — an idle stretch, a system row — has nothing
+   * to be right or wrong about, so neither control is offered there.
+   */
+  const rateable = !card.category.is_idle && !card.category.is_system;
+
+  const saveFeedback = React.useCallback(
+    async (rating: CardFeedbackRating | null, nextNote: string | null) => {
+      const previous = feedback;
+      setFeedback(
+        rating
+          ? { rating, note: nextNote, created_at: new Date().toISOString() }
+          : null,
+      );
+      try {
+        await putCardFeedback(card.id, { rating, note: nextNote });
+      } catch (reason) {
+        setFeedback(previous);
+        toast({
+          title: t("inspector.feedback.failed"),
+          description: reason instanceof Error ? reason.message : String(reason),
+          variant: "destructive",
+        });
+      }
+    },
+    [card.id, feedback, t, toast],
+  );
+
+  const rate = React.useCallback(
+    (rating: CardFeedbackRating) => {
+      // Pressing the rating the card already carries takes it back.
+      if (feedback?.rating === rating) {
+        setNoteOpen(false);
+        void saveFeedback(null, null);
+        return;
+      }
+      // Only a thumbs-down asks why: a card that is right needs no note.
+      setNoteOpen(rating === "down");
+      if (rating === "down") setNote(feedback?.note ?? "");
+      void saveFeedback(rating, rating === "down" ? (feedback?.note ?? null) : null);
+    },
+    [feedback, saveFeedback],
+  );
+
+  const setReviewRating = React.useCallback(
+    (next: ReviewRatingValue) => {
+      const previous = review;
+      // The same rating twice clears the span, exactly as the thumbs do.
+      const rating = previous === next ? null : next;
+      setReview(rating);
+      void (async () => {
+        try {
+          await putReview({
+            start_at: card.start_at,
+            end_at: card.end_at,
+            rating,
+          });
+          // The strip and the day's totals are drawn from the day, so the day
+          // is what has to be re-read — not this one card.
+          await onReviewChange?.();
+        } catch (reason) {
+          setReview(previous);
+          toast({
+            title: t("inspector.review.failed"),
+            description: reason instanceof Error ? reason.message : String(reason),
+            variant: "destructive",
+          });
+        }
+      })();
+    },
+    [card.end_at, card.start_at, onReviewChange, review, t, toast],
+  );
+
   return (
     <div
       data-testid="journal-inspector-card"
@@ -139,6 +287,24 @@ function CardDetail({
           </CardDescription>
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-1">
+          {rateable ? (
+            <>
+              <FeedbackButton
+                testId="journal-feedback-up"
+                label={t("inspector.feedback.up")}
+                active={feedback?.rating === "up"}
+                icon={ThumbsUp}
+                onClick={() => rate("up")}
+              />
+              <FeedbackButton
+                testId="journal-feedback-down"
+                label={t("inspector.feedback.down")}
+                active={feedback?.rating === "down"}
+                icon={ThumbsDown}
+                onClick={() => rate("down")}
+              />
+            </>
+          ) : null}
           {canRegenerate ? (
             <Button
               size="sm"
@@ -198,6 +364,60 @@ function CardDetail({
             : t("inspector.stateFinal")}
         </Badge>
       </div>
+
+      {/* A thumbs-down asks what was wrong, and takes no answer for one: the
+          rating is already saved, the note only sharpens it. */}
+      {rateable && noteOpen ? (
+        <div className="flex flex-col items-start gap-2">
+          <Textarea
+            data-testid="journal-feedback-note"
+            aria-label={t("inspector.feedback.notePlaceholder")}
+            placeholder={t("inspector.feedback.notePlaceholder")}
+            maxLength={FEEDBACK_NOTE_MAX}
+            value={note}
+            onChange={(event) => setNote(event.target.value)}
+            // `--input` is a fill in this theme, not a line, so the stock
+            // `border-input` would be a white border on a white card.
+            className="min-h-[64px] border-border text-sm"
+          />
+          <Button
+            size="sm"
+            variant="outline"
+            data-testid="journal-feedback-note-save"
+            onClick={() => {
+              setNoteOpen(false);
+              void saveFeedback("down", note.trim() ? note.trim() : null);
+            }}
+          >
+            {t("inspector.feedback.noteSave")}
+          </Button>
+        </div>
+      ) : null}
+
+      {rateable ? (
+        <Line label={t("inspector.review.label")}>
+          <div className="flex flex-col items-start gap-1.5">
+            <SegmentedToggle
+              label={t("inspector.review.label")}
+              testId="journal-card-review"
+              // `mixed` is the engine describing two ratings over one card, not
+              // a fourth option: no segment is lit, and the words say why.
+              value={review === "mixed" || review === null ? "" : review}
+              options={[
+                { value: "focused", label: t("review.focused") },
+                { value: "neutral", label: t("review.neutral") },
+                { value: "distracted", label: t("review.distracted") },
+              ]}
+              onChange={(next) => setReviewRating(next as ReviewRatingValue)}
+            />
+            {review === "mixed" ? (
+              <span data-testid="journal-card-review-mixed">
+                {t("inspector.review.mixed")}
+              </span>
+            ) : null}
+          </div>
+        </Line>
+      ) : null}
 
       {card.summary ? (
         <Line label={t("inspector.summary")}>
@@ -259,6 +479,233 @@ function CardDetail({
   );
 }
 
+/** `Focused 2h · Neutral 30m · Distracted 15m`, and nothing when nothing is rated. */
+function ReviewTotalsLine({ day }: { day: JournalDay }) {
+  const t = useT();
+  const locale = useLocale();
+  const totals = day.review_totals;
+  if (!totals) return null;
+  const parts = (
+    [
+      ["review.focused", totals.focused_minutes],
+      ["review.neutral", totals.neutral_minutes],
+      ["review.distracted", totals.distracted_minutes],
+    ] as const
+  )
+    .filter(([, minutes]) => minutes > 0)
+    .map(([key, minutes]) => `${t(key)} ${formatMinutes(minutes, locale)}`);
+  if (parts.length === 0) return null;
+  return (
+    <p
+      data-testid="journal-review-totals"
+      className="text-xs text-muted-foreground"
+    >
+      {t("inspector.reviewTotals")}: {parts.join(" · ")}
+    </p>
+  );
+}
+
+/** A bulleted half of the recap. Nothing is rendered for an empty list. */
+function RecapBullets({
+  label,
+  items,
+  testId,
+}: {
+  label: string;
+  items: string[];
+  testId: string;
+}) {
+  if (items.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-1">
+      <h4 className="text-xs font-medium text-muted-foreground">
+        {label}
+      </h4>
+      <ul data-testid={testId} className="flex list-disc flex-col gap-1 pl-4">
+        {items.map((item) => (
+          <li key={item} className="text-sm text-foreground">
+            {item}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * The day's written recap.
+ *
+ * Read lazily — the panel only exists while no card is selected — and re-read
+ * whenever the day says its recap changed state, so a recap written from the
+ * tray or an MCP tool appears here without a reload. Generation is one
+ * synchronous model call of about ten seconds, which is long enough that the
+ * button has to say it is working rather than look ignored.
+ */
+function RecapPanel({
+  date,
+  dayStatus,
+}: {
+  date: string;
+  dayStatus: RecapStatus;
+}) {
+  const t = useT();
+  const locale = useLocale();
+  const { toast } = useToast();
+  const [recap, setRecap] = React.useState<JournalRecap | null>(null);
+  const [generating, setGenerating] = React.useState(false);
+
+  React.useEffect(() => {
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const next = await fetchRecap(date, controller.signal);
+        if (!controller.signal.aborted) setRecap(next);
+      } catch {
+        // A recap that cannot be read is not worth a toast on a panel the
+        // reader did not ask for; the generate button stays as the way out.
+      }
+    })();
+    return () => controller.abort();
+  }, [date, dayStatus]);
+
+  const write = React.useCallback(async () => {
+    setGenerating(true);
+    try {
+      setRecap(await generateRecap(date));
+    } catch (reason) {
+      // 409 with no final cards, 503 with no provider, 429 twice in a minute —
+      // the engine's own sentence is the one worth showing.
+      toast({
+        title: t("inspector.recap.failed"),
+        description: reason instanceof Error ? reason.message : String(reason),
+        variant: "destructive",
+      });
+    } finally {
+      setGenerating(false);
+    }
+  }, [date, t, toast]);
+
+  const copy = React.useCallback(async () => {
+    if (!recap) return;
+    try {
+      await navigator.clipboard.writeText(recap.markdown);
+      toast({ description: t("inspector.recap.copied") });
+    } catch (reason) {
+      toast({
+        title: t("inspector.recap.copyFailed"),
+        description: reason instanceof Error ? reason.message : String(reason),
+        variant: "destructive",
+      });
+    }
+  }, [recap, t, toast]);
+
+  const status: RecapStatus = recap?.status ?? dayStatus ?? "none";
+  const written = status === "ready" || status === "stale";
+  const writeLabel =
+    status === "failed"
+      ? t("inspector.recap.retry")
+      : status === "none"
+        ? t("inspector.recap.generate")
+        : t("inspector.recap.update");
+
+  const writeButton = (
+    <Button
+      size="sm"
+      variant={status === "stale" || status === "none" ? "outline" : "ghost"}
+      data-testid="journal-recap-generate"
+      disabled={generating}
+      onClick={() => void write()}
+    >
+      {generating ? (
+        <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+      ) : null}
+      {generating ? t("inspector.recap.writing") : writeLabel}
+    </Button>
+  );
+
+  return (
+    <div
+      data-testid="journal-recap"
+      data-status={status}
+      className="flex flex-col gap-2 rounded-lg border border-border p-3"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-sm font-medium text-foreground">
+          {t("inspector.recap.title")}
+        </h3>
+        {written ? (
+          <Button
+            size="sm"
+            variant="ghost"
+            data-testid="journal-recap-copy"
+            onClick={() => void copy()}
+          >
+            <Copy className="mr-1 h-3.5 w-3.5" />
+            {t("inspector.recap.copy")}
+          </Button>
+        ) : null}
+      </div>
+
+      {written && recap ? (
+        <div className="flex flex-col gap-3">
+          {recap.summary ? (
+            <p className="text-sm text-muted-foreground">{recap.summary}</p>
+          ) : null}
+          <RecapBullets
+            label={t("inspector.recap.done")}
+            items={recap.done}
+            testId="journal-recap-done"
+          />
+          <RecapBullets
+            label={t("inspector.recap.next")}
+            items={recap.next}
+            testId="journal-recap-next"
+          />
+          {recap.focus_note ? (
+            <p className="text-sm text-muted-foreground">{recap.focus_note}</p>
+          ) : null}
+          {recap.generated_at ? (
+            <p className="text-xs text-muted-foreground">
+              {t("inspector.recap.generatedAt", {
+                time: formatClock(recap.generated_at, locale),
+              })}
+            </p>
+          ) : null}
+          {status === "stale" ? (
+            <div
+              data-testid="journal-recap-stale"
+              className="flex flex-col items-start gap-2"
+            >
+              <p className="text-xs text-muted-foreground">
+                {t("inspector.recap.stale")}
+              </p>
+              {writeButton}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {status === "none" ? (
+        <div className="flex flex-col items-start gap-2">
+          <p className="text-sm text-muted-foreground">
+            {t("inspector.recap.none")}
+          </p>
+          {writeButton}
+        </div>
+      ) : null}
+
+      {status === "failed" ? (
+        <div className="flex flex-col items-start gap-2">
+          <p data-testid="journal-recap-error" className="text-sm text-muted-foreground">
+            {recap?.error ?? t("inspector.recap.failed")}
+          </p>
+          {writeButton}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function DaySummary({
   day,
   showNow,
@@ -289,7 +736,14 @@ function DaySummary({
         </div>
       ) : null}
 
+      {/* The recap is the day in words and the reason most people open this
+          panel, so it sits above the breakdowns rather than under a donut and
+          a scroll. The canvas beside it is already the measured state. */}
+      <RecapPanel date={day.date} dayStatus={day.recap?.status ?? "none"} />
+
       <DayOverview totals={day.totals} activities={day.activities} />
+
+      <ReviewTotalsLine day={day} />
 
       {provisional > 0 ? (
         <p data-testid="journal-provisional-count" className="text-xs text-muted-foreground">
@@ -335,6 +789,7 @@ export function DayInspector({
   showNow,
   nowRefreshToken = 0,
   onRegenerate,
+  onReviewChange,
 }: {
   day: JournalDay;
   selected: ActivityCard | null;
@@ -350,6 +805,11 @@ export function DayInspector({
    * button whose result never appears.
    */
   onRegenerate?: (card: ActivityCard) => Promise<void>;
+  /**
+   * Re-read the day after a review rating was written: the canvas strip and
+   * the day's review totals are served with the day, not with the card.
+   */
+  onReviewChange?: () => Promise<void>;
 }) {
   const t = useT();
   return (
@@ -359,10 +819,14 @@ export function DayInspector({
       className="journal-scroll w-full shrink-0 overflow-y-auto rounded-lg border border-border bg-card p-4 text-card-foreground shadow-sm min-[1100px]:h-[calc(100vh-8rem)] min-[1100px]:min-h-[420px] min-[1100px]:w-[380px]"
     >
       {selected ? (
+        // Keyed by id: moving the selection is a new card, and its feedback,
+        // note and rating are that card's state, not this panel's.
         <CardDetail
+          key={selected.id}
           card={selected}
           onClose={onClose}
           onRegenerate={onRegenerate}
+          onReviewChange={onReviewChange}
         />
       ) : (
         <DaySummary

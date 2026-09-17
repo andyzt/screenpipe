@@ -17,6 +17,7 @@
 
 import { localFetch } from "@/lib/api";
 import type {
+  ActivityCard,
   ActivityDetail,
   FocusOverrideRelation,
   FocusStatus,
@@ -24,8 +25,12 @@ import type {
   IntentionSource,
   JournalCategory,
   JournalDay,
+  JournalRecap,
   JournalStatus,
   JournalWeek,
+  CardFeedbackRating,
+  ReviewRating,
+  ReviewRatingValue,
 } from "./types";
 
 export class JournalApiError extends Error {
@@ -153,6 +158,84 @@ export async function saveJournalCategories(
     },
   );
   return Array.isArray(body.categories) ? body.categories : categories;
+}
+
+/**
+ * Rate one card's text, or clear the rating.
+ *
+ * `rating: null` removes it; a note only ever accompanies a thumbs-down and is
+ * capped at 500 characters by the contract. The engine answers with the whole
+ * card, so a caller can replace its copy instead of patching one field.
+ */
+export function putCardFeedback(
+  id: number,
+  input: { rating: CardFeedbackRating | null; note?: string | null },
+): Promise<ActivityCard> {
+  return requestJson<ActivityCard>(`/journal/activities/${id}/feedback`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      rating: input.rating,
+      ...(input.note !== undefined ? { note: input.note } : {}),
+    }),
+  });
+}
+
+/** The ratings touching one day, ascending by `start_at`. */
+export async function fetchReviews(
+  date: string,
+  signal?: AbortSignal,
+): Promise<ReviewRating[]> {
+  const body = await requestJson<{ items: ReviewRating[] }>(
+    `/journal/reviews?date=${encodeURIComponent(date)}`,
+    { signal },
+  );
+  return Array.isArray(body.items) ? body.items : [];
+}
+
+/**
+ * Mark a span of the day, or clear it with `rating: null`.
+ *
+ * Ratings never overlap: the engine splits or replaces whatever the span
+ * covers, exactly as a calendar block would, and answers with the day's whole
+ * list afterwards — which is what the canvas strip repaints from.
+ */
+export async function putReview(input: {
+  start_at: string;
+  end_at: string;
+  rating: ReviewRatingValue | null;
+}): Promise<ReviewRating[]> {
+  const body = await requestJson<{ items: ReviewRating[] }>("/journal/reviews", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  return Array.isArray(body.items) ? body.items : [];
+}
+
+/** The stored recap, or `status: "none"` when the day has never had one. */
+export function fetchRecap(
+  date: string,
+  signal?: AbortSignal,
+): Promise<JournalRecap> {
+  return requestJson<JournalRecap>(
+    `/journal/recap?date=${encodeURIComponent(date)}`,
+    { signal },
+  );
+}
+
+/**
+ * Write the day's recap now. One model call, run synchronously by the engine
+ * (about ten seconds), so the caller must show that it is working: 409 when
+ * the day has no final cards, 503 with no provider, 429 more than once a
+ * minute — each arrives as a `JournalApiError` carrying the engine's sentence.
+ */
+export function generateRecap(date: string): Promise<JournalRecap> {
+  return requestJson<JournalRecap>("/journal/recap/generate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ date }),
+  });
 }
 
 export function fetchFocusStatus(signal?: AbortSignal): Promise<FocusStatus> {

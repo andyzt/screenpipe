@@ -110,6 +110,50 @@ export interface ActivityCardIntention {
   title: string;
 }
 
+/** The two ways a person can rate a card's text. `null` clears the rating. */
+export type CardFeedbackRating = "up" | "down";
+
+/**
+ * One person's verdict on one card, kept per card and replaced by a later PUT.
+ *
+ * The engine snapshots the card's identity alongside it so the rating survives
+ * a rewrite and can be exported as an eval label — none of that is needed
+ * here, so only the three fields the inspector renders are transcribed.
+ */
+export interface CardFeedback {
+  rating: CardFeedbackRating;
+  note: string | null;
+  created_at: string;
+}
+
+/** What the user says a span of the day *was*. Never overlapping. */
+export type ReviewRatingValue = "focused" | "neutral" | "distracted";
+
+/**
+ * A card's rating, derived by the engine from the ratings covering its span:
+ * the single rating when one covers ≥ 90 % of it, `mixed` for two or more.
+ * `mixed` is a statement about the ratings, not a rating anyone can pick.
+ */
+export type CardReview = ReviewRatingValue | "mixed";
+
+export interface ReviewRating {
+  id: number;
+  start_at: string;
+  end_at: string;
+  rating: ReviewRatingValue;
+  source: "app" | "mcp";
+  created_at: string;
+  updated_at: string;
+}
+
+/** The day's wall minutes split by the rating covering each minute. */
+export interface ReviewTotals {
+  focused_minutes: number;
+  neutral_minutes: number;
+  distracted_minutes: number;
+  unrated_minutes: number;
+}
+
 export interface ActivityCard {
   id: number;
   activity_key: string;
@@ -133,6 +177,10 @@ export interface ActivityCard {
   apps: CardApp[];
   distractions: ActivityDistraction[];
   evidence_count: number;
+  /** `null` until the person rates the card. */
+  feedback: CardFeedback | null;
+  /** The review rating over the card's span, `null` when none touches it. */
+  review: CardReview | null;
 }
 
 export interface ActivityEvidence {
@@ -151,6 +199,36 @@ export interface ActivityDetail extends ActivityCard {
   evidence: ActivityEvidence[];
 }
 
+/**
+ * The day's written recap. `status` is the whole state machine:
+ * `none` — never written; `ready` — current; `stale` — a card changed after
+ * `generated_at`; `failed` — the last attempt errored, and `error` says why
+ * while the previous successful body is still carried.
+ */
+export type RecapStatus = "none" | "ready" | "stale" | "failed";
+
+/** The `recap` stub on `GET /journal/day`: enough to know whether to offer it. */
+export interface JournalDayRecap {
+  status: RecapStatus;
+  generated_at: string | null;
+}
+
+export interface JournalRecap extends JournalDayRecap {
+  date: string;
+  summary: string;
+  /** 1–6 bullets, each ≤ 140 chars, in the UI language. */
+  done: string[];
+  /** 0–4 bullets, only from evidence in the cards. */
+  next: string[];
+  focus_note: string | null;
+  source_cards: number;
+  model: string | null;
+  prompt_version: string | null;
+  error: string | null;
+  /** Rendered by the engine, so the app and the MCP tool copy identical text. */
+  markdown: string;
+}
+
 export interface JournalDay {
   date: string;
   day_start: string;
@@ -160,6 +238,10 @@ export interface JournalDay {
   totals: JournalTotals;
   intentions: Intention[];
   activities: ActivityCard[];
+  /** Ratings touching the day, ascending by `start_at`, clipped to the day. */
+  reviews: ReviewRating[];
+  review_totals: ReviewTotals;
+  recap: JournalDayRecap;
 }
 
 /**

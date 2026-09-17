@@ -272,7 +272,8 @@ pub fn to_drafts(
     for card in cards {
         let start_at = parse_instant(&card.start_time, "startTime")?;
         let end_at = parse_instant(&card.end_time, "endTime")?;
-        let category = normalize_category(&card.category, &ctx.categories, &ctx.fallback_category_id);
+        let category =
+            normalize_category(&card.category, &ctx.categories, &ctx.fallback_category_id);
         let app_sites = card.app_sites.clone().unwrap_or(ModelAppSites {
             primary: None,
             secondary: None,
@@ -287,12 +288,15 @@ pub fn to_drafts(
                 // A detour outside its own card is a modelling slip, not
                 // evidence of anything: drop it rather than persist a
                 // sub-interval that contradicts the card around it.
-                (end > start && start >= start_at && end <= end_at).then_some(CardDistractionDraft {
-                    start_at: start,
-                    end_at: end,
-                    title: non_empty(&distraction.title).unwrap_or_else(|| "Detour".to_string()),
-                    summary: distraction.summary.trim().to_string(),
-                })
+                (end > start && start >= start_at && end <= end_at).then_some(
+                    CardDistractionDraft {
+                        start_at: start,
+                        end_at: end,
+                        title: non_empty(&distraction.title)
+                            .unwrap_or_else(|| "Detour".to_string()),
+                        summary: distraction.summary.trim().to_string(),
+                    },
+                )
             })
             .collect();
 
@@ -362,7 +366,9 @@ fn parse_instant(raw: &str, field: &str) -> anyhow::Result<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(raw.trim())
         .map(|value| value.with_timezone(&Utc))
         .map_err(|_| {
-            anyhow::anyhow!("{field} {raw:?} is not an RFC3339 UTC instant like 2026-09-16T08:15:00Z")
+            anyhow::anyhow!(
+                "{field} {raw:?} is not an RFC3339 UTC instant like 2026-09-16T08:15:00Z"
+            )
         })
 }
 
@@ -415,13 +421,23 @@ mod tests {
     fn a_card_takes_the_interval_keys_its_span_overlaps() {
         let compiled = compiled_fixture();
         let ctx = context(None);
-        let cards = vec![model_card("2026-09-16T08:00:00Z", "2026-09-16T08:20:00Z", "Work")];
+        let cards = vec![model_card(
+            "2026-09-16T08:00:00Z",
+            "2026-09-16T08:20:00Z",
+            "Work",
+        )];
         let drafts = to_drafts(&cards, &compiled, &ctx).unwrap();
         assert_eq!(drafts.len(), 1);
         assert_eq!(drafts[0].interval_keys, vec!["i1", "i2"]);
         assert_eq!(drafts[0].category_id, "work");
-        assert_eq!(drafts[0].app_primary.as_deref(), Some("code.visualstudio.com"));
-        assert!(drafts[0].intention_relation.is_none(), "no intention, no relation");
+        assert_eq!(
+            drafts[0].app_primary.as_deref(),
+            Some("code.visualstudio.com")
+        );
+        assert!(
+            drafts[0].intention_relation.is_none(),
+            "no intention, no relation"
+        );
     }
 
     #[test]
@@ -437,8 +453,15 @@ mod tests {
         assert!(without[0].relation_confidence.is_none());
 
         let with = to_drafts(&[card], &compiled, &context(Some("Ship auth fix"))).unwrap();
-        assert_eq!(with[0].intention_relation.as_deref(), Some("supports_intention"));
-        assert_eq!(with[0].relation_confidence, Some(1.0), "confidence is clamped");
+        assert_eq!(
+            with[0].intention_relation.as_deref(),
+            Some("supports_intention")
+        );
+        assert_eq!(
+            with[0].relation_confidence,
+            Some(1.0),
+            "confidence is clamped"
+        );
         assert_eq!(with[0].relation_reason.as_deref(), Some("same repo"));
     }
 
@@ -476,7 +499,9 @@ mod tests {
 
         let mut broken = card;
         broken.start_time = "8:15 AM".to_string();
-        let error = to_drafts(&[broken], &compiled, &ctx).unwrap_err().to_string();
+        let error = to_drafts(&[broken], &compiled, &ctx)
+            .unwrap_err()
+            .to_string();
         assert!(error.contains("RFC3339"), "{error}");
     }
 
@@ -490,6 +515,9 @@ mod tests {
         let with_relation = response_schema(true);
         let properties =
             &with_relation["json_schema"]["schema"]["properties"]["cards"]["items"]["properties"];
-        assert_eq!(properties["intentionRelation"]["enum"][0], "supports_intention");
+        assert_eq!(
+            properties["intentionRelation"]["enum"][0],
+            "supports_intention"
+        );
     }
 }

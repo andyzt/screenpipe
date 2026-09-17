@@ -11,6 +11,7 @@
 //! transaction. Provider work must have finished before any of these methods
 //! is called — nothing here may widen a write transaction over the network.
 
+use super::journal_review::{review_label_for_span, JournalCardFeedback, JournalReviewRating};
 use super::*;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -155,6 +156,11 @@ pub struct JournalActivity {
     pub user_locked: bool,
     pub evidence_count: i64,
     pub distractions: Vec<JournalDistraction>,
+    /// The user's thumb on this card, `None` until they rate it.
+    pub feedback: Option<JournalCardFeedback>,
+    /// The user's timeline review over this card's span: one of the three
+    /// ratings, `"mixed"`, or `None` when no rating touches the card.
+    pub review: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -363,7 +369,7 @@ impl From<RawCategory> for JournalCategory {
     }
 }
 
-fn parse_ts(value: &str) -> Option<DateTime<Utc>> {
+pub(super) fn parse_ts(value: &str) -> Option<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(value)
         .ok()
         .map(|value| value.with_timezone(&Utc))
@@ -571,17 +577,20 @@ impl DatabaseManager {
         let range_end = end_at.to_rfc3339();
         let now = Utc::now();
         let now_text = now.to_rfc3339();
-        let purge_before = (now - chrono::Duration::hours(SOFT_DELETE_RETENTION_HOURS)).to_rfc3339();
+        let purge_before =
+            (now - chrono::Duration::hours(SOFT_DELETE_RETENTION_HOURS)).to_rfc3339();
 
         let mut tx = self.begin_immediate_with_retry().await?;
 
         // Bounded cleanup of earlier rewrites. Soft deletion is what lets a
         // client that still holds an id see the card disappear rather than
         // change under it; keeping those rows forever is not the point.
-        sqlx::query("DELETE FROM journal_activities WHERE deleted_at IS NOT NULL AND deleted_at < ?1")
-            .bind(&purge_before)
-            .execute(&mut **tx.conn())
-            .await?;
+        sqlx::query(
+            "DELETE FROM journal_activities WHERE deleted_at IS NOT NULL AND deleted_at < ?1",
+        )
+        .bind(&purge_before)
+        .execute(&mut **tx.conn())
+        .await?;
 
         // A card that begins before the range and runs into it keeps its head.
         // The rewrite owns the minutes inside the range and nothing else:
@@ -802,11 +811,18 @@ impl DatabaseManager {
                 });
         }
         let categories = self.list_journal_categories().await?;
+        // Two batched queries for the whole range, never one per card: this
+        // runs on every `GET /journal/day` and every day of a week.
+        let ids: Vec<i64> = rows.iter().map(|row| row.id).collect();
+        let mut feedback = self.journal_feedback_for_activities(&ids).await?;
+        let reviews = self.list_review_ratings(start_at, end_at).await?;
         Ok(rows
             .into_iter()
             .map(|row| {
                 let distractions = by_activity.remove(&row.id).unwrap_or_default();
-                activity_from_row(row, &categories, distractions)
+                let thumb = feedback.remove(&row.id);
+                let review = review_of(&row.start_at, &row.end_at, &reviews);
+                activity_from_row(row, &categories, distractions, thumb, review)
             })
             .collect())
     }
@@ -867,8 +883,18 @@ impl DatabaseManager {
         };
 
         let categories = self.list_journal_categories().await?;
+        let feedback = self
+            .journal_feedback_for_activities(&[id])
+            .await?
+            .remove(&id);
+        let review = match (parse_ts(&row.start_at), parse_ts(&row.end_at)) {
+            (Some(start), Some(end)) => {
+                review_label_for_span(start, end, &self.list_review_ratings(start, end).await?)
+            }
+            _ => None,
+        };
         Ok(Some((
-            activity_from_row(row, &categories, distractions),
+            activity_from_row(row, &categories, distractions, feedback, review),
             interval_keys,
             evidence,
         )))
@@ -1118,9 +1144,7 @@ impl DatabaseManager {
         .await?;
         Ok(rows
             .into_iter()
-            .filter_map(|(ms, event_type)| {
-                Some((DateTime::from_timestamp_millis(ms)?, event_type))
-            })
+            .filter_map(|(ms, event_type)| Some((DateTime::from_timestamp_millis(ms)?, event_type)))
             .collect())
     }
 
@@ -1170,11 +1194,10 @@ impl DatabaseManager {
         fallback_category_id: &str,
     ) -> Result<Vec<JournalCategory>, SqlxError> {
         let mut tx = self.begin_immediate_with_retry().await?;
-        let system_ids: Vec<String> = sqlx::query_scalar(
-            "SELECT id FROM journal_categories WHERE is_system = 1 ORDER BY id",
-        )
-        .fetch_all(&mut **tx.conn())
-        .await?;
+        let system_ids: Vec<String> =
+            sqlx::query_scalar("SELECT id FROM journal_categories WHERE is_system = 1 ORDER BY id")
+                .fetch_all(&mut **tx.conn())
+                .await?;
 
         let mut keep: Vec<String> = system_ids.clone();
         for draft in drafts {
@@ -1208,8 +1231,9 @@ impl DatabaseManager {
             .map(|(index, _)| format!("?{}", index + 1))
             .collect::<Vec<_>>()
             .join(",");
-        let delete_sql =
-            format!("DELETE FROM journal_categories WHERE is_system = 0 AND id NOT IN ({placeholders})");
+        let delete_sql = format!(
+            "DELETE FROM journal_categories WHERE is_system = 0 AND id NOT IN ({placeholders})"
+        );
         let mut delete = sqlx::query(sqlx::AssertSqlSafe(delete_sql));
         for id in &keep {
             delete = delete.bind(id);
@@ -1235,12 +1259,11 @@ impl DatabaseManager {
         &self,
         producer: &str,
     ) -> Result<Option<DateTime<Utc>>, SqlxError> {
-        let value: Option<String> = sqlx::query_scalar(
-            "SELECT last_window_end_at FROM journal_state WHERE producer = ?1",
-        )
-        .bind(producer)
-        .fetch_optional(&self.pool)
-        .await?;
+        let value: Option<String> =
+            sqlx::query_scalar("SELECT last_window_end_at FROM journal_state WHERE producer = ?1")
+                .bind(producer)
+                .fetch_optional(&self.pool)
+                .await?;
         Ok(value.as_deref().and_then(parse_ts))
     }
 
@@ -1336,15 +1359,33 @@ fn window_from_row(row: RawWindow) -> Option<JournalWindow> {
     })
 }
 
+/// The review label of a stored card, from the ratings already loaded for the
+/// range. Separate from [`review_label_for_span`] only to keep the string
+/// parsing out of the row mapping.
+fn review_of(start_at: &str, end_at: &str, ratings: &[JournalReviewRating]) -> Option<String> {
+    let (Some(start), Some(end)) = (parse_ts(start_at), parse_ts(end_at)) else {
+        return None;
+    };
+    review_label_for_span(start, end, ratings)
+}
+
 fn activity_from_row(
     row: RawActivity,
     categories: &[JournalCategory],
     distractions: Vec<JournalDistraction>,
+    feedback: Option<JournalCardFeedback>,
+    review: Option<String>,
 ) -> JournalActivity {
     let category = categories
         .iter()
         .find(|category| category.id == row.category_id)
         .cloned();
+    // An idle or system card is never reviewed: the user rates what they were
+    // doing, and neither of those claims they were doing anything.
+    let review = match category.as_ref() {
+        Some(category) if category.is_idle || category.is_system => None,
+        _ => review,
+    };
     JournalActivity {
         id: row.id,
         activity_key: row.activity_key,
@@ -1370,6 +1411,8 @@ fn activity_from_row(
         user_locked: row.user_locked != 0,
         evidence_count: row.evidence_count,
         distractions,
+        feedback,
+        review,
     }
 }
 
@@ -1427,11 +1470,18 @@ mod tests {
         let (db, _dir) = test_db().await;
         let categories = db.list_journal_categories().await.unwrap();
         let ids: Vec<&str> = categories.iter().map(|c| c.id.as_str()).collect();
-        assert_eq!(ids, vec!["work", "personal", "distraction", "idle", "system"]);
+        assert_eq!(
+            ids,
+            vec!["work", "personal", "distraction", "idle", "system"]
+        );
         let idle = categories.iter().find(|c| c.id == "idle").unwrap();
         assert!(idle.is_system && idle.is_idle);
         assert_eq!(
-            categories.iter().find(|c| c.id == "work").unwrap().color_hex,
+            categories
+                .iter()
+                .find(|c| c.id == "work")
+                .unwrap()
+                .color_hex,
             "#B984FF"
         );
     }
@@ -1446,7 +1496,10 @@ mod tests {
         assert_eq!(db.insert_journal_windows(&spans).await.unwrap(), 2);
         assert_eq!(db.insert_journal_windows(&spans).await.unwrap(), 0);
 
-        let pending = db.list_journal_windows_by_status("pending", 10).await.unwrap();
+        let pending = db
+            .list_journal_windows_by_status("pending", 10)
+            .await
+            .unwrap();
         assert_eq!(pending.len(), 2);
         assert!(db.claim_journal_window(pending[0].id).await.unwrap());
         assert!(!db.claim_journal_window(pending[0].id).await.unwrap());
@@ -1479,7 +1532,11 @@ mod tests {
         db.replace_activities_in_range(
             at("2026-09-16T17:31:00Z"),
             at("2026-09-16T18:05:00Z"),
-            &[draft("earlier", "2026-09-16T17:31:00Z", "2026-09-16T18:05:00Z")],
+            &[draft(
+                "earlier",
+                "2026-09-16T17:31:00Z",
+                "2026-09-16T18:05:00Z",
+            )],
         )
         .await
         .unwrap();
@@ -1488,7 +1545,11 @@ mod tests {
         db.replace_activities_in_range(
             at("2026-09-16T18:03:00Z"),
             at("2026-09-16T18:39:00Z"),
-            &[draft("newer", "2026-09-16T18:03:00Z", "2026-09-16T18:39:00Z")],
+            &[draft(
+                "newer",
+                "2026-09-16T18:03:00Z",
+                "2026-09-16T18:39:00Z",
+            )],
         )
         .await
         .unwrap();
@@ -1497,7 +1558,10 @@ mod tests {
             .list_journal_activities(at("2026-09-16T00:00:00Z"), at("2026-09-17T00:00:00Z"))
             .await
             .unwrap();
-        let keys: Vec<&str> = cards.iter().map(|card| card.activity_key.as_str()).collect();
+        let keys: Vec<&str> = cards
+            .iter()
+            .map(|card| card.activity_key.as_str())
+            .collect();
         assert_eq!(keys, vec!["earlier", "newer"], "the earlier card survives");
         assert_eq!(cards[0].start_at, at("2026-09-16T17:31:00Z").to_rfc3339());
         assert_eq!(
@@ -1536,7 +1600,11 @@ mod tests {
         db.replace_activities_in_range(
             at("2026-09-16T08:00:00Z"),
             at("2026-09-16T09:00:00Z"),
-            &[draft("fresh", "2026-09-16T08:30:00Z", "2026-09-16T08:50:00Z")],
+            &[draft(
+                "fresh",
+                "2026-09-16T08:30:00Z",
+                "2026-09-16T08:50:00Z",
+            )],
         )
         .await
         .unwrap();
@@ -1557,7 +1625,11 @@ mod tests {
         db.replace_activities_in_range(
             at("2026-09-16T08:00:00Z"),
             at("2026-09-16T09:00:00Z"),
-            &[draft("same", "2026-09-16T08:00:00Z", "2026-09-16T08:20:00Z")],
+            &[draft(
+                "same",
+                "2026-09-16T08:00:00Z",
+                "2026-09-16T08:20:00Z",
+            )],
         )
         .await
         .unwrap();
@@ -1584,6 +1656,72 @@ mod tests {
             .unwrap();
         assert_eq!(cards.len(), 1);
         assert_eq!(cards[0].title, "my own title");
+    }
+
+    #[tokio::test]
+    async fn listed_cards_carry_the_user_feedback_and_the_review_label() {
+        let (db, _dir) = test_db().await;
+        let ids = db
+            .replace_activities_in_range(
+                at("2026-09-16T08:00:00Z"),
+                at("2026-09-16T10:00:00Z"),
+                &[
+                    draft("a", "2026-09-16T08:00:00Z", "2026-09-16T09:00:00Z"),
+                    draft("b", "2026-09-16T09:00:00Z", "2026-09-16T10:00:00Z"),
+                ],
+            )
+            .await
+            .unwrap();
+        db.upsert_journal_activity_feedback(ids[0], "down", Some("wrong category"))
+            .await
+            .unwrap();
+        // The first card is rated focused throughout; the second is split.
+        db.apply_review_rating(
+            at("2026-09-16T08:00:00Z"),
+            at("2026-09-16T09:30:00Z"),
+            Some("focused"),
+            "app",
+        )
+        .await
+        .unwrap();
+        db.apply_review_rating(
+            at("2026-09-16T09:30:00Z"),
+            at("2026-09-16T10:00:00Z"),
+            Some("distracted"),
+            "mcp",
+        )
+        .await
+        .unwrap();
+
+        let cards = db
+            .list_journal_activities(at("2026-09-16T08:00:00Z"), at("2026-09-16T10:00:00Z"))
+            .await
+            .unwrap();
+        assert_eq!(cards.len(), 2);
+        let feedback = cards[0]
+            .feedback
+            .as_ref()
+            .expect("the first card was rated");
+        assert_eq!(feedback.rating, "down");
+        assert_eq!(feedback.note.as_deref(), Some("wrong category"));
+        assert_eq!(cards[0].review.as_deref(), Some("focused"));
+        assert!(cards[1].feedback.is_none());
+        assert_eq!(cards[1].review.as_deref(), Some("mixed"));
+
+        // The single-card read agrees with the listing.
+        let (card, _, _) = db
+            .get_journal_activity(ids[1], false)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(card.review.as_deref(), Some("mixed"));
+        assert!(card.feedback.is_none());
+        let (card, _, _) = db
+            .get_journal_activity(ids[0], false)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(card.feedback.map(|f| f.rating).as_deref(), Some("down"));
     }
 
     #[tokio::test]
@@ -1625,8 +1763,16 @@ mod tests {
 
         // The evidence row is gone with its source; the card survives, because
         // a card is an interpretation of a span, not a projection of one row.
-        assert!(db.sample_journal_evidence(ids[0], 24).await.unwrap().is_empty());
-        let (card, keys, _) = db.get_journal_activity(ids[0], true).await.unwrap().unwrap();
+        assert!(db
+            .sample_journal_evidence(ids[0], 24)
+            .await
+            .unwrap()
+            .is_empty());
+        let (card, keys, _) = db
+            .get_journal_activity(ids[0], true)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(card.activity_key, "evidence");
         assert_eq!(keys, vec!["interval-evidence".to_string()]);
     }
@@ -1637,7 +1783,11 @@ mod tests {
         db.replace_activities_in_range(
             at("2026-09-16T08:00:00Z"),
             at("2026-09-16T09:00:00Z"),
-            &[draft("card", "2026-09-16T08:00:00Z", "2026-09-16T08:20:00Z")],
+            &[draft(
+                "card",
+                "2026-09-16T08:00:00Z",
+                "2026-09-16T08:20:00Z",
+            )],
         )
         .await
         .unwrap();
@@ -1670,7 +1820,10 @@ mod tests {
         assert!(ids.contains(&"deep-work"));
         assert!(ids.contains(&"idle") && ids.contains(&"system"));
         assert!(!ids.contains(&"work"));
-        assert_eq!(categories.iter().find(|c| c.id == "idle").unwrap().name, "Idle");
+        assert_eq!(
+            categories.iter().find(|c| c.id == "idle").unwrap().name,
+            "Idle"
+        );
 
         let cards = db
             .list_journal_activities(at("2026-09-16T00:00:00Z"), at("2026-09-17T00:00:00Z"))
@@ -1682,7 +1835,11 @@ mod tests {
     #[tokio::test]
     async fn journal_state_and_runs_round_trip() {
         let (db, _dir) = test_db().await;
-        assert!(db.journal_state_get(JOURNAL_STATE_PRODUCER).await.unwrap().is_none());
+        assert!(db
+            .journal_state_get(JOURNAL_STATE_PRODUCER)
+            .await
+            .unwrap()
+            .is_none());
         db.journal_state_set(JOURNAL_STATE_PRODUCER, at("2026-09-16T09:00:00Z"))
             .await
             .unwrap();
@@ -1718,8 +1875,7 @@ mod tests {
                 at("2026-09-16T09:00:00Z"),
                 &[{
                     let mut card = draft("linked", "2026-09-16T08:00:00Z", "2026-09-16T08:40:00Z");
-                    card.interval_keys =
-                        vec!["ledger-code".to_string(), "ledger-site".to_string()];
+                    card.interval_keys = vec!["ledger-code".to_string(), "ledger-site".to_string()];
                     card
                 }],
             )
@@ -1757,10 +1913,7 @@ mod tests {
         }
 
         let by_activity = db
-            .list_journal_activity_intervals(
-                at("2026-09-16T00:00:00Z"),
-                at("2026-09-17T00:00:00Z"),
-            )
+            .list_journal_activity_intervals(at("2026-09-16T00:00:00Z"), at("2026-09-17T00:00:00Z"))
             .await
             .unwrap();
         let intervals = by_activity.get(&ids[0]).unwrap();
@@ -1774,27 +1927,27 @@ mod tests {
         assert_eq!(intervals[1].app_name.as_deref(), Some("Chrome"));
 
         // A link whose interval was reconciled away simply does not join.
-        db.execute_raw_sql_write("DELETE FROM activity_intervals WHERE interval_key = 'ledger-site'")
-            .await
-            .unwrap();
+        db.execute_raw_sql_write(
+            "DELETE FROM activity_intervals WHERE interval_key = 'ledger-site'",
+        )
+        .await
+        .unwrap();
         let by_activity = db
-            .list_journal_activity_intervals(
-                at("2026-09-16T00:00:00Z"),
-                at("2026-09-17T00:00:00Z"),
-            )
+            .list_journal_activity_intervals(at("2026-09-16T00:00:00Z"), at("2026-09-17T00:00:00Z"))
             .await
             .unwrap();
         assert_eq!(by_activity.get(&ids[0]).unwrap().len(), 1);
 
         // Outside the range, nothing comes back.
-        assert!(db
-            .list_journal_activity_intervals(
+        assert!(
+            db.list_journal_activity_intervals(
                 at("2026-09-20T00:00:00Z"),
                 at("2026-09-21T00:00:00Z"),
             )
             .await
             .unwrap()
-            .is_empty());
+            .is_empty()
+        );
     }
 
     #[test]

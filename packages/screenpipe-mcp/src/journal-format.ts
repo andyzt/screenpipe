@@ -133,6 +133,101 @@ export type Intention = {
   source?: string;
 };
 
+export type RecapPayload = {
+  date?: string;
+  status?: string;
+  generated_at?: string | null;
+  summary?: string;
+  done?: string[];
+  next?: string[];
+  focus_note?: string | null;
+  source_cards?: number;
+  model?: string;
+  prompt_version?: string;
+  error?: string | null;
+  markdown?: string;
+};
+
+export type ReviewRatingValue = "focused" | "neutral" | "distracted" | null;
+
+export type ReviewRating = {
+  id?: number;
+  start_at?: string;
+  end_at?: string;
+  rating?: ReviewRatingValue;
+  source?: string;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type WeekDashboardDay = {
+  date?: string;
+  active_minutes?: number;
+  focus_minutes?: number;
+  distraction_minutes?: number;
+  longest_focus_block_minutes?: number;
+  switches?: number;
+  first_active_at?: string | null;
+  last_active_at?: string | null;
+  review?: { focused_minutes?: number; neutral_minutes?: number; distracted_minutes?: number };
+};
+
+export type WeekDashboardTotals = {
+  active_minutes?: number;
+  focus_minutes?: number;
+  distraction_minutes?: number;
+  longest_focus_block_minutes?: number;
+  switches?: number;
+  focus_share?: number | null;
+};
+
+export type WeekDashboardCategory = {
+  category_id?: string;
+  name?: string;
+  color_hex?: string;
+  minutes?: number;
+  share?: number;
+  compare_minutes?: number | null;
+  apps?: CardApp[];
+};
+
+export type WeekDashboardApp = {
+  name?: string;
+  host?: string | null;
+  minutes?: number;
+  share?: number;
+  compare_minutes?: number | null;
+  category_id?: string;
+};
+
+export type WeekDashboardFocusBlock = {
+  start_at?: string;
+  end_at?: string;
+  minutes?: number;
+  title?: string;
+  category_id?: string;
+};
+
+export type WeekDashboardIntention = {
+  id?: number;
+  title?: string;
+  supporting_minutes?: number;
+  other_minutes?: number;
+  distraction_minutes?: number;
+};
+
+export type WeekDashboardPayload = {
+  start?: string;
+  end?: string;
+  days?: WeekDashboardDay[];
+  totals?: WeekDashboardTotals;
+  compare?: WeekDashboardTotals | null;
+  categories?: WeekDashboardCategory[];
+  apps?: WeekDashboardApp[];
+  focus_blocks?: WeekDashboardFocusBlock[];
+  intentions?: WeekDashboardIntention[];
+};
+
 const MAX_EVIDENCE_ROWS = 24;
 const SUMMARY_CAP = 240;
 
@@ -186,6 +281,48 @@ function capText(text: string | null | undefined, max = SUMMARY_CAP): string {
   if (!text) return "";
   if (text.length <= max) return text;
   return `${text.slice(0, Math.max(0, max - 1))}…`;
+}
+
+// "2h 15m" / "45m" / "2h" — used by the week dashboard, which reports
+// everything in minutes but reads better in the digest as hours+minutes.
+function formatDurationHM(value: unknown): string {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return "0m";
+  const totalMinutes = Math.round(n);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours <= 0) return `${minutes}m`;
+  if (minutes === 0) return `${hours}h`;
+  return `${hours}h ${minutes}m`;
+}
+
+// Signed duration delta for week-over-week comparisons, e.g. "+15m", "-1h 5m",
+// or "no change" at exactly zero.
+function formatDurationDelta(deltaMinutes: number): string {
+  if (!Number.isFinite(deltaMinutes) || Math.round(deltaMinutes) === 0) return "no change";
+  const sign = deltaMinutes > 0 ? "+" : "-";
+  return `${sign}${formatDurationHM(Math.abs(deltaMinutes))}`;
+}
+
+function formatCountDelta(delta: number): string {
+  if (!Number.isFinite(delta) || delta === 0) return "no change";
+  const sign = delta > 0 ? "+" : "-";
+  return `${sign}${Math.abs(delta)}`;
+}
+
+function formatPercent(value: unknown): string {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "?";
+  return `${Math.round(n * 1000) / 10}%`;
+}
+
+// Percentage-point delta for focus share, e.g. "+3.2pp" / "-1pp".
+function formatPercentPointDelta(deltaFraction: number): string {
+  if (!Number.isFinite(deltaFraction)) return "?";
+  const points = Math.round(deltaFraction * 1000) / 10;
+  if (points === 0) return "no change";
+  const sign = points > 0 ? "+" : "-";
+  return `${sign}${Math.abs(points)}pp`;
 }
 
 // An app entry reads as "Chrome (github.com)" when the engine resolved a
@@ -403,4 +540,198 @@ export function formatCreatedIntention(intention: Intention): string {
 export function formatEndedIntention(intention: Intention): string {
   const minutes = formatMinutes(minutesBetween(intention.started_at, intention.ended_at));
   return `Ended intention: ${intention.title} (ran ${minutes} min).`;
+}
+
+// The engine's `markdown` is rendered server-side so the desktop app and this
+// tool show identical text; we pass it through untouched and add one status
+// line the model can use to judge freshness (see "Daily recap" in the contract).
+export function formatJournalRecap(data: RecapPayload): string {
+  const body =
+    data.markdown && data.markdown.length
+      ? data.markdown
+      : `No recap available for ${data.date || "this day"} yet — pass regenerate: true to generate one.`;
+
+  const bits: string[] = [];
+  if (data.generated_at) bits.push(`generated ${localHHMM(data.generated_at)} local`);
+  if (data.source_cards != null) {
+    bits.push(`${data.source_cards} source card${data.source_cards === 1 ? "" : "s"}`);
+  }
+  if (data.status === "stale") {
+    bits.push("stale — a card changed after this was generated");
+  } else if (data.status === "failed") {
+    bits.push(`failed${data.error ? `: ${data.error}` : ""}`);
+  }
+  const statusLine = bits.length ? bits.join(", ") : data.status || "unknown";
+
+  return `${body}\n\nStatus: ${statusLine}.`;
+}
+
+// Confirmation after a PUT /journal/reviews write: what was just set/cleared,
+// then the day's full rating list the engine returns (already ascending by
+// start_at — see "Review ratings" in the contract).
+export function formatJournalReview(
+  items: ReviewRating[],
+  written: { start: string; end: string; rating: ReviewRatingValue },
+): string {
+  const lines: string[] = [];
+  lines.push(
+    written.rating
+      ? `Marked ${localHHMM(written.start)}–${localHHMM(written.end)} as ${written.rating}.`
+      : `Cleared the rating for ${localHHMM(written.start)}–${localHHMM(written.end)}.`,
+  );
+
+  const ordered = items
+    .slice()
+    .sort((a, b) => new Date(a.start_at || 0).getTime() - new Date(b.start_at || 0).getTime());
+
+  if (!ordered.length) {
+    lines.push("No ratings remain for that day.");
+    return lines.join("\n");
+  }
+
+  lines.push("Ratings for that day:");
+  for (const item of ordered) {
+    lines.push(`  ${localHHMM(item.start_at)}–${localHHMM(item.end_at)}: ${item.rating || "?"}`);
+  }
+  return lines.join("\n");
+}
+
+const WEEK_TOP_CATEGORIES = 5;
+const WEEK_TOP_APPS = 8;
+const WEEK_LONGEST_BLOCKS = 5;
+
+function byMinutesDesc<T extends { minutes?: number }>(tieBreak: (a: T, b: T) => number) {
+  return (a: T, b: T) => (b.minutes ?? 0) - (a.minutes ?? 0) || tieBreak(a, b);
+}
+
+// Plain-text digest of GET /journal/week/dashboard: totals with
+// week-over-week deltas, per-day line, top categories/apps, the week's
+// longest focus blocks, and per-intention support/other/distraction split.
+// Deterministic: every list is explicitly sorted here rather than trusting
+// the engine's own ordering.
+export function formatJournalWeek(data: WeekDashboardPayload): string {
+  const lines: string[] = [];
+  lines.push(`Journal week — ${data.start || "?"} to ${data.end || "?"}`);
+
+  const totals = data.totals;
+  const compare = data.compare ?? null;
+  if (totals) {
+    lines.push("", "Totals:");
+    const totalsRow = (
+      label: string,
+      key: "active_minutes" | "focus_minutes" | "distraction_minutes" | "longest_focus_block_minutes",
+    ) => {
+      const value = totals[key];
+      const delta = compare ? (value ?? 0) - (compare[key] ?? 0) : null;
+      const deltaText = delta != null ? ` (${formatDurationDelta(delta)} vs. last week)` : "";
+      lines.push(`  ${label} ${formatDurationHM(value)}${deltaText}`);
+    };
+    totalsRow("Active", "active_minutes");
+    totalsRow("Focus", "focus_minutes");
+    totalsRow("Distraction", "distraction_minutes");
+    totalsRow("Longest focus block", "longest_focus_block_minutes");
+
+    const switchesDelta = compare ? (totals.switches ?? 0) - (compare.switches ?? 0) : null;
+    lines.push(
+      `  Switches ${totals.switches ?? 0}` +
+        (switchesDelta != null ? ` (${formatCountDelta(switchesDelta)} vs. last week)` : ""),
+    );
+
+    if (totals.focus_share != null) {
+      const shareDelta =
+        compare && compare.focus_share != null ? totals.focus_share - compare.focus_share : null;
+      lines.push(
+        `  Focus share ${formatPercent(totals.focus_share)}` +
+          (shareDelta != null ? ` (${formatPercentPointDelta(shareDelta)} vs. last week)` : ""),
+      );
+    }
+  }
+
+  lines.push("", "Per day:");
+  const days = (data.days ?? [])
+    .slice()
+    .sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+  if (!days.length) {
+    lines.push("  No days returned.");
+  }
+  for (const day of days) {
+    lines.push(
+      `  ${day.date || "?"} — active ${formatDurationHM(day.active_minutes)} · ` +
+        `focus ${formatDurationHM(day.focus_minutes)} · ` +
+        `distraction ${formatDurationHM(day.distraction_minutes)} · ` +
+        `longest block ${formatDurationHM(day.longest_focus_block_minutes)} · ` +
+        `switches ${day.switches ?? 0}`,
+    );
+  }
+
+  lines.push("", "Top categories:");
+  const categories = (data.categories ?? [])
+    .slice()
+    .sort(byMinutesDesc<WeekDashboardCategory>((a, b) => (a.name || "").localeCompare(b.name || "")))
+    .slice(0, WEEK_TOP_CATEGORIES);
+  if (!categories.length) {
+    lines.push("  none");
+  }
+  for (const category of categories) {
+    lines.push(
+      `  ${category.name || category.category_id || "?"} ${formatDurationHM(category.minutes)}` +
+        (category.share != null ? ` (${formatPercent(category.share)})` : ""),
+    );
+  }
+
+  lines.push("", "Top apps:");
+  const apps = (data.apps ?? [])
+    .slice()
+    .sort(
+      byMinutesDesc<WeekDashboardApp>(
+        (a, b) => appLabel(a as CardApp).localeCompare(appLabel(b as CardApp)),
+      ),
+    )
+    .slice(0, WEEK_TOP_APPS);
+  if (!apps.length) {
+    lines.push("  none");
+  }
+  for (const app of apps) {
+    lines.push(
+      `  ${appLabel(app as CardApp)} ${formatDurationHM(app.minutes)}` +
+        (app.share != null ? ` (${formatPercent(app.share)})` : ""),
+    );
+  }
+
+  lines.push("", "Longest focus blocks:");
+  const blocks = (data.focus_blocks ?? [])
+    .slice()
+    .sort(byMinutesDesc<WeekDashboardFocusBlock>((a, b) => (a.start_at || "").localeCompare(b.start_at || "")))
+    .slice(0, WEEK_LONGEST_BLOCKS);
+  if (!blocks.length) {
+    lines.push("  none");
+  }
+  for (const block of blocks) {
+    lines.push(
+      `  ${localHHMM(block.start_at)}–${localHHMM(block.end_at)} ` +
+        `(${formatDurationHM(block.minutes)}) [${block.category_id || "?"}] ${block.title || "(untitled)"}`,
+    );
+  }
+
+  lines.push("", "Intentions:");
+  const intentions = (data.intentions ?? [])
+    .slice()
+    .sort(
+      (a, b) =>
+        (b.supporting_minutes ?? 0) - (a.supporting_minutes ?? 0) ||
+        (a.title || "").localeCompare(b.title || ""),
+    );
+  if (!intentions.length) {
+    lines.push("  none");
+  }
+  for (const intention of intentions) {
+    lines.push(
+      `  ${intention.title || "(untitled)"} — ` +
+        `supporting ${formatDurationHM(intention.supporting_minutes)} · ` +
+        `other ${formatDurationHM(intention.other_minutes)} · ` +
+        `distraction ${formatDurationHM(intention.distraction_minutes)}`,
+    );
+  }
+
+  return lines.join("\n");
 }

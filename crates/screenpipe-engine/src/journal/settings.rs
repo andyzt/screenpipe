@@ -241,9 +241,15 @@ mod tests {
                     .map(|(_, value)| value.to_string())
             }
         };
-        assert_eq!(language_from_locale(env(vec![("LANG", "ru_RU.UTF-8")])), "ru");
         assert_eq!(
-            language_from_locale(env(vec![("LC_ALL", "ru_RU.UTF-8"), ("LANG", "en_GB.UTF-8")])),
+            language_from_locale(env(vec![("LANG", "ru_RU.UTF-8")])),
+            "ru"
+        );
+        assert_eq!(
+            language_from_locale(env(vec![
+                ("LC_ALL", "ru_RU.UTF-8"),
+                ("LANG", "en_GB.UTF-8")
+            ])),
             "ru"
         );
         assert_eq!(
@@ -251,8 +257,14 @@ mod tests {
             "en"
         );
         // "C" is not a language, and neither is a locale nobody wrote a prompt for.
-        assert_eq!(language_from_locale(env(vec![("LANG", "C")])), DEFAULT_LANGUAGE);
-        assert_eq!(language_from_locale(env(vec![("LANG", "de_DE.UTF-8")])), DEFAULT_LANGUAGE);
+        assert_eq!(
+            language_from_locale(env(vec![("LANG", "C")])),
+            DEFAULT_LANGUAGE
+        );
+        assert_eq!(
+            language_from_locale(env(vec![("LANG", "de_DE.UTF-8")])),
+            DEFAULT_LANGUAGE
+        );
         assert_eq!(language_from_locale(env(vec![])), DEFAULT_LANGUAGE);
     }
 

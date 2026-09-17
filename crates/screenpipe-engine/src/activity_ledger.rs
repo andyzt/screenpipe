@@ -806,14 +806,32 @@ mod tests {
         // the iTerm2 spinner from the 2026-09-16 live export, which by itself
         // produced ~96 % of that day's ledger intervals.
         let cases = [
-            ("◐ Screenpipe MVP implementation plan", "Screenpipe MVP implementation plan"),
-            ("◑ Screenpipe MVP implementation plan", "Screenpipe MVP implementation plan"),
-            ("✳ Screenpipe MVP implementation plan", "Screenpipe MVP implementation plan"),
-            ("⠋ Screenpipe MVP implementation plan", "Screenpipe MVP implementation plan"),
-            ("⣾  Screenpipe MVP   implementation plan  ", "Screenpipe MVP implementation plan"),
+            (
+                "◐ Screenpipe MVP implementation plan",
+                "Screenpipe MVP implementation plan",
+            ),
+            (
+                "◑ Screenpipe MVP implementation plan",
+                "Screenpipe MVP implementation plan",
+            ),
+            (
+                "✳ Screenpipe MVP implementation plan",
+                "Screenpipe MVP implementation plan",
+            ),
+            (
+                "⠋ Screenpipe MVP implementation plan",
+                "Screenpipe MVP implementation plan",
+            ),
+            (
+                "⣾  Screenpipe MVP   implementation plan  ",
+                "Screenpipe MVP implementation plan",
+            ),
             ("Telegram (3)", "Telegram"),
             ("(12) Telegram — private chat", "Telegram — private chat"),
-            ("[2/7] building screenpipe-engine", "building screenpipe-engine"),
+            (
+                "[2/7] building screenpipe-engine",
+                "building screenpipe-engine",
+            ),
             ("Recording 12:31", "Recording"),
             ("00:12 — Zoom Meeting", "Zoom Meeting"),
             ("Exporting fixtures — 42%", "Exporting fixtures"),
@@ -821,7 +839,10 @@ mod tests {
             // Normal titles are left exactly as the window reported them.
             ("day.rs — screenpipe", "day.rs — screenpipe"),
             ("-bash", "-bash"),
-            ("Activity Monitor – My Processes", "Activity Monitor – My Processes"),
+            (
+                "Activity Monitor – My Processes",
+                "Activity Monitor – My Processes",
+            ),
             ("Issue 42: token refresh", "Issue 42: token refresh"),
             // Nothing but ornament leaves nothing, and the caller falls back.
             ("◐", ""),
@@ -848,7 +869,9 @@ mod tests {
     fn a_rotating_spinner_title_is_one_interval_not_sixty() {
         // One minute of the iTerm2 agent CLI: the glyph changes every second,
         // the task does not.
-        let spinners = ['\u{25D0}', '\u{25D1}', '\u{25D2}', '\u{25D3}', '\u{2733}', '\u{280B}'];
+        let spinners = [
+            '\u{25D0}', '\u{25D1}', '\u{25D2}', '\u{25D3}', '\u{2733}', '\u{280B}',
+        ];
         let observations: Vec<ActivityLedgerObservation> = (0..60)
             .map(|second| {
                 frame(

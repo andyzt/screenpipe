@@ -227,7 +227,8 @@ function HomeContent() {
   const [journalView, setJournalView] = useQueryState("view", {
     defaultValue: "day",
     history: "replace",
-    parse: (value) => (value === "week" ? "week" : "day"),
+    parse: (value) =>
+      value === "week" || value === "dashboard" ? value : "day",
     serialize: (value) => value,
   });
   // The Monday of the shown week. Unset means "the week we are in", resolved
@@ -1088,7 +1089,11 @@ function HomeContent() {
                 ? Number(journalSelectRequest)
                 : null
             }
-            view={journalView === "week" ? "week" : "day"}
+            view={
+              journalView === "week" || journalView === "dashboard"
+                ? journalView
+                : "day"
+            }
             onViewChange={(next) => void setJournalView(next)}
             weekStart={
               journalWeek && /^\d{4}-\d{2}-\d{2}$/.test(journalWeek)

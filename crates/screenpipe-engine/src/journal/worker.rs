@@ -167,7 +167,9 @@ pub async fn run_tick(
 ) -> anyhow::Result<TickReport> {
     let mut report = TickReport::default();
 
-    report.recovered = db.reset_stale_journal_processing(now - STALE_PROCESSING).await?;
+    report.recovered = db
+        .reset_stale_journal_processing(now - STALE_PROCESSING)
+        .await?;
     report.windows_cut = cut_pending_windows(db, now).await?;
 
     // An unconfigured provider parks work as `pending` rather than burning
@@ -306,7 +308,8 @@ async fn cut_pending_windows(db: &DatabaseManager, now: DateTime<Utc>) -> anyhow
         return Ok(0);
     };
     let inserted = db.insert_journal_windows(&spans).await?;
-    db.journal_state_set(JOURNAL_STATE_PRODUCER, last_end).await?;
+    db.journal_state_set(JOURNAL_STATE_PRODUCER, last_end)
+        .await?;
     Ok(inserted)
 }
 
@@ -343,7 +346,10 @@ async fn process_window(
             .await?
             .is_empty()
     {
-        debug!(window = window_id, "journal: evidence unchanged, skipping generation");
+        debug!(
+            window = window_id,
+            "journal: evidence unchanged, skipping generation"
+        );
         return Ok(Outcome::Unchanged);
     }
 
@@ -367,7 +373,9 @@ async fn process_window(
 
     // Everything above is a read. The provider call happens here, with no
     // transaction open, and the single write happens after it returns.
-    let request_chars = serde_json::to_string(&compiled).map(|json| json.len()).unwrap_or(0);
+    let request_chars = serde_json::to_string(&compiled)
+        .map(|json| json.len())
+        .unwrap_or(0);
     let started = std::time::Instant::now();
     let generated = generator.generate(&compiled, &previous_cards, &ctx).await;
     let latency_ms = started.elapsed().as_millis() as i64;
@@ -407,7 +415,10 @@ async fn process_window(
     // instant the window was cut at, and a model answers in whole minutes.
     let (drafts, dropped) = fit_drafts(drafts, compiled.context_start, window_end);
     for note in &dropped {
-        warn!(window = window_id, note, "journal: a card did not fit the rewritten range");
+        warn!(
+            window = window_id,
+            note, "journal: a card did not fit the rewritten range"
+        );
     }
     if let Err(error) = validate_drafts(&drafts, compiled.context_start, window_end) {
         record_run(
@@ -454,7 +465,10 @@ fn evidence_hash(compiled: &CompiledWindow) -> String {
         Ok(json) => hasher.update(json),
         // An unserializable window is not a reason to fail the tick, but it
         // must not collide with a real hash either.
-        Err(_) => hasher.update(format!("unserializable:{}", compiled.window_start.to_rfc3339())),
+        Err(_) => hasher.update(format!(
+            "unserializable:{}",
+            compiled.window_start.to_rfc3339()
+        )),
     }
     format!("{:x}", hasher.finalize())[..32].to_string()
 }
@@ -966,7 +980,16 @@ mod tests {
         let (_dir, db) = test_db().await;
         let start = at("2026-09-16T08:00:00Z");
         seed_capture(&db, start, 20, "Code", "auth.rs", true, false).await;
-        seed_capture(&db, start + Duration::minutes(20), 20, "Arc", "Docs", true, false).await;
+        seed_capture(
+            &db,
+            start + Duration::minutes(20),
+            20,
+            "Arc",
+            "Docs",
+            true,
+            false,
+        )
+        .await;
         let now = start + Duration::minutes(60);
 
         let report = run_tick(&db, &DeterministicGenerator, &settings(), now)
@@ -989,8 +1012,16 @@ mod tests {
         let horizon = now - CONTEXT_HORIZON;
         for card in &cards {
             let end = parse(&card.end_at).unwrap();
-            let expected = if end < horizon { "final" } else { "provisional" };
-            assert_eq!(card.state, expected, "card ending {end} in state {}", card.state);
+            let expected = if end < horizon {
+                "final"
+            } else {
+                "provisional"
+            };
+            assert_eq!(
+                card.state, expected,
+                "card ending {end} in state {}",
+                card.state
+            );
         }
         // The trailing cards are inside the horizon, so they are still drafts.
         assert!(cards.iter().any(|card| card.state == "provisional"));
@@ -1026,8 +1057,14 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            cards_first.iter().map(|c| c.activity_key.clone()).collect::<Vec<_>>(),
-            cards_second.iter().map(|c| c.activity_key.clone()).collect::<Vec<_>>()
+            cards_first
+                .iter()
+                .map(|c| c.activity_key.clone())
+                .collect::<Vec<_>>(),
+            cards_second
+                .iter()
+                .map(|c| c.activity_key.clone())
+                .collect::<Vec<_>>()
         );
     }
 
@@ -1081,7 +1118,11 @@ mod tests {
         db.insert_journal_windows(&[(start, start + Duration::minutes(15))])
             .await
             .unwrap();
-        let window = db.list_journal_windows_by_status("pending", 10).await.unwrap()[0].clone();
+        let window = db
+            .list_journal_windows_by_status("pending", 10)
+            .await
+            .unwrap()[0]
+            .clone();
         assert!(db.claim_journal_window(window.id).await.unwrap());
         assert_eq!(db.journal_window_counts().await.unwrap().processing, 1);
 
@@ -1183,7 +1224,9 @@ mod tests {
             .unwrap();
         // Only the trailing window is queued: everything older was cut and
         // finished on an earlier tick.
-        db.journal_state_set(JOURNAL_STATE_PRODUCER, now).await.unwrap();
+        db.journal_state_set(JOURNAL_STATE_PRODUCER, now)
+            .await
+            .unwrap();
         db.insert_journal_windows(&[(second, now)]).await.unwrap();
 
         let generator = EchoGenerator::default();
@@ -1202,7 +1245,9 @@ mod tests {
             "the rewrite horizon is pulled back to the straddling card's own start"
         );
         assert!(
-            seen.previous.iter().any(|card| card.start_at == first.to_rfc3339()),
+            seen.previous
+                .iter()
+                .any(|card| card.start_at == first.to_rfc3339()),
             "the prompt still shows the earlier card"
         );
         assert!(
@@ -1210,7 +1255,10 @@ mod tests {
             "and now it has observations behind it"
         );
         // The check that used to fail three times in a row.
-        let issues = validate_cards(&seen.drafts, &evidence_bounds(&seen.compiled, &seen.previous));
+        let issues = validate_cards(
+            &seen.drafts,
+            &evidence_bounds(&seen.compiled, &seen.previous),
+        );
         assert!(
             issues.is_empty(),
             "{:?}",
@@ -1222,8 +1270,16 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(cards.len(), 2, "{cards:#?}");
-        assert_eq!(cards[0].start_at, first.to_rfc3339(), "the older card keeps every minute");
-        assert_eq!(cards[1].start_at, second.to_rfc3339(), "and the new one starts at the new evidence");
+        assert_eq!(
+            cards[0].start_at,
+            first.to_rfc3339(),
+            "the older card keeps every minute"
+        );
+        assert_eq!(
+            cards[1].start_at,
+            second.to_rfc3339(),
+            "and the new one starts at the new evidence"
+        );
     }
 
     /// Live window 8: validation passed and the write refused the answer over
@@ -1245,7 +1301,10 @@ mod tests {
         assert_eq!(fitted.len(), 1);
         assert_eq!(fitted[0].start_at, range_start);
         assert_eq!(fitted[0].end_at, at("2026-09-16T18:15:00Z"));
-        assert!(notes.is_empty(), "sub-minute skew is rounding, not a bug: {notes:?}");
+        assert!(
+            notes.is_empty(),
+            "sub-minute skew is rounding, not a bug: {notes:?}"
+        );
         validate_drafts(&fitted, range_start, range_end).unwrap();
     }
 
@@ -1361,9 +1420,14 @@ mod tests {
         seed_capture(&db, start, 20, "Code", "auth.rs", true, false).await;
         let now = start + Duration::minutes(60);
 
-        let report = run_tick(&db, &FailingGenerator, &settings(), now).await.unwrap();
+        let report = run_tick(&db, &FailingGenerator, &settings(), now)
+            .await
+            .unwrap();
         assert!(report.failed >= 1, "{report:?}");
-        assert_eq!(db.journal_window_counts().await.unwrap().failed, report.failed as i64);
+        assert_eq!(
+            db.journal_window_counts().await.unwrap().failed,
+            report.failed as i64
+        );
 
         let cards = db
             .list_journal_activities(start - Duration::hours(1), now)
@@ -1378,7 +1442,11 @@ mod tests {
         assert!(error_card.summary.contains("rate limiting"));
 
         // Every attempt is audited, failures included.
-        let run = db.last_journal_run().await.unwrap().expect("a run was recorded");
+        let run = db
+            .last_journal_run()
+            .await
+            .unwrap()
+            .expect("a run was recorded");
         assert!(!run.ok);
         assert_eq!(run.kind, "cards");
         assert!(run.error.unwrap().contains("rate limiting"));
@@ -1391,7 +1459,9 @@ mod tests {
         seed_capture(&db, start, 20, "Code", "auth.rs", true, false).await;
         let now = start + Duration::minutes(60);
 
-        let report = run_tick(&db, &BlockedGenerator, &settings(), now).await.unwrap();
+        let report = run_tick(&db, &BlockedGenerator, &settings(), now)
+            .await
+            .unwrap();
         assert!(report.windows_cut >= 1, "{report:?}");
         assert_eq!(report.processed, 0, "no window may be claimed");
         let counts = db.journal_window_counts().await.unwrap();
@@ -1493,7 +1563,9 @@ mod tests {
             }
         }
 
-        run_tick(&db, &RetryingGenerator, &settings(), now).await.unwrap();
+        run_tick(&db, &RetryingGenerator, &settings(), now)
+            .await
+            .unwrap();
         let runs: Vec<(i64, i64)> = sqlx::query_as("SELECT ok, request_chars FROM journal_runs")
             .fetch_all(&db.pool)
             .await

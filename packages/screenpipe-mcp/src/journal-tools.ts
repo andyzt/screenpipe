@@ -14,10 +14,17 @@ import {
   formatFocusStatus,
   formatJournalActivity,
   formatJournalDay,
+  formatJournalRecap,
+  formatJournalReview,
+  formatJournalWeek,
   type ActivityDetailPayload,
   type FocusStatusPayload,
   type Intention,
   type JournalDayPayload,
+  type RecapPayload,
+  type ReviewRating,
+  type ReviewRatingValue,
+  type WeekDashboardPayload,
 } from "./journal-format";
 
 export type CallApi = (endpoint: string, options?: RequestInit) => Promise<Response>;
@@ -41,6 +48,26 @@ function errorStatus(error: unknown): number | undefined {
   }
   const status = Number((error as { status: unknown }).status);
   return Number.isFinite(status) ? status : undefined;
+}
+
+// The engine's error body is `{ "error": "<message>" }` (see AGENTS.md
+// "Errors use ..." in the contract's Conventions). callAPI in index.ts
+// carries the raw response text as `bodyText` on the thrown error; unwrap it
+// so a 503's provider_message-derived text reaches the model instead of a
+// raw HTTP status.
+function errorMessage(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null || !("bodyText" in error)) {
+    return undefined;
+  }
+  const bodyText = (error as { bodyText: unknown }).bodyText;
+  if (typeof bodyText !== "string" || !bodyText.trim()) return undefined;
+  try {
+    const parsed = JSON.parse(bodyText) as { error?: unknown };
+    if (typeof parsed.error === "string" && parsed.error.trim()) return parsed.error.trim();
+  } catch {
+    // not JSON — fall through to the raw text below
+  }
+  return bodyText.trim();
 }
 
 // Wrap callApi: an older engine 404s the whole /journal or /focus surface,
@@ -164,6 +191,126 @@ export async function buildSetIntentionResult(
     });
     const created = (await response.json()) as Intention;
     return { text: formatCreatedIntention(created) };
+  } catch (error) {
+    if (error instanceof JournalNotAvailableError) return { text: error.message };
+    throw error;
+  }
+}
+
+export async function buildJournalRecapResult(
+  args: Record<string, unknown>,
+  callApi: CallApi,
+): Promise<{ text: string }> {
+  const date = typeof args.date === "string" && args.date.trim() ? args.date.trim() : undefined;
+  const regenerate = args.regenerate === true;
+  const params = new URLSearchParams();
+  if (date) params.set("date", date);
+  const qs = params.toString();
+
+  try {
+    const response = await callJournalApi(callApi, `/journal/recap${qs ? `?${qs}` : ""}`);
+    let data = (await response.json()) as RecapPayload;
+
+    const shouldGenerate = regenerate || data.status === "none" || data.status === "stale";
+    if (shouldGenerate) {
+      const targetDate = data.date || date;
+      try {
+        const generateResponse = await callJournalApi(callApi, "/journal/recap/generate", {
+          method: "POST",
+          body: JSON.stringify({ date: targetDate }),
+        });
+        data = (await generateResponse.json()) as RecapPayload;
+      } catch (error) {
+        if (error instanceof JournalNotAvailableError) return { text: error.message };
+        const status = errorStatus(error);
+        if (status === 409) {
+          return {
+            text: `No final cards for ${targetDate || "that day"} yet — a recap needs at least one finished card.`,
+          };
+        }
+        if (status === 503) {
+          const message = errorMessage(error);
+          return {
+            text: `Recap generation is unavailable${message ? `: ${message}` : " — no AI provider is ready."}`,
+          };
+        }
+        if (status === 429) {
+          return { text: "Already generating a recap for this day, try again in a minute." };
+        }
+        throw error;
+      }
+    }
+
+    return { text: formatJournalRecap(data) };
+  } catch (error) {
+    if (error instanceof JournalNotAvailableError) return { text: error.message };
+    throw error;
+  }
+}
+
+const REVIEW_RATINGS = ["focused", "neutral", "distracted"] as const;
+
+function parseIsoTimestamp(value: unknown, label: string): string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(`${label} is required as an ISO-8601 timestamp`);
+  }
+  const trimmed = value.trim();
+  if (Number.isNaN(new Date(trimmed).getTime())) {
+    throw new Error(`${label} is not a valid ISO-8601 timestamp: ${trimmed}`);
+  }
+  return trimmed;
+}
+
+function parseReviewRating(value: unknown): ReviewRatingValue {
+  if (value === null) return null;
+  if (typeof value === "string" && (REVIEW_RATINGS as readonly string[]).includes(value)) {
+    return value as ReviewRatingValue;
+  }
+  throw new Error('rating must be "focused", "neutral", "distracted", or null');
+}
+
+export async function buildJournalReviewResult(
+  args: Record<string, unknown>,
+  callApi: CallApi,
+): Promise<{ text: string }> {
+  const start = parseIsoTimestamp(args.start, "start");
+  const end = parseIsoTimestamp(args.end, "end");
+  if (new Date(start).getTime() >= new Date(end).getTime()) {
+    throw new Error("start must be before end");
+  }
+  const rating = parseReviewRating(args.rating);
+
+  const body = { start_at: start, end_at: end, rating, source: "mcp" };
+
+  try {
+    const response = await callJournalApi(callApi, "/journal/reviews", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    });
+    const data = (await response.json()) as { items?: ReviewRating[] };
+    return { text: formatJournalReview(data.items ?? [], { start, end, rating }) };
+  } catch (error) {
+    if (error instanceof JournalNotAvailableError) return { text: error.message };
+    throw error;
+  }
+}
+
+export async function buildJournalWeekResult(
+  args: Record<string, unknown>,
+  callApi: CallApi,
+): Promise<{ text: string }> {
+  const start = typeof args.start === "string" && args.start.trim() ? args.start.trim() : undefined;
+  const params = new URLSearchParams();
+  if (start) params.set("start", start);
+  const qs = params.toString();
+
+  try {
+    const response = await callJournalApi(
+      callApi,
+      `/journal/week/dashboard${qs ? `?${qs}` : ""}`,
+    );
+    const data = (await response.json()) as WeekDashboardPayload;
+    return { text: formatJournalWeek(data) };
   } catch (error) {
     if (error instanceof JournalNotAvailableError) return { text: error.message };
     throw error;

@@ -417,7 +417,10 @@ pub async fn run_focus_tick(
             evidence_ok: true,
             reason: Some(format!(
                 "{} is one of the apps and pages this intention has been worked on in",
-                dominant.app.clone().unwrap_or_else(|| dominant.title.clone())
+                dominant
+                    .app
+                    .clone()
+                    .unwrap_or_else(|| dominant.title.clone())
             )),
         };
         return persist(db, draft, Some(dominant), false, false).await;
@@ -452,10 +455,8 @@ pub async fn run_focus_tick(
     // 6. Divergence: name a candidate, run the timer, and only ask the
     //    classifier once the grace period has been outlived.
     let (candidate, candidate_reason) = candidate_relation(db, &dominant, tail_start, now).await?;
-    let divergence_started_at =
-        carried_divergence(previous.as_ref(), intention.id).unwrap_or(now);
-    let divergence_minutes =
-        (now - divergence_started_at).num_milliseconds() as f64 / 60_000.0;
+    let divergence_started_at = carried_divergence(previous.as_ref(), intention.id).unwrap_or(now);
+    let divergence_minutes = (now - divergence_started_at).num_milliseconds() as f64 / 60_000.0;
 
     let mut input = TailInput {
         now,
@@ -668,7 +669,9 @@ async fn tail_observations(
     let texts = db.journal_frame_texts(&wanted).await?;
     attach_snippets(&mut window, &sample_ids, &texts);
 
-    window.intervals.sort_by_key(|interval| (interval.start_at, interval.end_at));
+    window
+        .intervals
+        .sort_by_key(|interval| (interval.start_at, interval.end_at));
     window.intervals.truncate(TAIL_MAX_OBSERVATIONS);
     trim_snippets(&mut window, TAIL_SNIPPET_BUDGET);
     Ok(Some(window))
@@ -1111,7 +1114,10 @@ mod tests {
         assert_eq!(tick.state.relation, UNKNOWN);
         assert_eq!(tick.state.intention_id, None);
         assert_eq!(tick.state.reason.as_deref(), Some("no active intention"));
-        assert!(tick.state.evidence_ok, "capture is live, only the intention is missing");
+        assert!(
+            tick.state.evidence_ok,
+            "capture is live, only the intention is missing"
+        );
         assert!(!tick.classifier_ran);
 
         let persisted = db.get_focus_state().await.unwrap().unwrap();
@@ -1130,7 +1136,11 @@ mod tests {
             .unwrap();
         assert_eq!(tick.state.relation, UNKNOWN);
         assert!(!tick.state.evidence_ok);
-        assert!(tick.state.reason.unwrap().contains("capture data is missing"));
+        assert!(tick
+            .state
+            .reason
+            .unwrap()
+            .contains("capture data is missing"));
     }
 
     #[tokio::test]
@@ -1156,9 +1166,24 @@ mod tests {
         intention(&db, "Ship auth fix", started).await;
         seed_frames(&db, now - Duration::minutes(9), now).await;
         // Five minutes inside the grace period, then the same app in the tail.
-        seed_interval(&db, "grace", "auth.rs", "Code", started, started + Duration::minutes(5))
-            .await;
-        seed_interval(&db, "tail", "session.rs", "Code", now - Duration::minutes(8), now).await;
+        seed_interval(
+            &db,
+            "grace",
+            "auth.rs",
+            "Code",
+            started,
+            started + Duration::minutes(5),
+        )
+        .await;
+        seed_interval(
+            &db,
+            "tail",
+            "session.rs",
+            "Code",
+            now - Duration::minutes(8),
+            now,
+        )
+        .await;
 
         let tick = run_focus_tick(&db, &settings(10), &RulesClassifier, now)
             .await
@@ -1167,8 +1192,14 @@ mod tests {
         assert_eq!(tick.state.confidence, SUPPORT_CONFIDENCE);
         assert_eq!(tick.state.divergence_started_at, None);
         assert_eq!(tick.state.dominant_app.as_deref(), Some("Code"));
-        assert_eq!(tick.state.dominant_task_title.as_deref(), Some("session.rs"));
-        assert!(!tick.classifier_ran, "a supported tail never asks a classifier");
+        assert_eq!(
+            tick.state.dominant_task_title.as_deref(),
+            Some("session.rs")
+        );
+        assert!(
+            !tick.classifier_ran,
+            "a supported tail never asks a classifier"
+        );
     }
 
     #[tokio::test]
@@ -1189,7 +1220,15 @@ mod tests {
             Some(id),
         )
         .await;
-        seed_interval(&db, "tail", "auth.rs", "Zed", now - Duration::minutes(8), now).await;
+        seed_interval(
+            &db,
+            "tail",
+            "auth.rs",
+            "Zed",
+            now - Duration::minutes(8),
+            now,
+        )
+        .await;
 
         let tick = run_focus_tick(&db, &settings(1), &RulesClassifier, now)
             .await
@@ -1204,9 +1243,24 @@ mod tests {
         let started = now - Duration::minutes(40);
         intention(&db, "Ship auth fix", started).await;
         seed_frames(&db, now - Duration::minutes(9), now).await;
-        seed_interval(&db, "grace", "auth.rs", "Code", started, started + Duration::minutes(5))
-            .await;
-        seed_interval(&db, "tail", "r/rust", "Arc", now - Duration::minutes(8), now).await;
+        seed_interval(
+            &db,
+            "grace",
+            "auth.rs",
+            "Code",
+            started,
+            started + Duration::minutes(5),
+        )
+        .await;
+        seed_interval(
+            &db,
+            "tail",
+            "r/rust",
+            "Arc",
+            now - Duration::minutes(8),
+            now,
+        )
+        .await;
         seed_card(
             &db,
             now - Duration::minutes(8),
@@ -1227,7 +1281,10 @@ mod tests {
         assert!(tick.state.reason.unwrap().contains("within grace period"));
         // The timer starts on the first divergent tick and is persisted.
         assert!(tick.state.divergence_started_at.is_some());
-        assert!(!tick.classifier_ran, "inside the grace period nothing is asked");
+        assert!(
+            !tick.classifier_ran,
+            "inside the grace period nothing is asked"
+        );
     }
 
     #[tokio::test]
@@ -1237,9 +1294,24 @@ mod tests {
         let started = now - Duration::minutes(40);
         intention(&db, "Ship auth fix", started).await;
         seed_frames(&db, now - Duration::minutes(9), now).await;
-        seed_interval(&db, "grace", "auth.rs", "Code", started, started + Duration::minutes(5))
-            .await;
-        seed_interval(&db, "tail", "Inbox", "Mail", now - Duration::minutes(8), now).await;
+        seed_interval(
+            &db,
+            "grace",
+            "auth.rs",
+            "Code",
+            started,
+            started + Duration::minutes(5),
+        )
+        .await;
+        seed_interval(
+            &db,
+            "tail",
+            "Inbox",
+            "Mail",
+            now - Duration::minutes(8),
+            now,
+        )
+        .await;
 
         // No card overlapping the tail: other work, not a distraction.
         let tick = run_focus_tick(&db, &settings(10), &RulesClassifier, now)
@@ -1265,15 +1337,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_divergence_timer_survives_ticks_and_outliving_the_grace_period_raises_confidence() {
+    async fn the_divergence_timer_survives_ticks_and_outliving_the_grace_period_raises_confidence()
+    {
         let (_dir, db) = test_db().await;
         let now = Utc::now();
         let started = now - Duration::minutes(60);
         let id = intention(&db, "Ship auth fix", started).await;
         seed_frames(&db, now - Duration::minutes(9), now).await;
-        seed_interval(&db, "grace", "auth.rs", "Code", started, started + Duration::minutes(5))
-            .await;
-        seed_interval(&db, "tail", "r/rust", "Arc", now - Duration::minutes(9), now).await;
+        seed_interval(
+            &db,
+            "grace",
+            "auth.rs",
+            "Code",
+            started,
+            started + Duration::minutes(5),
+        )
+        .await;
+        seed_interval(
+            &db,
+            "tail",
+            "r/rust",
+            "Arc",
+            now - Duration::minutes(9),
+            now,
+        )
+        .await;
         seed_card(
             &db,
             now - Duration::minutes(9),
@@ -1307,13 +1395,16 @@ mod tests {
             .unwrap();
         assert_eq!(tick.state.relation, POSSIBLE_DISTRACTION);
         assert_eq!(tick.state.confidence, DIVERGENCE_CONFIDENCE);
-        assert!(tick.classifier_ran, "past the grace period the classifier decides");
-        assert!(!tick.run_recorded, "a local rules run is not a provider call");
+        assert!(
+            tick.classifier_ran,
+            "past the grace period the classifier decides"
+        );
+        assert!(
+            !tick.run_recorded,
+            "a local rules run is not a provider call"
+        );
         assert_eq!(
-            tick.state
-                .divergence_started_at
-                .unwrap()
-                .timestamp(),
+            tick.state.divergence_started_at.unwrap().timestamp(),
             divergence_started_at.timestamp(),
             "the timer keeps its original start"
         );
@@ -1342,9 +1433,24 @@ mod tests {
         let started = now - Duration::minutes(30);
         intention(&db, "Write the plan", started).await;
         seed_frames(&db, now - Duration::minutes(9), now).await;
-        seed_interval(&db, "grace", "plan.md", "Obsidian", started, started + Duration::minutes(5))
-            .await;
-        seed_interval(&db, "tail", "r/rust", "Arc", now - Duration::minutes(8), now).await;
+        seed_interval(
+            &db,
+            "grace",
+            "plan.md",
+            "Obsidian",
+            started,
+            started + Duration::minutes(5),
+        )
+        .await;
+        seed_interval(
+            &db,
+            "tail",
+            "r/rust",
+            "Arc",
+            now - Duration::minutes(8),
+            now,
+        )
+        .await;
 
         let tick = run_focus_tick(&db, &settings(10), &RulesClassifier, now)
             .await
@@ -1366,9 +1472,24 @@ mod tests {
         let started = now - Duration::minutes(60);
         let id = intention(&db, "Ship auth fix", started).await;
         seed_frames(&db, now - Duration::minutes(9), now).await;
-        seed_interval(&db, "grace", "auth.rs", "Code", started, started + Duration::minutes(5))
-            .await;
-        seed_interval(&db, "tail", "r/rust", "Arc", now - Duration::minutes(9), now).await;
+        seed_interval(
+            &db,
+            "grace",
+            "auth.rs",
+            "Code",
+            started,
+            started + Duration::minutes(5),
+        )
+        .await;
+        seed_interval(
+            &db,
+            "tail",
+            "r/rust",
+            "Arc",
+            now - Duration::minutes(9),
+            now,
+        )
+        .await;
         db.set_focus_state(&FocusStateDraft {
             computed_at: now - Duration::minutes(1),
             intention_id: Some(id),
@@ -1406,9 +1527,15 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(!again.classifier_ran, "throttled to one provider call per 5 min");
+        assert!(
+            !again.classifier_ran,
+            "throttled to one provider call per 5 min"
+        );
         assert_eq!(again.state.relation, POSSIBLE_DISTRACTION);
-        assert_eq!(again.state.confidence, 0.9, "the previous verdict is carried");
+        assert_eq!(
+            again.state.confidence, 0.9,
+            "the previous verdict is carried"
+        );
     }
 
     /// A classifier that records what it was handed, so a detector test can
@@ -1451,7 +1578,9 @@ mod tests {
             true
         }
         async fn classify(&self, _input: &TailInput) -> anyhow::Result<TailVerdict> {
-            Err(anyhow::anyhow!("the ai provider rejected the credentials: 401"))
+            Err(anyhow::anyhow!(
+                "the ai provider rejected the credentials: 401"
+            ))
         }
     }
 
@@ -1471,8 +1600,15 @@ mod tests {
             "borrow checker memes",
         )
         .await;
-        seed_interval(&db, "grace", "auth.rs", "Code", started, started + Duration::minutes(5))
-            .await;
+        seed_interval(
+            &db,
+            "grace",
+            "auth.rs",
+            "Code",
+            started,
+            started + Duration::minutes(5),
+        )
+        .await;
         // Deliberately wider than the tail: the compiled line must be clipped
         // to the ten minutes being classified, not to plan_window's 45-minute
         // card horizon.
@@ -1507,11 +1643,17 @@ mod tests {
             .unwrap();
         assert!(tick.classifier_ran);
 
-        let input = seen.lock().unwrap().clone().expect("the classifier was called");
+        let input = seen
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("the classifier was called");
         assert_eq!(input.intention.title, "Ship auth fix");
         assert_eq!(input.candidate, OTHER_WORK);
         assert!(input.divergence_minutes >= 19.0);
-        let window = input.observations.expect("a provider call gets observations");
+        let window = input
+            .observations
+            .expect("a provider call gets observations");
         let line = crate::journal::prompt::render_observations(&window, 6);
         assert!(line.contains("r/observed-tail"), "{line}");
         assert!(line.contains("Arc"), "{line}");
@@ -1545,9 +1687,24 @@ mod tests {
         let started = now - Duration::minutes(60);
         let id = intention(&db, "Ship auth fix", started).await;
         seed_frames(&db, now - Duration::minutes(9), now).await;
-        seed_interval(&db, "grace", "auth.rs", "Code", started, started + Duration::minutes(5))
-            .await;
-        seed_interval(&db, "tail", "r/failing", "Arc", now - Duration::minutes(9), now).await;
+        seed_interval(
+            &db,
+            "grace",
+            "auth.rs",
+            "Code",
+            started,
+            started + Duration::minutes(5),
+        )
+        .await;
+        seed_interval(
+            &db,
+            "tail",
+            "r/failing",
+            "Arc",
+            now - Duration::minutes(9),
+            now,
+        )
+        .await;
         seed_card(
             &db,
             now - Duration::minutes(9),
@@ -1584,7 +1741,11 @@ mod tests {
         assert_eq!(tick.state.relation, POSSIBLE_DISTRACTION);
         assert_eq!(tick.state.confidence, GRACE_CONFIDENCE);
         assert!(tick.state.confidence < NUDGE_MIN_CONFIDENCE);
-        assert!(tick.state.reason.unwrap().contains("classifier unavailable"));
+        assert!(tick
+            .state
+            .reason
+            .unwrap()
+            .contains("classifier unavailable"));
 
         let run = db.last_journal_run().await.unwrap().unwrap();
         assert_eq!(run.kind, "tail");
@@ -1599,9 +1760,24 @@ mod tests {
         let started = now - Duration::minutes(60);
         let id = intention(&db, "Ship auth fix", started).await;
         seed_frames(&db, now - Duration::minutes(9), now).await;
-        seed_interval(&db, "grace", "auth.rs", "Code", started, started + Duration::minutes(5))
-            .await;
-        seed_interval(&db, "tail", "r/overridden", "Arc", now - Duration::minutes(9), now).await;
+        seed_interval(
+            &db,
+            "grace",
+            "auth.rs",
+            "Code",
+            started,
+            started + Duration::minutes(5),
+        )
+        .await;
+        seed_interval(
+            &db,
+            "tail",
+            "r/overridden",
+            "Arc",
+            now - Duration::minutes(9),
+            now,
+        )
+        .await;
         seed_card(
             &db,
             now - Duration::minutes(9),
@@ -1647,13 +1823,22 @@ mod tests {
         assert_eq!(during.state.relation, OTHER_WORK);
         assert_eq!(during.state.confidence, 1.0);
         assert_eq!(during.state.reason.as_deref(), Some(OVERRIDE_REASON));
-        assert_eq!(during.state.divergence_started_at, None, "the timer is cleared");
-        assert!(!during.classifier_ran, "an answered question is not asked again");
+        assert_eq!(
+            during.state.divergence_started_at, None,
+            "the timer is cleared"
+        );
+        assert!(
+            !during.classifier_ran,
+            "an answered question is not asked again"
+        );
         // The nudge reads `possible_distraction` only, so this also silences it.
         assert!(matches!(
             super::super::nudge::maybe_nudge(
                 &db,
-                &JournalSettings { nudges_enabled: true, ..settings(10) },
+                &JournalSettings {
+                    nudges_enabled: true,
+                    ..settings(10)
+                },
                 &during,
                 now,
             )
@@ -1671,7 +1856,10 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(after.state.relation, POSSIBLE_DISTRACTION);
-        assert!(after.state.divergence_started_at.is_some(), "the clock restarts");
+        assert!(
+            after.state.divergence_started_at.is_some(),
+            "the clock restarts"
+        );
 
         // A different task under the same intention was never covered.
         let other = suppression::task_key(Some("r/something-else"), Some("Arc")).unwrap();

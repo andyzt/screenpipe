@@ -386,6 +386,7 @@ mod tests {
                     "r/rust",
                     "borrow checker memes",
                 )],
+                reviews: Vec::new(),
             }),
         }
     }
@@ -395,13 +396,19 @@ mod tests {
         let prompt = build_prompt(&input());
 
         // Intention, verbatim from the row the user wrote.
-        assert!(prompt.contains("The person set out to: Ship auth fix"), "{prompt}");
+        assert!(
+            prompt.contains("The person set out to: Ship auth fix"),
+            "{prompt}"
+        );
         assert!(prompt.contains("Project: screenpipe"));
         assert!(prompt.contains("Notes: the refresh-token retry"));
         // Work profile, through the card prompt's own renderer.
         assert!(prompt.contains("Role: backend engineer"));
         // Support set and the deterministic candidate with its reason.
-        assert!(prompt.contains("auth.rs, code"), "support set is listed: {prompt}");
+        assert!(
+            prompt.contains("auth.rs, code"),
+            "support set is listed: {prompt}"
+        );
         assert!(prompt.contains("Candidate relation: possible_distraction"));
         assert!(prompt.contains("reads as a detour"));
         assert!(prompt.contains("diverged from the stated intention for 14 minutes"));
@@ -414,7 +421,10 @@ mod tests {
         assert!(prompt.contains("Research that serves the task supports it:"));
         assert!(prompt.contains("A break is a break"));
         assert!(prompt.contains("Prefer unknown over a guess"));
-        assert!(prompt.contains("\"relation\""), "the answer shape is spelled out");
+        assert!(
+            prompt.contains("\"relation\""),
+            "the answer shape is spelled out"
+        );
         // English is the model's own default and needs no instruction.
         assert!(!prompt.contains("## Output language"));
     }
@@ -489,8 +499,14 @@ mod tests {
             r#"{"relation": "possible_distraction", "confidence": 0.55, "reason": "Maybe a feed."}"#,
         )
         .unwrap();
-        assert_eq!(quiet.relation, UNKNOWN, "0.55 is not enough to accuse anyone");
-        assert_eq!(quiet.confidence, 0.55, "the number itself is reported honestly");
+        assert_eq!(
+            quiet.relation, UNKNOWN,
+            "0.55 is not enough to accuse anyone"
+        );
+        assert_eq!(
+            quiet.confidence, 0.55,
+            "the number itself is reported honestly"
+        );
 
         let loud = parse_verdict(
             r#"{"relation": "possible_distraction", "confidence": 0.6, "reason": "Ten minutes of TikTok."}"#,
@@ -544,8 +560,14 @@ mod tests {
         ));
         assert!(classifier.calls_provider());
         assert_eq!(classifier.name(), TAIL_CLASSIFIER_NAME);
-        assert_eq!(classifier.prompt_version().as_deref(), Some(TAIL_PROMPT_VERSION));
-        assert_eq!(classifier.model().as_deref(), Some("deepseek/deepseek-v4-flash"));
+        assert_eq!(
+            classifier.prompt_version().as_deref(),
+            Some(TAIL_PROMPT_VERSION)
+        );
+        assert_eq!(
+            classifier.model().as_deref(),
+            Some("deepseek/deepseek-v4-flash")
+        );
 
         let verdict = classifier.classify(&input()).await.unwrap();
         assert_eq!(verdict.relation, SUPPORTS_INTENTION);
@@ -578,7 +600,10 @@ mod tests {
         let error = classifier.classify(&input()).await.unwrap_err();
         let message = error.to_string();
         assert!(message.contains("rejected the credentials"), "{message}");
-        assert!(!message.contains("bad-key"), "the key never reaches an error string");
+        assert!(
+            !message.contains("bad-key"),
+            "the key never reaches an error string"
+        );
         // A 401 is not worth three phrasings of the same request.
         assert_eq!(server.received_requests().await.unwrap().len(), 1);
     }
@@ -654,6 +679,7 @@ mod tests {
                 context_start: tail_start,
                 active_minutes: 10.0,
                 intervals,
+                reviews: Vec::new(),
             }),
         };
 
@@ -672,7 +698,11 @@ mod tests {
                 "trending: celebrity feud thread, 4.2k reposts".to_string(),
                 "For you · Following · sponsored post · watch this dog video".to_string(),
             ];
-            base(vec![interval], POSSIBLE_DISTRACTION, "the last card reads as a detour")
+            base(
+                vec![interval],
+                POSSIBLE_DISTRACTION,
+                "the last card reads as a detour",
+            )
         };
         let research = {
             let mut interval = interval(
@@ -689,7 +719,11 @@ mod tests {
                 "segment revenue grew 14% quarter over quarter".to_string(),
                 "download the table as CSV · cite this source".to_string(),
             ];
-            base(vec![interval], OTHER_WORK, "Chrome is real work, just not the intention")
+            base(
+                vec![interval],
+                OTHER_WORK,
+                "Chrome is real work, just not the intention",
+            )
         };
 
         println!("--- focus tail live eval ---");

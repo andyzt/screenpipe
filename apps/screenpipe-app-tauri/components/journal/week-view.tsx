@@ -55,7 +55,11 @@ import type { WeekColorMode } from "./week-block";
 
 const NOW_TICK_MS = 60_000;
 
-export type JournalViewMode = "day" | "week";
+/**
+ * The journal's three scales. `dashboard` is the analytical week
+ * (`week-dashboard.tsx`); the URL and the persisted mode both accept it.
+ */
+export type JournalViewMode = "day" | "week" | "dashboard";
 
 /** One shadcn segmented control, used for both toggles in this header. */
 export function SegmentedToggle<T extends string>({
@@ -100,8 +104,9 @@ export function SegmentedToggle<T extends string>({
   );
 }
 
-/** Half of an outline button group, matching the day view's date chevrons. */
-function WeekChevron({
+/** Half of an outline button group, matching the day view's date chevrons.
+ * Exported so the dashboard's header is the same control, not a copy. */
+export function WeekChevron({
   direction,
   label,
   disabled,
@@ -383,10 +388,11 @@ export function WeekView({
           <SegmentedToggle
             label={t("journal.viewLabel")}
             testId="journal-view-toggle"
-            value="week"
+            value={"week" as JournalViewMode}
             options={[
               { value: "day", label: t("journal.view.day") },
               { value: "week", label: t("journal.view.week") },
+              { value: "dashboard", label: t("journal.view.dashboard") },
             ]}
             onChange={(next) => onViewChange(next as JournalViewMode)}
           />

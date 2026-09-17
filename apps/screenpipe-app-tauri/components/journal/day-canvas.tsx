@@ -33,6 +33,7 @@ import {
   hourTicks,
   layoutBlocks,
   msToTopPx,
+  positionSpan,
   toMs,
   type CanvasRange,
   type PositionedBlock,
@@ -43,10 +44,27 @@ import type {
   ActivityCard,
   ActivityDistraction,
   JournalDay,
+  ReviewRating,
+  ReviewRatingValue,
 } from "@/lib/journal/types";
 
 /** Horizontal breathing room between a block and its column edges. */
 const BLOCK_INSET_PX = 8;
+
+/** Width of the review strip that runs down the left edge of the time axis. */
+const REVIEW_STRIP_PX = 6;
+
+/**
+ * The user's own verdict, in three tokens and no new colour: the day's own
+ * primary for focused, a faded muted foreground for neutral, destructive for
+ * distracted. The tooltip always names the rating, so the strip never rests on
+ * the hue alone.
+ */
+const REVIEW_STRIP_CLASS: Record<ReviewRatingValue, string> = {
+  focused: "bg-primary",
+  neutral: "bg-muted-foreground/40",
+  distracted: "bg-destructive",
+};
 
 /**
  * The Distraction category's own colour, for the detour insets drawn inside a
@@ -118,6 +136,58 @@ function DetourInsets({
         );
       })}
     </>
+  );
+}
+
+/**
+ * The day's review ratings, painted beside the hour gutter.
+ *
+ * It is deliberately outside `computeCanvasRange`: a rating is a note on the
+ * day, not a card, and letting it stretch the visible range would move the
+ * canvas under the reader. Positions come from the same `positionSpan` the
+ * blocks use, so a rating and the block it covers line up exactly.
+ */
+function ReviewStrip({
+  reviews,
+  range,
+}: {
+  reviews: ReviewRating[];
+  range: CanvasRange;
+}) {
+  const t = useT();
+  const locale = useLocale();
+  if (reviews.length === 0) return null;
+  return (
+    <div
+      data-testid="journal-review-strip"
+      aria-label={t("canvas.reviewStrip")}
+      className="pointer-events-none absolute inset-y-0 left-0 z-10"
+      style={{ width: REVIEW_STRIP_PX }}
+    >
+      {reviews.map((row) => {
+        const startMs = toMs(row.start_at);
+        const endMs = toMs(row.end_at);
+        if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return null;
+        if (endMs <= range.startMs || startMs >= range.endMs) return null;
+        const { topPx, heightPx } = positionSpan({ startMs, endMs }, range);
+        return (
+          <span
+            key={row.id}
+            data-testid="journal-review-block"
+            data-rating={row.rating}
+            title={t("canvas.reviewSpan", {
+              range: `${formatClock(row.start_at, locale)}–${formatClock(row.end_at, locale)}`,
+              rating: t(`review.${row.rating}`),
+            })}
+            className={cn(
+              "pointer-events-auto absolute left-0 rounded-sm",
+              REVIEW_STRIP_CLASS[row.rating],
+            )}
+            style={{ top: topPx, height: heightPx, width: REVIEW_STRIP_PX }}
+          />
+        );
+      })}
+    </div>
   );
 }
 
@@ -378,6 +448,7 @@ export function DayCanvas({
           className="pointer-events-none absolute inset-y-0 border-r border-border"
           style={{ width: GUTTER_PX }}
         />
+        <ReviewStrip reviews={day.reviews ?? []} range={range} />
         {ticks.map((tick) => (
           <React.Fragment key={tick.ms}>
             <div

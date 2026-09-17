@@ -183,7 +183,10 @@ mod tests {
         let now = at("2026-09-16T08:39:00Z");
         let first = cut_windows(&observations, at("2026-09-16T08:00:00Z"), now);
         // A second pass over the same data yields the same spans...
-        assert_eq!(cut_windows(&observations, at("2026-09-16T08:00:00Z"), now), first);
+        assert_eq!(
+            cut_windows(&observations, at("2026-09-16T08:00:00Z"), now),
+            first
+        );
         // ...and a pass resuming at the checkpoint produces only new spans,
         // never a duplicate of an already cut one.
         let checkpoint = first.last().unwrap().1;
@@ -213,6 +216,8 @@ mod tests {
             at("2026-09-16T08:10:00Z"),
             at("2026-09-16T08:30:00Z"),
         );
-        assert!(windows.iter().all(|(start, _)| *start >= at("2026-09-16T08:10:00Z")));
+        assert!(windows
+            .iter()
+            .all(|(start, _)| *start >= at("2026-09-16T08:10:00Z")));
     }
 }

@@ -13,6 +13,9 @@
 import type {
   ActivityCard,
   CardApp,
+  JournalRecap,
+  ReviewRating,
+  ReviewTotals,
   FocusStatus,
   Intention,
   JournalDay,
@@ -60,6 +63,8 @@ export function makeActivityCard(
     ],
     distractions: [],
     evidence_count: 18,
+    feedback: null,
+    review: null,
     ...overrides,
   };
 }
@@ -121,6 +126,55 @@ export function makeFocusStatus(overrides: Partial<FocusStatus> = {}): FocusStat
   };
 }
 
+export function makeReviewRating(
+  overrides: Partial<ReviewRating> = {},
+): ReviewRating {
+  return {
+    id: 3,
+    start_at: "2026-09-16T09:00:00Z",
+    end_at: "2026-09-16T10:30:00Z",
+    rating: "focused",
+    source: "app",
+    created_at: "2026-09-16T10:31:00Z",
+    updated_at: "2026-09-16T10:31:00Z",
+    ...overrides,
+  };
+}
+
+export function makeReviewTotals(
+  overrides: Partial<ReviewTotals> = {},
+): ReviewTotals {
+  return {
+    focused_minutes: 0,
+    neutral_minutes: 0,
+    distracted_minutes: 0,
+    unrated_minutes: 0,
+    ...overrides,
+  };
+}
+
+export function makeRecap(overrides: Partial<JournalRecap> = {}): JournalRecap {
+  return {
+    date: "2026-09-16",
+    status: "ready",
+    generated_at: "2026-09-16T18:05:00Z",
+    summary:
+      "A focused morning on the auth fix, an afternoon split between review and email.",
+    done: [
+      "Shipped the refresh-token fix (PR #412)",
+      "Reviewed two PRs for the billing team",
+    ],
+    next: ["Re-run the flaky session test on CI", "Reply to the design thread"],
+    focus_note: "One 20-minute detour to news around 15:00.",
+    source_cards: 11,
+    model: "deepseek/deepseek-v4-flash",
+    prompt_version: "journal-recap-v1",
+    error: null,
+    markdown: "## 2026-09-16\n\n**Done**\n- Shipped the refresh-token fix (PR #412)\n",
+    ...overrides,
+  };
+}
+
 export function makeJournalDay(overrides: Partial<JournalDay> = {}): JournalDay {
   return {
     date: "2026-09-16",
@@ -140,6 +194,9 @@ export function makeJournalDay(overrides: Partial<JournalDay> = {}): JournalDay 
     totals: makeTotals(overrides.totals),
     intentions: [],
     activities: [makeActivityCard()],
+    reviews: [],
+    review_totals: makeReviewTotals(overrides.review_totals),
+    recap: { status: "none", generated_at: null, ...(overrides.recap ?? {}) },
     ...overrides,
   };
 }

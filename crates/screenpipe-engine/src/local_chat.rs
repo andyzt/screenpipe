@@ -63,7 +63,11 @@ pub fn upstream_for(preset: &ResolvedPreset) -> Option<Upstream> {
     // credential as DEEPSEEK_API_KEY into this process's environment.
     let api_key = preset.api_key.clone().or_else(|| {
         (preset.provider.as_deref() == Some("deepseek"))
-            .then(|| std::env::var("DEEPSEEK_API_KEY").ok().filter(|k| !k.trim().is_empty()))
+            .then(|| {
+                std::env::var("DEEPSEEK_API_KEY")
+                    .ok()
+                    .filter(|k| !k.trim().is_empty())
+            })
             .flatten()
     });
     Some(Upstream {

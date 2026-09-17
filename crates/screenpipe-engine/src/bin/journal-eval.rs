@@ -45,9 +45,9 @@ use screenpipe_engine::focus::detector::TailClassifier;
 use screenpipe_engine::focus::LlmTailClassifier;
 use screenpipe_engine::journal::compile::compile_window;
 use screenpipe_engine::journal::eval::{
-    all_passed, dominant_category, dominant_relation, labels_skeleton, load_fixtures, load_labels,
-    load_tail_fixtures, render_run_report, render_tail_report, seeded_categories, LabelSet, Price,
-    RunHeader, RunSummary, TailOutcome, TailSummary, WindowOutcome,
+    all_passed, dominant_category, dominant_relation, label_from_user, labels_file, load_fixtures,
+    load_labels, load_tail_fixtures, render_run_report, render_tail_report, seeded_categories,
+    LabelSet, Price, RunHeader, RunSummary, TailOutcome, TailSummary, WindowLabel, WindowOutcome,
 };
 use screenpipe_engine::journal::llm::{resolve_journal_preset, ChatClient, LlmGenerator};
 use screenpipe_engine::journal::settings::JournalSettings;
@@ -221,8 +221,7 @@ async fn export(
     );
 
     let (db, _guard) = open_database(data_dir).await?;
-    std::fs::create_dir_all(out)
-        .with_context(|| format!("cannot create {}", out.display()))?;
+    std::fs::create_dir_all(out).with_context(|| format!("cannot create {}", out.display()))?;
 
     let mut observations: Vec<DateTime<Utc>> = db
         .journal_frame_samples(day_start, day_end)
@@ -254,11 +253,20 @@ async fn export(
         picked.len()
     );
 
-    let mut written: Vec<String> = Vec::new();
+    // What the user themselves said about this day. Read once: the labels
+    // file carries their thumbs and their review ratings so a corpus grows
+    // with real judgments instead of an empty skeleton nobody fills in.
+    let feedback = db.list_journal_feedback(Some(&date.to_string())).await?;
+    let ratings = db.list_review_ratings(day_start, day_end).await?;
+
+    let mut written: Vec<(String, WindowLabel)> = Vec::new();
     for index in picked {
         let (start, end) = spans[index];
         let compiled = compile_window(&db, start, end).await?;
-        let name = format!("{date}-{}.json", Local.from_utc_datetime(&start.naive_utc()).format("%H%M"));
+        let name = format!(
+            "{date}-{}.json",
+            Local.from_utc_datetime(&start.naive_utc()).format("%H%M")
+        );
         let path = out.join(&name);
         std::fs::write(&path, serde_json::to_string_pretty(&compiled)? + "\n")
             .with_context(|| format!("cannot write {}", path.display()))?;
@@ -267,13 +275,20 @@ async fn export(
             compiled.intervals.len(),
             compiled.observed_minutes()
         );
-        written.push(name);
+        let label = label_from_user(&compiled, &feedback, &ratings);
+        if label.disputed {
+            println!("    disputed by the user");
+        }
+        if let Some(review) = label.expected_review.as_deref() {
+            println!("    marked {review}");
+        }
+        written.push((name, label));
     }
 
     let labels_path = out.join(format!("{date}.labels.json"));
     std::fs::write(
         &labels_path,
-        serde_json::to_string_pretty(&labels_skeleton(&written))? + "\n",
+        serde_json::to_string_pretty(&labels_file(&written))? + "\n",
     )
     .with_context(|| format!("cannot write {}", labels_path.display()))?;
     println!("journal-eval: labels skeleton at {}", labels_path.display());
@@ -285,7 +300,9 @@ async fn export(
 ///
 /// The returned guard keeps the temporary directory alive: dropping it deletes
 /// the copy, which matters because a capture database is gigabytes.
-async fn open_database(data_dir: &Path) -> anyhow::Result<(DatabaseManager, Option<tempfile::TempDir>)> {
+async fn open_database(
+    data_dir: &Path,
+) -> anyhow::Result<(DatabaseManager, Option<tempfile::TempDir>)> {
     let path = data_dir.join("db.sqlite");
     anyhow::ensure!(path.is_file(), "no db.sqlite in {}", data_dir.display());
     let config = screenpipe_config::DbConfig::default();
@@ -348,7 +365,10 @@ async fn run(
     let fallback = fallback_category_id(&categories);
     // Relations only exist while an intention is live, so a labels file that
     // grades them has to say which intention was live.
-    let intention = labels.expects_relations().then(|| labels.intention.clone()).flatten();
+    let intention = labels
+        .expects_relations()
+        .then(|| labels.intention.clone())
+        .flatten();
     if labels.expects_relations() && intention.is_none() {
         anyhow::bail!(
             "the labels file expects relations but names no intention; add an `intention` object"
@@ -475,7 +495,10 @@ async fn tail(
         }
         println!(
             "  {name}: expected {} → {} ({:.2}, {:.1}s)",
-            outcome.expected, outcome.actual, outcome.confidence, latency_ms as f64 / 1000.0
+            outcome.expected,
+            outcome.actual,
+            outcome.confidence,
+            latency_ms as f64 / 1000.0
         );
         outcomes.push(outcome);
     }
@@ -535,11 +558,13 @@ fn preset_label(preset: &ResolvedPreset, preset_id: Option<&str>) -> String {
 fn emit(report: &str, out: Option<&Path>) -> anyhow::Result<()> {
     println!("\n{report}");
     if let Some(path) = out {
-        if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+        if let Some(parent) = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(path, report)
-            .with_context(|| format!("cannot write {}", path.display()))?;
+        std::fs::write(path, report).with_context(|| format!("cannot write {}", path.display()))?;
         println!("journal-eval: report written to {}", path.display());
     }
     Ok(())

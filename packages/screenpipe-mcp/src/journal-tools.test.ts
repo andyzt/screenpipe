@@ -8,6 +8,9 @@ import {
   buildFocusStatusResult,
   buildJournalActivityResult,
   buildJournalDayResult,
+  buildJournalRecapResult,
+  buildJournalReviewResult,
+  buildJournalWeekResult,
   buildSetIntentionResult,
 } from "./journal-tools";
 
@@ -19,6 +22,13 @@ function jsonResponse(value: unknown): Response {
 
 function notFoundError(): Error {
   return Object.assign(new Error("not found"), { status: 404 });
+}
+
+// Mirrors index.ts's BackendHttpError: `.status` plus the raw response text
+// on `.bodyText`, which callers parse as `{ "error": "<message>" }`.
+function httpError(status: number, body: unknown): Error {
+  const bodyText = typeof body === "string" ? body : JSON.stringify(body);
+  return Object.assign(new Error(`HTTP ${status}`), { status, bodyText });
 }
 
 describe("buildJournalDayResult", () => {
@@ -205,6 +215,275 @@ describe("buildSetIntentionResult", () => {
     });
 
     const result = await buildSetIntentionResult({ title: "Ship auth fix" }, callApi);
+
+    expect(result.text).toBe(JOURNAL_NOT_AVAILABLE_MESSAGE);
+  });
+});
+
+describe("buildJournalRecapResult", () => {
+  it("calls /journal/recap with no query when date is omitted", async () => {
+    const endpoints: string[] = [];
+    const callApi = vi.fn(async (endpoint: string) => {
+      endpoints.push(endpoint);
+      return jsonResponse({ date: "2026-09-16", status: "ready", markdown: "## recap" });
+    });
+
+    await buildJournalRecapResult({}, callApi);
+
+    expect(endpoints).toEqual(["/journal/recap"]);
+  });
+
+  it("passes date through as a query param", async () => {
+    const endpoints: string[] = [];
+    const callApi = vi.fn(async (endpoint: string) => {
+      endpoints.push(endpoint);
+      return jsonResponse({ date: "2026-09-10", status: "ready", markdown: "## recap" });
+    });
+
+    await buildJournalRecapResult({ date: "2026-09-10" }, callApi);
+
+    expect(endpoints).toEqual(["/journal/recap?date=2026-09-10"]);
+  });
+
+  it("does not regenerate a ready recap unless asked", async () => {
+    const endpoints: string[] = [];
+    const callApi = vi.fn(async (endpoint: string) => {
+      endpoints.push(endpoint);
+      return jsonResponse({ date: "2026-09-16", status: "ready", markdown: "## recap" });
+    });
+
+    const result = await buildJournalRecapResult({}, callApi);
+
+    expect(endpoints).toEqual(["/journal/recap"]);
+    expect(result.text).toContain("## recap");
+  });
+
+  it("regenerates when status is none, using the date the engine resolved", async () => {
+    const calls: Array<{ endpoint: string; options?: RequestInit }> = [];
+    const callApi = vi.fn(async (endpoint: string, options?: RequestInit) => {
+      calls.push({ endpoint, options });
+      if (endpoint === "/journal/recap") {
+        return jsonResponse({ date: "2026-09-16", status: "none" });
+      }
+      return jsonResponse({
+        date: "2026-09-16",
+        status: "ready",
+        generated_at: "2026-09-16T18:05:00Z",
+        source_cards: 11,
+        markdown: "## 2026-09-16\n\nDone stuff.",
+      });
+    });
+
+    const result = await buildJournalRecapResult({}, callApi);
+
+    expect(calls).toHaveLength(2);
+    expect(calls[1].endpoint).toBe("/journal/recap/generate");
+    expect(calls[1].options?.method).toBe("POST");
+    expect(JSON.parse(String(calls[1].options?.body))).toEqual({ date: "2026-09-16" });
+    expect(result.text).toContain("## 2026-09-16\n\nDone stuff.");
+    expect(result.text).toContain("Status: generated");
+    expect(result.text).toContain("11 source cards");
+  });
+
+  it("regenerates when status is stale", async () => {
+    const calls: Array<{ endpoint: string }> = [];
+    const callApi = vi.fn(async (endpoint: string) => {
+      calls.push({ endpoint });
+      if (endpoint === "/journal/recap") {
+        return jsonResponse({ date: "2026-09-16", status: "stale", markdown: "old" });
+      }
+      return jsonResponse({ date: "2026-09-16", status: "ready", markdown: "fresh" });
+    });
+
+    const result = await buildJournalRecapResult({}, callApi);
+
+    expect(calls.map((c) => c.endpoint)).toEqual(["/journal/recap", "/journal/recap/generate"]);
+    expect(result.text).toContain("fresh");
+  });
+
+  it("forces regeneration when regenerate: true even if status is ready", async () => {
+    const calls: Array<{ endpoint: string }> = [];
+    const callApi = vi.fn(async (endpoint: string) => {
+      calls.push({ endpoint });
+      if (endpoint === "/journal/recap") {
+        return jsonResponse({ date: "2026-09-16", status: "ready", markdown: "old" });
+      }
+      return jsonResponse({ date: "2026-09-16", status: "ready", markdown: "new" });
+    });
+
+    const result = await buildJournalRecapResult({ regenerate: true }, callApi);
+
+    expect(calls.map((c) => c.endpoint)).toEqual(["/journal/recap", "/journal/recap/generate"]);
+    expect(result.text).toContain("new");
+  });
+
+  it("maps 409 from generate to a plain no-final-cards message", async () => {
+    const callApi = vi.fn(async (endpoint: string) => {
+      if (endpoint === "/journal/recap") return jsonResponse({ date: "2026-09-16", status: "none" });
+      throw httpError(409, { error: "no final cards" });
+    });
+
+    const result = await buildJournalRecapResult({}, callApi);
+
+    expect(result.text).toBe("No final cards for 2026-09-16 yet — a recap needs at least one finished card.");
+  });
+
+  it("maps 503 from generate to the provider message", async () => {
+    const callApi = vi.fn(async (endpoint: string) => {
+      if (endpoint === "/journal/recap") return jsonResponse({ date: "2026-09-16", status: "none" });
+      throw httpError(503, { error: "No AI preset configured." });
+    });
+
+    const result = await buildJournalRecapResult({}, callApi);
+
+    expect(result.text).toBe("Recap generation is unavailable: No AI preset configured.");
+  });
+
+  it("maps 429 from generate to an already-generating message", async () => {
+    const callApi = vi.fn(async (endpoint: string) => {
+      if (endpoint === "/journal/recap") return jsonResponse({ date: "2026-09-16", status: "none" });
+      throw httpError(429, { error: "rate limited" });
+    });
+
+    const result = await buildJournalRecapResult({}, callApi);
+
+    expect(result.text).toBe("Already generating a recap for this day, try again in a minute.");
+  });
+
+  it("returns a plain message instead of throwing on HTTP 404 from the initial GET", async () => {
+    const callApi = vi.fn(async () => {
+      throw notFoundError();
+    });
+
+    const result = await buildJournalRecapResult({}, callApi);
+
+    expect(result.text).toBe(JOURNAL_NOT_AVAILABLE_MESSAGE);
+  });
+});
+
+describe("buildJournalReviewResult", () => {
+  it("requires start, end, and a valid rating", async () => {
+    const callApi = vi.fn();
+    await expect(buildJournalReviewResult({}, callApi)).rejects.toThrow(/start is required/);
+    await expect(
+      buildJournalReviewResult({ start: "2026-09-16T09:00:00Z" }, callApi),
+    ).rejects.toThrow(/end is required/);
+    await expect(
+      buildJournalReviewResult(
+        { start: "not-a-date", end: "2026-09-16T10:00:00Z", rating: "focused" },
+        callApi,
+      ),
+    ).rejects.toThrow(/not a valid ISO-8601/);
+    await expect(
+      buildJournalReviewResult(
+        { start: "2026-09-16T10:00:00Z", end: "2026-09-16T09:00:00Z", rating: "focused" },
+        callApi,
+      ),
+    ).rejects.toThrow(/start must be before end/);
+    await expect(
+      buildJournalReviewResult(
+        { start: "2026-09-16T09:00:00Z", end: "2026-09-16T10:00:00Z", rating: "bogus" },
+        callApi,
+      ),
+    ).rejects.toThrow(/rating must be/);
+    expect(callApi).not.toHaveBeenCalled();
+  });
+
+  it("PUTs the span with source: mcp and confirms the result", async () => {
+    const calls: Array<{ endpoint: string; options?: RequestInit }> = [];
+    const callApi = vi.fn(async (endpoint: string, options?: RequestInit) => {
+      calls.push({ endpoint, options });
+      return jsonResponse({
+        items: [
+          { start_at: "2026-09-16T09:00:00Z", end_at: "2026-09-16T10:30:00Z", rating: "focused" },
+        ],
+      });
+    });
+
+    const result = await buildJournalReviewResult(
+      { start: "2026-09-16T09:00:00Z", end: "2026-09-16T10:30:00Z", rating: "focused" },
+      callApi,
+    );
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].endpoint).toBe("/journal/reviews");
+    expect(calls[0].options?.method).toBe("PUT");
+    expect(JSON.parse(String(calls[0].options?.body))).toEqual({
+      start_at: "2026-09-16T09:00:00Z",
+      end_at: "2026-09-16T10:30:00Z",
+      rating: "focused",
+      source: "mcp",
+    });
+    expect(result.text).toContain("focused");
+  });
+
+  it("clears a rating when rating is null", async () => {
+    const calls: Array<{ options?: RequestInit }> = [];
+    const callApi = vi.fn(async (_endpoint: string, options?: RequestInit) => {
+      calls.push({ options });
+      return jsonResponse({ items: [] });
+    });
+
+    const result = await buildJournalReviewResult(
+      { start: "2026-09-16T09:00:00Z", end: "2026-09-16T10:30:00Z", rating: null },
+      callApi,
+    );
+
+    expect(JSON.parse(String(calls[0].options?.body))).toEqual({
+      start_at: "2026-09-16T09:00:00Z",
+      end_at: "2026-09-16T10:30:00Z",
+      rating: null,
+      source: "mcp",
+    });
+    expect(result.text).toContain("Cleared");
+  });
+
+  it("returns a plain message instead of throwing on HTTP 404", async () => {
+    const callApi = vi.fn(async () => {
+      throw notFoundError();
+    });
+
+    const result = await buildJournalReviewResult(
+      { start: "2026-09-16T09:00:00Z", end: "2026-09-16T10:30:00Z", rating: "focused" },
+      callApi,
+    );
+
+    expect(result.text).toBe(JOURNAL_NOT_AVAILABLE_MESSAGE);
+  });
+});
+
+describe("buildJournalWeekResult", () => {
+  it("calls /journal/week/dashboard with no query when start is omitted", async () => {
+    const endpoints: string[] = [];
+    const callApi = vi.fn(async (endpoint: string) => {
+      endpoints.push(endpoint);
+      return jsonResponse({ start: "2026-09-14", end: "2026-09-20", days: [], totals: {} });
+    });
+
+    const result = await buildJournalWeekResult({}, callApi);
+
+    expect(endpoints).toEqual(["/journal/week/dashboard"]);
+    expect(result.text).toContain("Journal week — 2026-09-14 to 2026-09-20");
+  });
+
+  it("passes start through as a query param", async () => {
+    const endpoints: string[] = [];
+    const callApi = vi.fn(async (endpoint: string) => {
+      endpoints.push(endpoint);
+      return jsonResponse({ start: "2026-09-14", end: "2026-09-20", days: [], totals: {} });
+    });
+
+    await buildJournalWeekResult({ start: "2026-09-14" }, callApi);
+
+    expect(endpoints).toEqual(["/journal/week/dashboard?start=2026-09-14"]);
+  });
+
+  it("returns a plain message instead of throwing on HTTP 404", async () => {
+    const callApi = vi.fn(async () => {
+      throw notFoundError();
+    });
+
+    const result = await buildJournalWeekResult({}, callApi);
 
     expect(result.text).toBe(JOURNAL_NOT_AVAILABLE_MESSAGE);
   });

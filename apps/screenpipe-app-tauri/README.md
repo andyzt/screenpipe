@@ -33,6 +33,7 @@ SCREENPIPE_WEB_SCENARIO=empty bun run dev:web
 SCREENPIPE_WEB_SCENARIO=backend-error bun run dev:web
 SCREENPIPE_WEB_SCENARIO=journal-generating bun run dev:web
 SCREENPIPE_WEB_SCENARIO=journal-no-preset bun run dev:web
+SCREENPIPE_WEB_SCENARIO=journal-recap-ready bun run dev:web
 ```
 
 The journal landing view (<http://127.0.0.1:1420/home?section=journal>) and
@@ -40,8 +41,12 @@ its settings section (`/settings?section=journal`) are fully mocked: the
 `ready` state seeds a day of cards with one idle card, one detour and an
 active intention; `journal-generating` shows pending windows; and
 `journal-no-preset` shows the state when no OpenAI-compatible preset is
-configured. Setting and ending an intention mutates the mock, so the focus
-strip follows it.
+configured; `journal-recap-ready` opens a day whose recap is already written.
+Setting and ending an intention mutates the mock, so the focus strip follows
+it. Card feedback, review ratings and the recap are stateful too: a thumb, a
+Focused / Neutral / Distracted rating or a written recap survives the next
+poll for the rest of the browser session, and the ratings split each other
+exactly as the contract says.
 
 The journal is a time canvas with an inspector beside it. Adding
 `&select=<activity id>` (for example

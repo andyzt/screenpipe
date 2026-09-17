@@ -133,15 +133,15 @@ mod tests {
 
     #[test]
     fn leading_and_trailing_prose_is_ignored() {
-        let value =
-            extract_json("Sure! Here are the cards:\n[{\"title\": \"one\"}]\nLet me know.").unwrap();
+        let value = extract_json("Sure! Here are the cards:\n[{\"title\": \"one\"}]\nLet me know.")
+            .unwrap();
         assert_eq!(value[0]["title"], json!("one"));
     }
 
     #[test]
     fn braces_inside_strings_do_not_unbalance_the_scan() {
-        let value = extract_json(r#"noise [{"title": "fixed {json} parsing \" here"}] noise"#)
-            .unwrap();
+        let value =
+            extract_json(r#"noise [{"title": "fixed {json} parsing \" here"}] noise"#).unwrap();
         assert_eq!(value[0]["title"], json!(r#"fixed {json} parsing " here"#));
     }
 
@@ -161,7 +161,9 @@ mod tests {
 
     #[test]
     fn an_unterminated_value_is_rejected() {
-        let error = extract_json("[{\"title\": \"one\"").unwrap_err().to_string();
+        let error = extract_json("[{\"title\": \"one\"")
+            .unwrap_err()
+            .to_string();
         assert!(error.contains("no JSON object or array"), "{error}");
     }
 

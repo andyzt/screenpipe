@@ -134,7 +134,10 @@ mod tests {
         assert_eq!(task_key(Some("   "), Some("  ")), None);
         // The detector and the route must produce the same key from the same
         // task, whatever casing each of them happened to read.
-        assert_eq!(task_key(Some("R/Rust"), Some("arc")), task_key(Some("r/rust"), Some("Arc")));
+        assert_eq!(
+            task_key(Some("R/Rust"), Some("arc")),
+            task_key(Some("r/rust"), Some("Arc"))
+        );
     }
 
     #[test]
@@ -144,7 +147,10 @@ mod tests {
         suppress(9_001, &key, "other_work", now, now + Duration::minutes(30));
 
         assert_eq!(active(9_001, &key, now).as_deref(), Some("other_work"));
-        assert_eq!(active(9_001, &key, now + Duration::minutes(29)).as_deref(), Some("other_work"));
+        assert_eq!(
+            active(9_001, &key, now + Duration::minutes(29)).as_deref(),
+            Some("other_work")
+        );
         // Another task under the same intention is untouched.
         let other = task_key(Some("suppression-unit-other"), Some("Arc")).unwrap();
         assert!(active(9_001, &other, now).is_none());

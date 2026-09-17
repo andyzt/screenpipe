@@ -31,11 +31,12 @@ use tracing::error;
 
 use crate::history_access::HistoryAccessPolicy;
 use crate::journal::day::{
-    attach_card_apps, compute_by_app, compute_day_totals, fallback_category_id, to_card,
-    ActivityCard, CategoryMinutes, DayTotals,
+    attach_card_apps, compute_by_app, compute_day_totals, compute_review_totals,
+    fallback_category_id, to_card, ActivityCard, CategoryMinutes, DayTotals, ReviewTotals,
 };
 use crate::journal::settings::JournalSettings;
 use crate::journal::time::{day_bounds, day_of};
+use crate::routes::journal_review::{review_items, ReviewRatingItem};
 use crate::server::AppState;
 
 /// `POST /journal/regenerate` accepts one reset per target (a day, or one
@@ -44,7 +45,7 @@ use crate::server::AppState;
 /// today. A card reset queues only the windows its span overlaps.
 const REGENERATE_COOLDOWN: Duration = Duration::minutes(1);
 
-type ApiError = (StatusCode, JsonResponse<Value>);
+pub(crate) type ApiError = (StatusCode, JsonResponse<Value>);
 
 // ---------- GET /journal/day ----------
 
@@ -101,6 +102,13 @@ pub struct JournalDayResponse {
     pub totals: DayTotals,
     pub intentions: Vec<JournalIntention>,
     pub activities: Vec<ActivityCard>,
+    /// The user's own review of this day's timeline, clipped to the day.
+    pub reviews: Vec<ReviewRatingItem>,
+    /// `wall_minutes` of the day's non-idle cards split by those ratings.
+    pub review_totals: ReviewTotals,
+    /// Whether this day has a recap and how current it is. The body itself is
+    /// `GET /journal/recap`: a week of days must not carry seven paragraphs.
+    pub recap: crate::routes::journal_recap::JournalRecapStatus,
 }
 
 #[oasgen]
@@ -150,6 +158,9 @@ async fn build_journal_day(
             totals: DayTotals::default(),
             intentions: Vec::new(),
             activities: Vec::new(),
+            reviews: Vec::new(),
+            review_totals: ReviewTotals::default(),
+            recap: crate::routes::journal_recap::JournalRecapStatus::none(),
         });
     }
 
@@ -180,6 +191,15 @@ async fn build_journal_day(
 
     let data_status = day_data_status(state, &activities, read_start, day_end, now).await;
     let totals = compute_day_totals(&activities);
+    // One query for the day's ratings; the cards themselves already carry the
+    // per-card label the same rows produced.
+    let ratings = state
+        .db
+        .list_review_ratings(read_start, day_end)
+        .await
+        .map_err(internal)?;
+    let review_totals = compute_review_totals(&activities, &ratings);
+    let reviews = review_items(&ratings, read_start, day_end);
 
     Ok(JournalDayResponse {
         date: date.to_string(),
@@ -190,6 +210,12 @@ async fn build_journal_day(
         totals,
         intentions,
         activities,
+        reviews,
+        review_totals,
+        recap: crate::routes::journal_recap::recap_status_for_day(
+            &state.db, date, day_start, day_end,
+        )
+        .await?,
     })
 }
 
@@ -232,10 +258,7 @@ pub async fn get_journal_week(
 
     let totals = week_totals(&days);
     Ok(JsonResponse(JournalWeekResponse {
-        start: dates
-            .first()
-            .map(NaiveDate::to_string)
-            .unwrap_or_default(),
+        start: dates.first().map(NaiveDate::to_string).unwrap_or_default(),
         end: dates.last().map(NaiveDate::to_string).unwrap_or_default(),
         days,
         totals,
@@ -244,7 +267,10 @@ pub async fn get_journal_week(
 
 /// The seven dates a week request covers. Pure so the date handling is tested
 /// without standing up an `AppState`.
-fn week_dates(start: Option<&str>, today: NaiveDate) -> Result<Vec<NaiveDate>, ApiError> {
+pub(crate) fn week_dates(
+    start: Option<&str>,
+    today: NaiveDate,
+) -> Result<Vec<NaiveDate>, ApiError> {
     let start = match start {
         Some(value) => value
             .trim()
@@ -356,9 +382,10 @@ impl OaSchema for JournalActivityResponse {
             object
                 .properties
                 .insert("interval_keys".to_string(), <Vec<String>>::schema_ref());
-            object
-                .properties
-                .insert("evidence".to_string(), <Vec<JournalEvidenceItem>>::schema_ref());
+            object.properties.insert(
+                "evidence".to_string(),
+                <Vec<JournalEvidenceItem>>::schema_ref(),
+            );
             object.required.push("interval_keys".to_string());
             object.required.push("evidence".to_string());
         }
@@ -600,8 +627,8 @@ pub async fn regenerate_journal_day(
                 .map_err(|_| bad_request("date must be YYYY-MM-DD"))?,
             None => day_of(now),
         };
-        let (day_start, day_end) = day_bounds(date)
-            .ok_or_else(|| bad_request("date is not a representable local day"))?;
+        let (day_start, day_end) =
+            day_bounds(date).ok_or_else(|| bad_request("date is not a representable local day"))?;
         (RegenerateTarget::Day(date), day_start, day_end)
     };
     let (read_start, clamped_out) = clamp(&state.history_access, span_start, span_end, now);
@@ -749,7 +776,7 @@ pub async fn put_journal_categories(
 
 /// Clamp a day to the history-access window. Returns the effective read start
 /// and whether the whole day falls outside the policy.
-fn clamp(
+pub(crate) fn clamp(
     policy: &HistoryAccessPolicy,
     day_start: DateTime<Utc>,
     day_end: DateTime<Utc>,
@@ -769,8 +796,7 @@ async fn generation_status(
     _now: DateTime<Utc>,
 ) -> Result<JournalGenerationStatus, ApiError> {
     let settings = JournalSettings::load(&state.screenpipe_dir);
-    let readiness =
-        crate::journal::select_generator(&settings, &state.screenpipe_dir).readiness();
+    let readiness = crate::journal::select_generator(&settings, &state.screenpipe_dir).readiness();
     let counts = state.db.journal_window_counts().await.map_err(internal)?;
     let last_window_end_at = state
         .db
@@ -832,19 +858,17 @@ fn is_slug(value: &str) -> bool {
 }
 
 fn is_hex_colour(value: &str) -> bool {
-    value.len() == 7
-        && value.starts_with('#')
-        && value[1..].chars().all(|c| c.is_ascii_hexdigit())
+    value.len() == 7 && value.starts_with('#') && value[1..].chars().all(|c| c.is_ascii_hexdigit())
 }
 
-fn bad_request(message: &str) -> ApiError {
+pub(crate) fn bad_request(message: &str) -> ApiError {
     (
         StatusCode::BAD_REQUEST,
         JsonResponse(json!({ "error": message })),
     )
 }
 
-fn internal(error: sqlx::Error) -> ApiError {
+pub(crate) fn internal(error: sqlx::Error) -> ApiError {
     error!(%error, "journal query failed");
     (
         StatusCode::INTERNAL_SERVER_ERROR,
@@ -929,7 +953,10 @@ mod tests {
         assert!(regenerate_allowed(card, now));
         assert!(!regenerate_allowed(card, now + Duration::seconds(10)));
         // Another card, and the day itself, are unaffected by a card reset.
-        assert!(regenerate_allowed(RegenerateTarget::Activity(9_000_002), now));
+        assert!(regenerate_allowed(
+            RegenerateTarget::Activity(9_000_002),
+            now
+        ));
         assert!(regenerate_allowed(
             RegenerateTarget::Day("2031-06-01".parse().unwrap()),
             now
@@ -945,8 +972,14 @@ mod tests {
         assert_eq!(dates.first().unwrap().to_string(), "2026-09-14");
         assert_eq!(dates.last().unwrap().to_string(), "2026-09-20");
         // A Monday and a Sunday both resolve to the week they belong to.
-        assert_eq!(monday_of("2026-09-14".parse().unwrap()).to_string(), "2026-09-14");
-        assert_eq!(monday_of("2026-09-20".parse().unwrap()).to_string(), "2026-09-14");
+        assert_eq!(
+            monday_of("2026-09-14".parse().unwrap()).to_string(),
+            "2026-09-14"
+        );
+        assert_eq!(
+            monday_of("2026-09-20".parse().unwrap()).to_string(),
+            "2026-09-14"
+        );
     }
 
     #[test]
@@ -1003,6 +1036,9 @@ mod tests {
             totals: compute_day_totals(std::slice::from_ref(&card)),
             intentions: Vec::new(),
             activities: vec![card],
+            reviews: Vec::new(),
+            review_totals: ReviewTotals::default(),
+            recap: crate::routes::journal_recap::JournalRecapStatus::none(),
         };
         let mut card = ActivityCard {
             id: 7,
@@ -1036,6 +1072,8 @@ mod tests {
             }],
             distractions: Vec::new(),
             evidence_count: 0,
+            feedback: None,
+            review: None,
         };
         let first = day("2026-09-16", card.clone());
         card.id = 8;
@@ -1064,8 +1102,20 @@ mod tests {
         let oasgen::SchemaKind::Type(oasgen::Type::Object(object)) = schema.kind else {
             panic!("activity response must be an object schema");
         };
-        for key in ["id", "title", "category", "distractions", "interval_keys", "evidence"] {
-            assert!(object.properties.contains_key(key), "missing property {key}");
+        for key in [
+            "id",
+            "title",
+            "category",
+            "distractions",
+            "feedback",
+            "review",
+            "interval_keys",
+            "evidence",
+        ] {
+            assert!(
+                object.properties.contains_key(key),
+                "missing property {key}"
+            );
         }
         assert!(object.required.iter().any(|k| k == "evidence"));
     }
@@ -1080,7 +1130,10 @@ mod tests {
             panic!("week response must be an object schema");
         };
         for key in ["start", "end", "days", "totals"] {
-            assert!(object.properties.contains_key(key), "missing property {key}");
+            assert!(
+                object.properties.contains_key(key),
+                "missing property {key}"
+            );
         }
     }
 }

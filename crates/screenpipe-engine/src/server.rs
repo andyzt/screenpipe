@@ -38,6 +38,10 @@ use crate::{
             storage_preview_handler,
         },
         elements::{get_frame_elements, search_elements},
+        focus::{
+            create_focus_intention, end_focus_intention, get_focus_status, list_focus_intentions,
+            override_focus_state,
+        },
         frames::{
             get_frame_context, get_frame_data, get_frame_metadata, get_frame_preview_media,
             get_frame_preview_samples, get_frame_text_data, get_frame_thumbnail,
@@ -47,13 +51,15 @@ use crate::{
             api_list_monitors, api_vision_status, audio_metrics_handler, health_check,
             vision_metrics_handler,
         },
-        focus::{
-            create_focus_intention, end_focus_intention, get_focus_status, list_focus_intentions,
-            override_focus_state,
-        },
         journal::{
             get_journal_activity, get_journal_categories, get_journal_day, get_journal_status,
             get_journal_week, put_journal_categories, regenerate_journal_day,
+        },
+        journal_dashboard::get_journal_week_dashboard,
+        journal_recap::{generate_journal_recap, get_journal_recap},
+        journal_review::{
+            get_journal_feedback, get_journal_reviews, put_journal_activity_feedback,
+            put_journal_reviews,
         },
         meetings::{
             bulk_delete_meetings_handler, delete_meeting_handler, export_handler,
@@ -1021,11 +1027,21 @@ impl SCServer {
             .get("/activity-ledger", get_activity_ledger)
             .get("/journal/day", get_journal_day)
             .get("/journal/week", get_journal_week)
+            .get("/journal/week/dashboard", get_journal_week_dashboard)
             .get("/journal/activities/:id", get_journal_activity)
             .get("/journal/status", get_journal_status)
             .post("/journal/regenerate", regenerate_journal_day)
             .get("/journal/categories", get_journal_categories)
             .put("/journal/categories", put_journal_categories)
+            .get("/journal/recap", get_journal_recap)
+            .post("/journal/recap/generate", generate_journal_recap)
+            .put(
+                "/journal/activities/:id/feedback",
+                put_journal_activity_feedback,
+            )
+            .get("/journal/feedback", get_journal_feedback)
+            .get("/journal/reviews", get_journal_reviews)
+            .put("/journal/reviews", put_journal_reviews)
             .get("/focus/status", get_focus_status)
             .get("/focus/intentions", list_focus_intentions)
             .post("/focus/intentions", create_focus_intention)

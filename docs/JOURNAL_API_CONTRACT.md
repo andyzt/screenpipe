@@ -116,8 +116,10 @@ ties broken by `name` then `host`.
 `feedback` is `null` until the user rates the card (see *Card feedback*).
 `review` is the user's timeline review rating over the card's span
 (see *Review ratings*): the single rating when one covers ≥ 90 % of the
-span, `mixed` when two or more ratings cover it, `null` when no rating
-touches it.
+span, `mixed` in every other case where at least one rating touches it (two
+or more ratings, or a single one covering less than 90 %), `null` when none
+does. Idle and system cards always report `null` and clients hide the
+controls there.
 
 ### CardApp
 
@@ -224,6 +226,10 @@ Definitions:
 - `switches` — the number of ledger intervals in the day whose `app_name`
   differs from the previous interval's, unobserved gaps excluded.
 - `focus_share` — `focus_minutes / active_minutes`, `null` when active is 0.
+- `categories[].share` — minutes over all categorised minutes of the week
+  (sums to 1); `apps[].share` — minutes over all app minutes of the week, not
+  just the top 12. `compare_minutes` is `null` when the compare week has no
+  cards and `0.0` when it has cards but not that category or app.
 - `categories` — descending by minutes, every category with minutes > 0,
   each with its top 6 apps; the donut and the sankey are drawn from this.
 - `apps` — top 12 across the week; `category_id` is the category the app spent
@@ -323,9 +329,11 @@ as a calendar block would.
 `GET /journal/reviews?date=YYYY-MM-DD` → `{ "items": [ ReviewRating… ] }`
 ascending by `start_at`, clipped to the day.
 
-`PUT /journal/reviews` body `{ "start_at", "end_at", "rating" | null }`.
-`rating: null` clears the span. `start_at < end_at`, span ≤ 24 h, else `400`.
-Returns the day's `{ "items": [...] }` after the write.
+`PUT /journal/reviews` body `{ "start_at", "end_at", "rating" | null, "source"? }`.
+`rating: null` clears the span. `source` is `app` (default) or `mcp`.
+`start_at < end_at`, span ≤ 24 h, else `400`.
+Returns `{ "items": [...] }` for the journal day containing `start_at`
+after the write.
 
 Effects: (1) `ActivityCard.review` and `review_totals` in the day response;
 (2) the compiler adds the ratings that overlap a window to the evidence as a
@@ -361,7 +369,8 @@ demand.
 ```
 
 `GET /journal/recap?date=YYYY-MM-DD` returns the stored recap, or
-`status: "none"` with empty arrays. `stale` means a card in the day was
+`status: "none"` with `done`/`next` empty, strings `""`, `source_cards` 0 and
+`generated_at`/`model`/`prompt_version`/`error` null. `stale` means a card in the day was
 written after `generated_at`. `failed` carries `error` and the previous
 successful body when one exists.
 
@@ -369,6 +378,11 @@ successful body when one exists.
 synchronously (same client, model, timeout and language as cards; no
 `thinking`) and returns the recap. `409` when the day has no final cards,
 `503` when no provider is ready, `429` more than once per day per minute.
+A provider or validation failure is a `200` with `status: "failed"`, `error`
+set and the previous successful body preserved, so the client can still show
+it. `focus_note` is always a string (`""` when absent). Over-long bullet lists
+are clamped to the limits and bullets over 140 chars are shortened at a word
+boundary; an empty `summary` or `done` fails the run.
 Output rules: `done` 1–6 bullets and `next` 0–4 bullets, each ≤ 140 chars, in
 the UI language; `next` only from evidence in the cards (open work, unfinished
 threads) — never invented tasks. `markdown` is rendered by the engine so the

@@ -413,7 +413,10 @@ mod tests {
             "off by default is the whole point"
         );
         assert_eq!(case(&|c| c.intention = None), NudgeBlock::NoIntention);
-        assert_eq!(case(&|c| c.meeting_in_progress = true), NudgeBlock::MeetingInProgress);
+        assert_eq!(
+            case(&|c| c.meeting_in_progress = true),
+            NudgeBlock::MeetingInProgress
+        );
         assert_eq!(
             case(&|c| c.last_nudged_at = Some(now - Duration::minutes(29))),
             NudgeBlock::Cooldown

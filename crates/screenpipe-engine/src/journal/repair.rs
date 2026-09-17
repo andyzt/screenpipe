@@ -673,10 +673,14 @@ mod tests {
         ];
 
         for case in cases {
-            let bounds =
-                EvidenceBounds::new(case.previous.clone(), observations(&case.intervals));
+            let bounds = EvidenceBounds::new(case.previous.clone(), observations(&case.intervals));
             let (repaired, notes) = repair_cards(case.cards.clone(), &bounds, &case.intervals);
-            assert_eq!(spans(&repaired), case.expected, "spans, case: {}", case.name);
+            assert_eq!(
+                spans(&repaired),
+                case.expected,
+                "spans, case: {}",
+                case.name
+            );
             assert_eq!(kinds(&notes), case.kinds, "notes, case: {}", case.name);
 
             let issues = validate_cards(&repaired, &bounds);
@@ -693,8 +697,20 @@ mod tests {
     #[test]
     fn a_split_keeps_the_text_and_moves_only_what_belongs_to_a_span() {
         let intervals = vec![
-            interval("a", "2026-09-16T20:31:00Z", "2026-09-16T21:05:00Z", "iTerm2", "plan"),
-            interval("b", "2026-09-16T21:23:00Z", "2026-09-16T21:39:00Z", "iTerm2", "plan"),
+            interval(
+                "a",
+                "2026-09-16T20:31:00Z",
+                "2026-09-16T21:05:00Z",
+                "iTerm2",
+                "plan",
+            ),
+            interval(
+                "b",
+                "2026-09-16T21:23:00Z",
+                "2026-09-16T21:39:00Z",
+                "iTerm2",
+                "plan",
+            ),
         ];
         let mut card = draft(
             "2026-09-16T20:31:00Z",
@@ -731,7 +747,10 @@ mod tests {
             assert_eq!(piece.app_primary, card.app_primary);
         }
         assert_eq!(repaired[0].detailed_summary, card.detailed_summary);
-        assert_eq!(repaired[1].detailed_summary, None, "the detail belongs to the first piece");
+        assert_eq!(
+            repaired[1].detailed_summary, None,
+            "the detail belongs to the first piece"
+        );
         assert_eq!(repaired[0].interval_keys, vec!["a".to_string()]);
         assert_eq!(repaired[1].interval_keys, vec!["b".to_string()]);
         assert_eq!(repaired[0].distractions.len(), 1);
@@ -747,8 +766,20 @@ mod tests {
     #[test]
     fn a_detour_straddling_a_cut_follows_the_piece_it_mostly_happened_in() {
         let intervals = vec![
-            interval("a", "2026-09-16T09:00:00Z", "2026-09-16T09:33:00Z", "Code", "auth.rs"),
-            interval("b", "2026-09-16T09:33:00Z", "2026-09-16T10:10:00Z", "Arc", "pull/42"),
+            interval(
+                "a",
+                "2026-09-16T09:00:00Z",
+                "2026-09-16T09:33:00Z",
+                "Code",
+                "auth.rs",
+            ),
+            interval(
+                "b",
+                "2026-09-16T09:33:00Z",
+                "2026-09-16T10:10:00Z",
+                "Arc",
+                "pull/42",
+            ),
         ];
         let mut card = draft("2026-09-16T09:00:00Z", "2026-09-16T10:10:00Z", "Unbroken");
         card.distractions = vec![CardDistractionDraft {
@@ -764,8 +795,14 @@ mod tests {
         assert_eq!(repaired.len(), 2);
         assert!(repaired[0].distractions.is_empty());
         assert_eq!(repaired[1].distractions.len(), 1);
-        assert_eq!(repaired[1].distractions[0].start_at, at("2026-09-16T09:33:00Z"));
-        assert_eq!(repaired[1].distractions[0].end_at, at("2026-09-16T09:36:00Z"));
+        assert_eq!(
+            repaired[1].distractions[0].start_at,
+            at("2026-09-16T09:33:00Z")
+        );
+        assert_eq!(
+            repaired[1].distractions[0].end_at,
+            at("2026-09-16T09:36:00Z")
+        );
     }
 
     /// The split-point preference order, exercised directly: in the pipeline

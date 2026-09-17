@@ -27,6 +27,7 @@ const BROWSER_DEV_SCENARIOS: readonly BrowserDevScenario[] = [
   "backend-error",
   "journal-generating",
   "journal-no-preset",
+  "journal-recap-ready",
 ];
 
 function parseScenario(value: string | undefined): BrowserDevScenario {
