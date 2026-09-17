@@ -658,7 +658,9 @@ const DEFAULT_IGNORED_WINDOWS_PER_OS: Record<string, string[]> = {
 // time (SCREENPIPE_DEEPSEEK_API_KEY) — so a preset without a key still works.
 export const DEEPSEEK_PRESET_ID = "deepseek";
 export const DEEPSEEK_API_URL = "https://api.vsellm.ru/v1";
-export const DEEPSEEK_DEFAULT_MODEL = "deepseek/deepseek-v4-flash-vision-exp";
+export const DEEPSEEK_DEFAULT_MODEL = "deepseek/deepseek-v4.1-flash";
+/** The seeded model before 2026-09-18; nothing in this build sends images. */
+export const DEEPSEEK_RETIRED_VISION_MODEL = "deepseek/deepseek-v4-flash-vision-exp";
 
 export function makeDefaultPresets(_isPro: boolean): AIPreset[] {
 	return [
@@ -676,6 +678,31 @@ export function makeDefaultPresets(_isPro: boolean): AIPreset[] {
 }
 
 const DEFAULT_DEEPSEEK_PRESET: AIPreset = makeDefaultPresets(false)[0];
+
+/**
+ * Move keyless DeepSeek presets off the retired vision model onto the current
+ * default. The vision model was the seed until 2026-09-18, but no feature in
+ * this build sends images, and its reasoning pass made every journal window
+ * slower. A preset the user gave an API key, or pointed at another model, is
+ * left alone. Returns `null` when nothing changes.
+ */
+export function retireDeepSeekVisionModel(value: unknown): AIPreset[] | null {
+	const presets: any[] = Array.isArray(value) ? value : [];
+	let changed = false;
+	const next = presets.map((p) => {
+		if (
+			p &&
+			p.provider === "deepseek" &&
+			p.model === DEEPSEEK_RETIRED_VISION_MODEL &&
+			!(p.apiKey && String(p.apiKey).trim())
+		) {
+			changed = true;
+			return { ...p, model: DEEPSEEK_DEFAULT_MODEL };
+		}
+		return p;
+	});
+	return changed ? (next as AIPreset[]) : null;
+}
 
 /**
  * Collapse duplicate DeepSeek presets into one canonical keyless preset.
@@ -1339,6 +1366,11 @@ function createSettingsStore() {
 			const collapsed = collapseDuplicateDeepSeekPresets(settings.aiPresets);
 			if (collapsed) {
 				settings.aiPresets = collapsed as any;
+				needsUpdate = true;
+			}
+			const retired = retireDeepSeekVisionModel(settings.aiPresets);
+			if (retired) {
+				settings.aiPresets = retired as any;
 				needsUpdate = true;
 			}
 		}

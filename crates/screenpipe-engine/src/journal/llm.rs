@@ -69,7 +69,7 @@ pub const REQUEST_TIMEOUT: StdDuration = StdDuration::from_secs(180);
 /// first byte of JSON, which is what made the first live window time out.
 /// Card generation never sends images, so a DeepSeek vision preset is served
 /// by its text sibling, thinking is switched off, and output is capped.
-pub const DEEPSEEK_JOURNAL_MODEL: &str = "deepseek/deepseek-v4-flash";
+pub const DEEPSEEK_JOURNAL_MODEL: &str = "deepseek/deepseek-v4.1-flash";
 pub const DEEPSEEK_MAX_TOKENS: u32 = 4096;
 
 /// The model the journal actually sends for a preset. Only DeepSeek vision
@@ -740,11 +740,11 @@ mod tests {
     fn deepseek_vision_presets_generate_cards_with_the_text_model() {
         assert_eq!(
             journal_model_for("deepseek", "deepseek/deepseek-v4-flash-vision-exp"),
-            "deepseek/deepseek-v4-flash"
+            "deepseek/deepseek-v4.1-flash"
         );
         assert_eq!(
             journal_model_for("deepseek", "deepseek-v4-flash-vision-exp"),
-            "deepseek-v4-flash"
+            "deepseek-v4.1-flash"
         );
         assert_eq!(
             journal_model_for("deepseek", "deepseek/deepseek-v4-pro"),

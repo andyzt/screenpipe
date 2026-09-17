@@ -105,7 +105,7 @@ describe("ModelPicker", () => {
       .getAllByRole("option")
       .map((option) => option.textContent ?? "");
     expect(options.slice(0, 3)).toEqual([
-      "deepseek/deepseek-v4-flash-vision-expdefault · vision",
+      "deepseek/deepseek-v4.1-flashdefault · fast, text",
       "deepseek/deepseek-v4-flashfast, text",
       "deepseek/deepseek-v4-prohighest quality",
     ]);

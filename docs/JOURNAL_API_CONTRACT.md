@@ -274,7 +274,7 @@ existing `GET /frames/{id}/context` or open the timeline at that moment.
 {
   "enabled": true,
   "worker_running": true,
-  "preset": { "id": "deepseek", "provider": "deepseek", "model": "deepseek/deepseek-v4-flash-vision-exp" },
+  "preset": { "id": "deepseek", "provider": "deepseek", "model": "deepseek/deepseek-v4.1-flash" },
   "provider_ready": true,
   "provider_message": null,
   "windows": { "pending": 0, "processing": 0, "done": 31, "failed": 1, "skipped_short": 2, "idle": 4 },

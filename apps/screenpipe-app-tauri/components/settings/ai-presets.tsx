@@ -59,6 +59,7 @@ import { tauriFetchWithDeadline } from "@/lib/http/tauri-fetch";
 import { homeDir, join } from "@tauri-apps/api/path";
 import { Button } from "../ui/button";
 import {
+  DEEPSEEK_DEFAULT_MODEL,
   DEFAULT_PROMPT,
   useSettings,
 } from "@/lib/hooks/use-settings";
@@ -615,7 +616,7 @@ const AISection = ({
         break;
       case "deepseek":
         newUrl = "https://api.vsellm.ru/v1";
-        newModel = "deepseek/deepseek-v4-flash-vision-exp";
+        newModel = DEEPSEEK_DEFAULT_MODEL;
         break;
       case "openai-chatgpt":
         newUrl = "https://api.openai.com/v1";

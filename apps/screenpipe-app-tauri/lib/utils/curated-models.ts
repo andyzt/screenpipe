@@ -22,7 +22,7 @@ export type CuratedModel = {
 
 /** Ordered best-first: the first entry is also the seeded default preset model. */
 export const CURATED_DEEPSEEK_MODELS: readonly CuratedModel[] = [
-  { id: "deepseek/deepseek-v4-flash-vision-exp", note: "default · vision" },
+  { id: "deepseek/deepseek-v4.1-flash", note: "default · fast, text" },
   { id: "deepseek/deepseek-v4-flash", note: "fast, text" },
   { id: "deepseek/deepseek-v4-pro", note: "highest quality" },
 ];

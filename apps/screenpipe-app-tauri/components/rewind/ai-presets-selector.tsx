@@ -12,7 +12,7 @@ import {
   shouldRequireAiPresetConnectionTest,
   validateAiPresetConnectionFields,
 } from "@/lib/utils/validation";
-import { useSettings } from "@/lib/hooks/use-settings";
+import { DEEPSEEK_DEFAULT_MODEL, useSettings } from "@/lib/hooks/use-settings";
 import { useModelUpsellGating } from "@/lib/hooks/use-model-upsell-gating";
 import { usePiModels } from "@/lib/hooks/use-pi-models";
 import { modelAllowanceNotice } from "@/lib/chat/model-allowance-cost";
@@ -886,7 +886,7 @@ export function AIProviderConfig({
                 onValueChange={(model) => setFormData({ ...formData, model })}
                 status={modelDiscoveryStatus}
                 errorMessage={modelDiscoveryError}
-                placeholder="deepseek/deepseek-v4-flash-vision-exp"
+                placeholder={DEEPSEEK_DEFAULT_MODEL}
                 emptyMessage={t("presetSelector.config.typeModel")}
                 allowManualEntry
               />
@@ -1251,7 +1251,7 @@ export function AIProviderConfig({
                       ...formData,
                       provider: "deepseek",
                       url: "https://api.vsellm.ru/v1",
-                      model: "deepseek/deepseek-v4-flash-vision-exp",
+                      model: DEEPSEEK_DEFAULT_MODEL,
                     });
                   }}
                 >

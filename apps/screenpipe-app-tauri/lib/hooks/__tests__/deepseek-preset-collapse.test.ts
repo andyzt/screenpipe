@@ -6,6 +6,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   collapseDuplicateDeepSeekPresets,
+  DEEPSEEK_RETIRED_VISION_MODEL,
+  retireDeepSeekVisionModel,
   DEEPSEEK_API_URL,
   DEEPSEEK_DEFAULT_MODEL,
   DEEPSEEK_PRESET_ID,
@@ -132,5 +134,28 @@ describe("collapseDuplicateDeepSeekPresets", () => {
       "keyed-b",
       DEEPSEEK_PRESET_ID,
     ]);
+  });
+});
+
+describe("retireDeepSeekVisionModel", () => {
+  it("moves the keyless gateway preset off the retired vision model", () => {
+    const [seed] = makeDefaultPresets(false);
+    const retired = retireDeepSeekVisionModel([
+      { ...seed, model: DEEPSEEK_RETIRED_VISION_MODEL },
+    ]);
+    expect(retired).not.toBeNull();
+    expect(retired![0].model).toBe(DEEPSEEK_DEFAULT_MODEL);
+  });
+
+  it("leaves keyed presets, other models and other providers alone", () => {
+    const [seed] = makeDefaultPresets(false);
+    expect(
+      retireDeepSeekVisionModel([
+        { ...seed, model: DEEPSEEK_RETIRED_VISION_MODEL, apiKey: "sk-user" },
+        { ...seed, id: "pro", model: "deepseek/deepseek-v4-pro" },
+        { ...seed, id: "oa", provider: "openai", model: DEEPSEEK_RETIRED_VISION_MODEL },
+      ]),
+    ).toBeNull();
+    expect(retireDeepSeekVisionModel(makeDefaultPresets(false))).toBeNull();
   });
 });

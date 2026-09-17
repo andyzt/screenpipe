@@ -29,19 +29,19 @@ const GATEWAY_MODELS = [
 ];
 
 describe("curated model list", () => {
-  it("leads with the vision default, then fast text, then quality", () => {
+  it("leads with the text default, then the older flash, then quality", () => {
     expect(CURATED_DEEPSEEK_MODEL_IDS).toEqual([
-      "deepseek/deepseek-v4-flash-vision-exp",
+      "deepseek/deepseek-v4.1-flash",
       "deepseek/deepseek-v4-flash",
       "deepseek/deepseek-v4-pro",
     ]);
     expect(CURATED_DEEPSEEK_MODELS.map((m) => m.note)).toEqual([
-      "default · vision",
+      "default · fast, text",
       "fast, text",
       "highest quality",
     ]);
     expect(curatedModelNote("deepseek/deepseek-v4-flash")).toBe("fast, text");
-    expect(curatedModelNote("deepseek/deepseek-v4.1-flash")).toBeUndefined();
+    expect(curatedModelNote("deepseek/deepseek-v4-flash-vision-exp")).toBeUndefined();
     expect(isCuratedModelId("deepseek/deepseek-v4-pro")).toBe(true);
     expect(isCuratedModelId("deepseek/deepseek-v4-pro-0813")).toBe(false);
   });
@@ -57,8 +57,8 @@ describe("partitionCuratedModels", () => {
       "deepseek/deepseek-r1-distill-llama-70b",
       "deepseek/deepseek-v3.2",
       "deepseek/deepseek-v4-flash-0731",
+      "deepseek/deepseek-v4-flash-vision-exp",
       "deepseek/deepseek-v4-pro-0813",
-      "deepseek/deepseek-v4.1-flash",
       "openai/gpt-5",
       "qwen/qwen3-max",
     ]);
@@ -117,9 +117,9 @@ describe("curatedDeepSeekFallbackModels", () => {
       })),
     ).toEqual([
       {
-        id: "deepseek/deepseek-v4-flash-vision-exp",
-        name: "deepseek/deepseek-v4-flash-vision-exp",
-        description: "default · vision",
+        id: "deepseek/deepseek-v4.1-flash",
+        name: "deepseek/deepseek-v4.1-flash",
+        description: "default · fast, text",
       },
       {
         id: "deepseek/deepseek-v4-flash",

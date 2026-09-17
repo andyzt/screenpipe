@@ -29,7 +29,10 @@ use crate::store::{AIProviderType, SettingsStore};
 /// (`POST /files` is 404 there) — images go inline as base64 `image_url`
 /// parts. Point a preset at https://api.deepseek.com to use the Files API.
 pub const DEEPSEEK_API_URL: &str = "https://api.vsellm.ru/v1";
-pub const DEEPSEEK_DEFAULT_MODEL: &str = "deepseek/deepseek-v4-flash-vision-exp";
+/// Text model. Nothing in this build sends images to the model (journal,
+/// recap and focus classification all work from compiled text), so the
+/// vision-exp model only cost reasoning time.
+pub const DEEPSEEK_DEFAULT_MODEL: &str = "deepseek/deepseek-v4.1-flash";
 const DEEPSEEK_API_KEY_ENV: &str = "DEEPSEEK_API_KEY";
 /// Compile-time credential (set SCREENPIPE_DEEPSEEK_API_KEY when building —
 /// the build scripts read it from apps/screenpipe-app-tauri/.env.ai.local,
