@@ -143,7 +143,7 @@ export function WeekGrid({
     <div
       data-testid="journal-week-grid"
       aria-label={t("week.gridAria")}
-      className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-lg border border-border bg-card shadow-sm"
+      className="journal-selectable flex min-w-0 flex-1 flex-col overflow-hidden rounded-lg border border-border bg-card shadow-sm"
     >
       <div className="flex border-b border-border bg-card">
         <div className="shrink-0 border-r border-border" style={{ width: WEEK_GUTTER_PX }} />

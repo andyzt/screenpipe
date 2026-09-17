@@ -280,6 +280,9 @@ describe("JournalView", () => {
       makeJournalDay({
         date: journalDayToday(),
         day_start: at(4),
+        // 04:00 the next day; the fixture default is a fixed date and would
+        // clamp the canvas below "now" once the calendar moves on.
+        day_end: at(28),
         activities: [makeActivityCard({ start_at: at(9), end_at: at(10) })],
         generation: {
           enabled: true,

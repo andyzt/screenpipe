@@ -273,3 +273,20 @@
   background: hsl(var(--border));
   border-radius: 999px;
 }
+
+/* The app disables text selection globally (globals.css) for its chrome. The
+   journal is reading material: card titles, summaries and evidence must be
+   copyable. */
+.journal-selectable,
+.journal-selectable * {
+  -webkit-user-select: text !important;
+  user-select: text !important;
+  cursor: auto;
+}
+.journal-selectable button,
+.journal-selectable [role="button"],
+.journal-selectable a {
+  -webkit-user-select: none !important;
+  user-select: none !important;
+  cursor: pointer;
+}

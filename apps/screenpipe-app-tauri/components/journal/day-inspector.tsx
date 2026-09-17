@@ -74,7 +74,7 @@ function CardDetail({
     <div
       data-testid="journal-inspector-card"
       data-card-id={card.id}
-      className="flex flex-col gap-3"
+      className="journal-selectable flex flex-col gap-3"
     >
       <CardHeader className="flex-row items-start justify-between gap-2 space-y-0 p-0">
         <div className="min-w-0 space-y-1.5">

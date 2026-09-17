@@ -154,8 +154,12 @@ export function computeCanvasRange(input: {
   } else {
     const first = Math.min(...spans.map((span) => span.startMs));
     const last = Math.max(...spans.map((span) => span.endMs));
+    // Today always shows "now", whether it falls after the last card (the
+    // usual case) or before the first one (cards from the previous evening
+    // of the same 04:00-bounded day, viewed in the morning).
+    const top = now !== null ? Math.min(first, now) : first;
     const bottom = now !== null ? Math.max(last, now) : last;
-    start = floorToHour(first) - RANGE_PAD_MINUTES * MINUTE_MS;
+    start = floorToHour(top) - RANGE_PAD_MINUTES * MINUTE_MS;
     end = ceilToHour(bottom) + RANGE_PAD_MINUTES * MINUTE_MS;
   }
 

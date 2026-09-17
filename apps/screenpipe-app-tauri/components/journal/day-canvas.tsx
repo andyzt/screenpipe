@@ -366,7 +366,7 @@ export function DayCanvas({
       ref={scrollRef}
       data-testid="journal-canvas"
       aria-label={t("canvas.aria")}
-      className="journal-scroll relative h-[calc(100vh-8rem)] min-h-[420px] w-full min-w-0 flex-1 overflow-y-auto rounded-lg border border-border bg-card shadow-sm"
+      className="journal-selectable journal-scroll relative h-[calc(100vh-8rem)] min-h-[420px] w-full min-w-0 flex-1 overflow-y-auto rounded-lg border border-border bg-card shadow-sm"
     >
       <div
         className="relative w-full"

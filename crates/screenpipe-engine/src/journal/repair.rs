@@ -120,9 +120,30 @@ pub fn repair_cards(
     let mut notes = Vec::new();
 
     for card in cards {
+        // A reversed card (end before start) is almost always the two clock
+        // values swapped; a live window failed three attempts on exactly that.
+        // Swapping is safe: every later step still clips it to the evidence.
+        let card = if card.end_at < card.start_at {
+            notes.push(RepairNote::new(
+                RepairKind::Clipped,
+                format!(
+                    "reversed span swapped: '{}' {}..{}",
+                    card.title,
+                    card.end_at.format("%H:%M"),
+                    card.start_at.format("%H:%M")
+                ),
+            ));
+            CardDraft {
+                start_at: card.end_at,
+                end_at: card.start_at,
+                ..card
+            }
+        } else {
+            card
+        };
         let span = Span::new(card.start_at, card.end_at);
-        // A reversed or empty card is not a geometry problem with an obvious
-        // fix; it is a modelling slip, and the correction loop owns it.
+        // An empty card is not a geometry problem with an obvious fix; it is a
+        // modelling slip, and the correction loop owns it.
         if span.duration() <= Duration::zero() {
             repaired.push(card);
             continue;
@@ -631,7 +652,7 @@ mod tests {
                 valid: true,
             },
             Case {
-                name: "a reversed card is left for the correction loop",
+                name: "a reversed card has its clock values swapped",
                 cards: vec![draft(
                     "2026-09-16T09:30:00Z",
                     "2026-09-16T09:00:00Z",
@@ -645,9 +666,9 @@ mod tests {
                     "Code",
                     "auth.rs",
                 )],
-                expected: vec![span("2026-09-16T09:30:00Z", "2026-09-16T09:00:00Z")],
-                kinds: vec![],
-                valid: false,
+                expected: vec![span("2026-09-16T09:00:00Z", "2026-09-16T09:30:00Z")],
+                kinds: vec![RepairKind::Clipped],
+                valid: true,
             },
         ];
 

@@ -245,3 +245,16 @@ describe("computeProjection", () => {
     expect(projection!.minutes).toBe(240);
   });
 });
+
+describe("computeCanvasRange with now before the first card", () => {
+  it("extends the range upward so the now line is visible in the morning", () => {
+    const dayStartMs = Date.UTC(2026, 8, 16, 1, 0, 0); // 04:00 local in a +03:00 zone
+    const dayEndMs = dayStartMs + 24 * 60 * 60 * 1000;
+    const hour = 60 * 60 * 1000;
+    const spans = [{ startMs: dayStartMs + 5 * hour, endMs: dayStartMs + 6 * hour }];
+    const nowMs = dayStartMs + 3 * hour + 30 * 60 * 1000;
+    const range = computeCanvasRange({ dayStartMs, dayEndMs, spans, nowMs });
+    expect(range.startMs).toBeLessThanOrEqual(nowMs);
+    expect(range.endMs).toBeGreaterThanOrEqual(spans[0].endMs);
+  });
+});
