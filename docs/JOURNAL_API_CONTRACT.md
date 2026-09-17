@@ -53,9 +53,17 @@ time zone.
     ]
   },
   "intentions": [ { "...": "Intention objects active during the day" } ],
-  "activities": [ { "...": "ActivityCard, ascending by start_at" } ]
+  "activities": [ { "...": "ActivityCard, ascending by start_at" } ],
+  "reviews": [ { "...": "ReviewRating rows touching the day, ascending by start_at" } ],
+  "review_totals": { "focused_minutes": 120.0, "neutral_minutes": 30.0, "distracted_minutes": 15.0, "unrated_minutes": 147.5 },
+  "recap": { "status": "none | ready | stale | failed", "generated_at": "2026-09-16T18:05:00Z" }
 }
 ```
+
+`review_totals` split `wall_minutes` of non-idle cards by the review rating
+covering each minute. `recap.status` is `stale` when cards changed after the
+recap was written (see *Daily recap*); the recap body itself is fetched
+separately.
 
 `focus_minutes` = minutes of cards whose category is not system/idle and not
 named "Distraction", minus `distractions[]` sub-intervals.
@@ -99,9 +107,17 @@ ties broken by `name` then `host`.
     { "start_at": "2026-09-16T08:30:00Z", "end_at": "2026-09-16T08:33:00Z",
       "title": "Checked X", "summary": "Scrolled the feed for three minutes." }
   ],
-  "evidence_count": 18
+  "evidence_count": 18,
+  "feedback": { "rating": "up | down", "note": "Wrong category — this was a meeting", "created_at": "2026-09-16T10:02:00Z" },
+  "review": "focused | neutral | distracted | mixed"
 }
 ```
+
+`feedback` is `null` until the user rates the card (see *Card feedback*).
+`review` is the user's timeline review rating over the card's span
+(see *Review ratings*): the single rating when one covers ≥ 90 % of the
+span, `mixed` when two or more ratings cover it, `null` when no rating
+touches it.
 
 ### CardApp
 
@@ -161,6 +177,70 @@ the cards themselves (deduplicated by card id, because a card straddling local
 04:00 is served by both of its days) rather than from the per-day top-12 lists.
 An unparseable `start` is a 400.
 
+## GET /journal/week/dashboard?start=YYYY-MM-DD
+
+The analytical view of a week, computed by the engine from the same cards
+and ledger intervals as `GET /journal/week`, so the two never disagree.
+`start` follows the same rules as `/journal/week`. Idle and system cards are
+excluded from every section; a card straddling 04:00 is counted once, in the
+day of its `start_at`. `compare` is the same computation for the seven days
+before `start`, with `null` when that week has no cards.
+
+```json
+{
+  "start": "2026-09-14",
+  "end": "2026-09-20",
+  "days": [
+    { "date": "2026-09-14", "active_minutes": 312.0, "focus_minutes": 240.0, "distraction_minutes": 22.0,
+      "longest_focus_block_minutes": 84.0, "switches": 37, "first_active_at": "2026-09-14T06:05:00Z",
+      "last_active_at": "2026-09-14T16:40:00Z", "review": { "focused_minutes": 120.0, "neutral_minutes": 0.0, "distracted_minutes": 15.0 } }
+  ],
+  "totals": { "active_minutes": 1840.0, "focus_minutes": 1420.0, "distraction_minutes": 130.0,
+              "longest_focus_block_minutes": 96.0, "switches": 212, "focus_share": 0.77 },
+  "compare": { "active_minutes": 1700.0, "focus_minutes": 1200.0, "distraction_minutes": 180.0,
+               "longest_focus_block_minutes": 71.0, "switches": 260, "focus_share": 0.71 },
+  "categories": [
+    { "category_id": "work", "name": "Work", "color_hex": "#B984FF", "minutes": 1420.0, "share": 0.77,
+      "compare_minutes": 1200.0, "apps": [ { "name": "Code", "host": null, "minutes": 900.0 } ] }
+  ],
+  "apps": [ { "name": "Code", "host": null, "minutes": 900.0, "share": 0.49, "compare_minutes": 800.0,
+              "category_id": "work" } ],
+  "flows": [ { "category_id": "work", "name": "Code", "host": null, "minutes": 900.0 } ],
+  "heatmap": {
+    "hours": [4, 5, "…", 27],
+    "cells": [ { "day": 0, "hour": 9, "active_minutes": 55.0, "focus_minutes": 50.0, "distraction_minutes": 5.0 } ]
+  },
+  "workflow": {
+    "rows": [ { "name": "Code", "host": null, "cells": [ { "day": 0, "hour": 9, "minutes": 40.0 } ] } ]
+  },
+  "focus_blocks": [ { "start_at": "…", "end_at": "…", "minutes": 96.0, "title": "Auth fix", "category_id": "work" } ],
+  "intentions": [ { "id": 7, "title": "Ship auth fix", "supporting_minutes": 300.0, "other_minutes": 40.0,
+                    "distraction_minutes": 12.0 } ]
+}
+```
+
+Definitions:
+
+- `switches` — the number of ledger intervals in the day whose `app_name`
+  differs from the previous interval's, unobserved gaps excluded.
+- `focus_share` — `focus_minutes / active_minutes`, `null` when active is 0.
+- `categories` — descending by minutes, every category with minutes > 0,
+  each with its top 6 apps; the donut and the sankey are drawn from this.
+- `apps` — top 12 across the week; `category_id` is the category the app spent
+  most of its time in; the treemap is drawn from this.
+- `flows` — category → app minutes for the top 12 apps and every category,
+  the sankey links; the rest is folded into `name: "Other", host: null`.
+- `heatmap.hours` — local journal hours 4…27 (27 = 03:00 next day); `day` is
+  the index into `days`. Cells with 0 active minutes are omitted.
+- `workflow.rows` — the top 8 apps, minutes per (day, hour) cell; omitted
+  when 0. It shows *when* each app is used across the week.
+- `focus_blocks` — the five longest focus blocks of the week, merging
+  focus intervals separated by less than 5 minutes exactly as
+  `longest_focus_block_minutes` does; `title` is the longest card inside.
+- `intentions` — every intention active during the week with minutes of
+  cards by `intention_relation` (`supports_intention` → supporting;
+  `other_work`/`break` → other; `possible_distraction` → distraction).
+
 ## GET /journal/activities/{id}?include_evidence=true
 
 Returns one ActivityCard plus:
@@ -209,6 +289,90 @@ Body `{ "date": "YYYY-MM-DD" }` resets that day's windows to `pending`
 resets only the windows that one card spans (`404` when the card is gone;
 `date` is ignored). Rate-limited to one call per target — a day or a card —
 per minute (`429`). Returns `{ "reset_windows": 12 }`.
+
+## Card feedback
+
+`PUT /journal/activities/{id}/feedback` with body
+`{ "rating": "up" | "down" | null, "note": "optional, ≤ 500 chars" }`.
+`null` clears the rating. Returns the updated `ActivityCard`. `404` when the
+card is gone. One row per card; a later PUT replaces it.
+
+The row also snapshots `activity_key`, `day`, `start_at`, `end_at`, `title`,
+`category_id`, `producer`, `prompt_version` so the rating survives a rewrite
+of the card and can be exported as an eval label. When a window is rewritten,
+feedback whose `activity_key` is no longer present stays in the table but is
+not attached to any card.
+
+`GET /journal/feedback?date=YYYY-MM-DD` → `{ "items": [ { "activity_id": 42,
+"rating": "down", "note": "…", "title": "…", "start_at": "…", "end_at": "…",
+"category_id": "work", "created_at": "…" } ] }`. Without `date`, the last 200
+rows. `journal-eval export` writes rows with rating `down` into the live
+fixture as `disputed: true` cards, and `up` rows as confirmed labels.
+
+## Review ratings
+
+The user marks a span of the day as `focused`, `neutral` or `distracted`.
+Ratings never overlap: a new one splits or replaces what it covers, exactly
+as a calendar block would.
+
+```json
+{ "id": 3, "start_at": "2026-09-16T09:00:00Z", "end_at": "2026-09-16T10:30:00Z",
+  "rating": "focused | neutral | distracted", "source": "app | mcp", "created_at": "…", "updated_at": "…" }
+```
+
+`GET /journal/reviews?date=YYYY-MM-DD` → `{ "items": [ ReviewRating… ] }`
+ascending by `start_at`, clipped to the day.
+
+`PUT /journal/reviews` body `{ "start_at", "end_at", "rating" | null }`.
+`rating: null` clears the span. `start_at < end_at`, span ≤ 24 h, else `400`.
+Returns the day's `{ "items": [...] }` after the write.
+
+Effects: (1) `ActivityCard.review` and `review_totals` in the day response;
+(2) the compiler adds the ratings that overlap a window to the evidence as a
+`User review` block ("09:00–10:30 marked focused") and the card prompt
+instructs the model to treat them as ground truth for the relation and the
+category (a span marked `distracted` is a Distraction card or a
+`distractions[]` sub-interval; `focused` is never `possible_distraction`);
+(3) `journal-eval export` writes ratings as expected labels for the covered
+cards. Rating a span does not itself trigger a rewrite; the user regenerates
+the card (per-card `POST /journal/regenerate`) when they want the text to
+follow.
+
+## Daily recap
+
+One LLM call over the day's final cards; stored per day, regenerated on
+demand.
+
+```json
+{
+  "date": "2026-09-16",
+  "status": "none | ready | stale | failed",
+  "generated_at": "2026-09-16T18:05:00Z",
+  "summary": "A focused morning on the auth fix, an afternoon split between review and email.",
+  "done": [ "Shipped the refresh-token fix (PR #412)", "Reviewed two PRs for the billing team" ],
+  "next": [ "Re-run the flaky session test on CI", "Reply to the design thread" ],
+  "focus_note": "One 20-minute detour to news around 15:00.",
+  "source_cards": 11,
+  "model": "deepseek/deepseek-v4-flash",
+  "prompt_version": "journal-recap-v1",
+  "error": null,
+  "markdown": "## 2026-09-16\n\n**Done**\n- …\n\n**Next**\n- …"
+}
+```
+
+`GET /journal/recap?date=YYYY-MM-DD` returns the stored recap, or
+`status: "none"` with empty arrays. `stale` means a card in the day was
+written after `generated_at`. `failed` carries `error` and the previous
+successful body when one exists.
+
+`POST /journal/recap/generate` body `{ "date": "YYYY-MM-DD" }` runs the call
+synchronously (same client, model, timeout and language as cards; no
+`thinking`) and returns the recap. `409` when the day has no final cards,
+`503` when no provider is ready, `429` more than once per day per minute.
+Output rules: `done` 1–6 bullets and `next` 0–4 bullets, each ≤ 140 chars, in
+the UI language; `next` only from evidence in the cards (open work, unfinished
+threads) — never invented tasks. `markdown` is rendered by the engine so the
+app and the MCP tool copy the identical text.
 
 ## GET /journal/categories · PUT /journal/categories
 
@@ -326,3 +490,6 @@ against the local API and refuses anything off-box. The third button,
 | `journal-activity` | `{ id: number, include_evidence?: boolean }` | `GET /journal/activities/{id}` |
 | `focus-status` | `{}` | `GET /focus/status` |
 | `set-intention` | `{ title?: string, project?: string, notes?: string, end?: boolean }` | `POST /focus/intentions` (or `…/end` when `end: true` and an intention is active) |
+| `journal-recap` | `{ date?: "YYYY-MM-DD", regenerate?: boolean }` | `GET /journal/recap`; `POST /journal/recap/generate` when `regenerate` or `status` is `none`/`stale` |
+| `journal-week` | `{ start?: "YYYY-MM-DD" }` | `GET /journal/week/dashboard`, formatted as a text digest (totals with week-over-week deltas, top categories/apps, longest focus blocks, per-day table) |
+| `journal-review` | `{ start: ISO-8601, end: ISO-8601, rating: "focused" \| "neutral" \| "distracted" \| null }` | `PUT /journal/reviews` with `source: "mcp"` |
