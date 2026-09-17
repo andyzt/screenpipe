@@ -16,7 +16,7 @@
  *    minutes reach the screen, so nothing can quietly render as exact.
  */
 
-import { DEFAULT_LOCALE, translate, type Locale } from "@/lib/i18n/dictionary";
+import { FALLBACK_LOCALE, translate, type Locale } from "@/lib/i18n/dictionary";
 import {
   formatClock as formatClockI18n,
   formatDayLabel,
@@ -73,7 +73,7 @@ export function canGoToNextJournalDay(
  */
 export function formatJournalDate(
   date: string,
-  locale: Locale = DEFAULT_LOCALE,
+  locale: Locale = FALLBACK_LOCALE,
 ): string {
   return formatDayLabel(date, locale);
 }
@@ -82,7 +82,7 @@ export function formatJournalDate(
 export function formatJournalDayLabel(
   date: string,
   now: Date = new Date(),
-  locale: Locale = DEFAULT_LOCALE,
+  locale: Locale = FALLBACK_LOCALE,
 ): string {
   if (isJournalDayToday(date, now)) return translate(locale, "format.today");
   return formatJournalDate(date, locale);
@@ -91,7 +91,7 @@ export function formatJournalDayLabel(
 /** Minutes as a compact duration: `4h 12m`, `42m`, `0m`. Never a bare float. */
 export function formatMinutes(
   minutes: number,
-  locale: Locale = DEFAULT_LOCALE,
+  locale: Locale = FALLBACK_LOCALE,
 ): string {
   return formatDuration(minutes, locale);
 }
@@ -99,14 +99,14 @@ export function formatMinutes(
 /** Every duration the journal shows is a measurement estimate; say so. */
 export function formatEstimate(
   minutes: number,
-  locale: Locale = DEFAULT_LOCALE,
+  locale: Locale = FALLBACK_LOCALE,
 ): string {
   return formatEstimateDuration(minutes, locale);
 }
 
 export function formatClock(
   iso: string,
-  locale: Locale = DEFAULT_LOCALE,
+  locale: Locale = FALLBACK_LOCALE,
 ): string {
   return formatClockI18n(iso, locale);
 }
@@ -114,7 +114,7 @@ export function formatClock(
 export function formatClockRange(
   startIso: string,
   endIso: string,
-  locale: Locale = DEFAULT_LOCALE,
+  locale: Locale = FALLBACK_LOCALE,
 ): string {
   return `${formatClock(startIso, locale)} – ${formatClock(endIso, locale)}`;
 }
@@ -135,7 +135,7 @@ export const RELATION_LABELS: Record<IntentionRelation, string> = {
 
 export function relationLabel(
   relation: IntentionRelation | null,
-  locale: Locale = DEFAULT_LOCALE,
+  locale: Locale = FALLBACK_LOCALE,
 ): string | null {
   if (!relation) return null;
   const known = relation in RELATION_LABELS ? relation : "unknown";
@@ -152,7 +152,7 @@ export function relationLabel(
  */
 export function categoryConfidenceLabel(
   confidence: number,
-  locale: Locale = DEFAULT_LOCALE,
+  locale: Locale = FALLBACK_LOCALE,
 ): string | null {
   if (!Number.isFinite(confidence)) return null;
   if (confidence >= 0.9) return null;
@@ -168,7 +168,7 @@ export type JournalEmptyCopy = { title: string; body: string };
  */
 export function dataStatusCopy(
   status: JournalDataStatus,
-  locale: Locale = DEFAULT_LOCALE,
+  locale: Locale = FALLBACK_LOCALE,
 ): JournalEmptyCopy {
   const known =
     status === "empty_but_recording" ||

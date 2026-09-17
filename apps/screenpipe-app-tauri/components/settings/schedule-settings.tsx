@@ -18,7 +18,7 @@ import {
 import { Card, CardContent } from "@/components/ui/card";
 import { HelpTooltip } from "@/components/ui/help-tooltip";
 import {
-  DEFAULT_LOCALE,
+  FALLBACK_LOCALE,
   useLocale,
   useT,
   type Locale,
@@ -72,7 +72,7 @@ function timeToPercent(time: string): number {
  * The bar label. Russian is a 24-hour clock (`formatClock` in lib/i18n does the
  * same for the journal); English keeps the 12-hour form it shipped with.
  */
-function formatTime(time: string, locale: Locale = DEFAULT_LOCALE): string {
+function formatTime(time: string, locale: Locale = FALLBACK_LOCALE): string {
   const [h, m] = time.split(":").map(Number);
   const minutes = m.toString().padStart(2, "0");
   if (locale === "ru") return `${h.toString().padStart(2, "0")}:${minutes}`;

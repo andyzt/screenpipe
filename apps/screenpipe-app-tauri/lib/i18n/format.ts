@@ -17,7 +17,7 @@
  */
 
 import {
-  DEFAULT_LOCALE,
+  FALLBACK_LOCALE,
   translate,
   type Locale,
 } from "./dictionary";
@@ -42,7 +42,7 @@ export function intlLocale(locale: Locale): string {
  * Minutes as a compact duration: `4h 12m` / `4 ч 12 мин`, never a bare float
  * and never a fraction.
  */
-export function formatDuration(minutes: number, locale: Locale = DEFAULT_LOCALE): string {
+export function formatDuration(minutes: number, locale: Locale = FALLBACK_LOCALE): string {
   const h = translate(locale, "format.unit.hours");
   const m = translate(locale, "format.unit.minutes");
   const join = locale === "ru" ? NBSP : "";
@@ -61,7 +61,7 @@ export function formatDuration(minutes: number, locale: Locale = DEFAULT_LOCALE)
 /** Every duration the journal shows is a measurement estimate; say so. */
 export function formatEstimateDuration(
   minutes: number,
-  locale: Locale = DEFAULT_LOCALE,
+  locale: Locale = FALLBACK_LOCALE,
 ): string {
   return translate(locale, "format.estimate", {
     duration: formatDuration(minutes, locale),
@@ -82,7 +82,7 @@ function noon(date: string): Date {
  */
 export function formatDayLabel(
   date: string,
-  locale: Locale = DEFAULT_LOCALE,
+  locale: Locale = FALLBACK_LOCALE,
 ): string {
   const local = noon(date);
   if (Number.isNaN(local.getTime())) return date;
@@ -107,7 +107,7 @@ export function formatDayLabel(
 export function formatWeekRange(
   start: string,
   end: string,
-  locale: Locale = DEFAULT_LOCALE,
+  locale: Locale = FALLBACK_LOCALE,
 ): string {
   const from = noon(start);
   const to = noon(end);
@@ -136,7 +136,7 @@ export function formatWeekRange(
 /** Wall clock. Russian is always 24-hour; English keeps the machine's format. */
 export function formatClock(
   value: Date | string,
-  locale: Locale = DEFAULT_LOCALE,
+  locale: Locale = FALLBACK_LOCALE,
 ): string {
   const date = typeof value === "string" ? new Date(value) : value;
   if (Number.isNaN(date.getTime())) return "--:--";
@@ -163,7 +163,7 @@ function weekdayIndex(date: string): number {
 /** `пн` / `Mon` — the week grid's column header and per-day totals row. */
 export function weekdayShortName(
   date: string,
-  locale: Locale = DEFAULT_LOCALE,
+  locale: Locale = FALLBACK_LOCALE,
 ): string {
   return translate(locale, `week.day.${weekdayIndex(date)}`);
 }
@@ -179,7 +179,7 @@ export function weekdayShortName(
  */
 export function categoryLabel(
   name: string | null | undefined,
-  locale: Locale = DEFAULT_LOCALE,
+  locale: Locale = FALLBACK_LOCALE,
 ): string {
   if (!name) return "";
   const key = `category.${name}`;

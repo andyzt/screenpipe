@@ -80,8 +80,8 @@ describe("resolveLocale", () => {
     expect(resolveLocale("system", "ru")).toBe("ru");
     expect(resolveLocale("system", "RU-kz")).toBe("ru");
     expect(resolveLocale("system", "en-GB")).toBe("en");
-    expect(resolveLocale("system", "de-DE")).toBe("en");
-    expect(resolveLocale(undefined, null)).toBe("en");
+    expect(resolveLocale("system", "de-DE")).toBe("ru");
+    expect(resolveLocale(undefined, null)).toBe("ru");
   });
 });
 

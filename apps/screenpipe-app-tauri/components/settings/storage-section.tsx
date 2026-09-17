@@ -14,7 +14,7 @@ import {
   useLocale,
   useT,
   type Locale,
-  DEFAULT_LOCALE,
+  FALLBACK_LOCALE,
 } from "@/lib/i18n";
 
 /**
@@ -78,7 +78,7 @@ import {
  * separator is localised, because «1.5 GB» is a typo in Russian. The English
  * branch is the original expression, byte for byte.
  */
-function formatBytes(bytes: number, locale: Locale = DEFAULT_LOCALE): string {
+function formatBytes(bytes: number, locale: Locale = FALLBACK_LOCALE): string {
   if (bytes === 0) return "0 B";
   const k = 1024;
   const sizes = ["B", "KB", "MB", "GB"];

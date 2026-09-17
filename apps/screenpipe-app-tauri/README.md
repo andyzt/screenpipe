@@ -55,8 +55,9 @@ selected, so the card-detail state can be screenshotted headlessly without
 driving a click. The id must be one of the mock's cards (4101–4109).
 
 The UI ships English and Russian (`lib/i18n`). The locale follows
-Settings → Appearance → *Language / Язык*, which defaults to `system`
-(`navigator.language`). In browser-dev builds only, `?lang=ru` (or `?lang=en`)
+Settings → Appearance → *Language / Язык*, which defaults to Russian; `system`
+follows `navigator.language` (Russian or English, anything else falls back to
+Russian). The engine writes journal cards and recaps in the same language. In browser-dev builds only, `?lang=ru` (or `?lang=en`)
 on any page forces it, so the Russian UI can be screenshotted headlessly
 without writing to the mock settings store first — for example
 <http://127.0.0.1:1420/home?section=journal&lang=ru> or

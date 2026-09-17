@@ -19,7 +19,7 @@
  * stay renderers.
  */
 
-import { DEFAULT_LOCALE, type Locale } from "@/lib/i18n/dictionary";
+import { FALLBACK_LOCALE, type Locale } from "@/lib/i18n/dictionary";
 import { formatWeekRange, weekdayShortName } from "@/lib/i18n/format";
 import { JOURNAL_DAY_START_HOUR } from "./format";
 import type { CardApp } from "./types";
@@ -104,7 +104,7 @@ export function isCurrentWeek(start: string, now: Date = new Date()): boolean {
 /** `Sep 14–20`, or `Sep 28 – Oct 4` when the week crosses a month. */
 export function weekRangeLabel(
   start: string,
-  locale: Locale = DEFAULT_LOCALE,
+  locale: Locale = FALLBACK_LOCALE,
 ): string {
   const days = weekDays(start);
   return formatWeekRange(days[0], days[6], locale);
@@ -113,7 +113,7 @@ export function weekRangeLabel(
 /** `Mon 14` — the column header. Short by design: seven of them share a row. */
 export function weekDayHeader(
   date: string,
-  locale: Locale = DEFAULT_LOCALE,
+  locale: Locale = FALLBACK_LOCALE,
 ): { weekday: string; day: number } {
   const local = noon(date);
   return { weekday: weekdayShortName(date, locale), day: local.getDate() };

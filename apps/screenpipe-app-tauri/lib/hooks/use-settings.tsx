@@ -910,7 +910,7 @@ let DEFAULT_SETTINGS: Settings = {
 			headless: false,
 			headlessRecordOnly: false,
 			fontSize: "16px",
-			uiLanguage: "system",
+			uiLanguage: "ru",
 		};
 
 export function createDefaultSettingsObject(): Settings {

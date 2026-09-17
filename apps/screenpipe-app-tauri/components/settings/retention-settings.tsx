@@ -41,7 +41,7 @@ import { localFetch } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { commands } from "@/lib/utils/tauri";
 import {
-  DEFAULT_LOCALE,
+  FALLBACK_LOCALE,
   useLocale,
   useT,
   type Locale,
@@ -94,7 +94,7 @@ function formatRelativeTime(isoString: string, t: TranslateFn): string {
  * Russian gets «1,5 GB» rather than the English decimal point. The English
  * branch is the original expression, byte for byte.
  */
-function formatBytes(bytes: number, locale: Locale = DEFAULT_LOCALE): string {
+function formatBytes(bytes: number, locale: Locale = FALLBACK_LOCALE): string {
   const decimal = (value: string) =>
     locale === "ru" ? value.replace(".", ",") : value;
   if (bytes < 1024) return `${bytes} B`;

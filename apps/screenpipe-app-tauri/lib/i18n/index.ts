@@ -32,6 +32,7 @@ import React, {
 import { useSettings } from "@/lib/hooks/use-settings";
 import {
   DEFAULT_LOCALE,
+  FALLBACK_LOCALE,
   isLocale,
   resolveLocale,
   translatorFor,
@@ -42,6 +43,7 @@ import {
 
 export {
   DEFAULT_LOCALE,
+  FALLBACK_LOCALE,
   isLocale,
   resolveLocale,
   translate,
@@ -69,7 +71,11 @@ export {
 /** The options the Appearance picker and the onboarding corner select offer. */
 export const LOCALE_SETTINGS: readonly LocaleSetting[] = ["system", "en", "ru"];
 
-const LocaleContext = createContext<Locale>(DEFAULT_LOCALE);
+// A tree rendered without `LocaleProvider` (component tests, storybook-style
+// harnesses) reads English: the English dictionary is the source of truth the
+// Russian one is translated from, so assertions stay legible. The product
+// default is `settings.uiLanguage`, applied by the provider, not this value.
+const LocaleContext = createContext<Locale>(FALLBACK_LOCALE);
 
 /**
  * Development-only: `?lang=ru` on any page forces the locale, so the

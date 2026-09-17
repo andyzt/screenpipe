@@ -23,8 +23,10 @@ use std::path::Path;
 /// classifying. Contract key: `focusGraceMinutes`.
 pub const DEFAULT_FOCUS_GRACE_MINUTES: i64 = 10;
 
-/// The language every prompt writes in when nothing says otherwise.
-pub const DEFAULT_LANGUAGE: &str = "en";
+/// The language every prompt writes in when nothing says otherwise. Russian
+/// is this build's first language, so an absent setting and a machine locale
+/// the prompts cannot name both end up here.
+pub const DEFAULT_LANGUAGE: &str = "ru";
 
 /// Languages the prompts have an instruction for. Anything else falls back to
 /// [`DEFAULT_LANGUAGE`]: a model told to write in a language the prompt cannot
@@ -220,10 +222,10 @@ mod tests {
         assert_eq!(normalize_language("  RU  "), "ru");
         assert_eq!(normalize_language("ru-RU"), "ru");
         assert_eq!(normalize_language("en"), "en");
-        // A language no prompt has an instruction for is English, not a guess.
+        // A language no prompt has an instruction for is the default, not a guess.
         assert_eq!(normalize_language("de"), DEFAULT_LANGUAGE);
         assert_eq!(normalize_language("nonsense"), DEFAULT_LANGUAGE);
-        // An absent key is English.
+        // An absent key is the default.
         assert_eq!(JournalSettings::default().language, DEFAULT_LANGUAGE);
         assert_eq!(
             JournalSettings::from_store(&json!({"settings": {}})).language,

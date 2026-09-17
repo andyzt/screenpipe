@@ -22,7 +22,17 @@ export type Locale = "en" | "ru";
 /** What `settings.uiLanguage` stores. `system` follows `navigator.language`. */
 export type LocaleSetting = "system" | Locale;
 
-export const DEFAULT_LOCALE: Locale = "en";
+/**
+ * The product default: what a fresh install and a machine locale the UI has no
+ * dictionary for both resolve to. Russian is this build's first language.
+ */
+export const DEFAULT_LOCALE: Locale = "ru";
+/**
+ * The engineering fallback: the English dictionary is the source every other
+ * one is translated from, so a missing key, a formatter called without a
+ * locale, and a tree rendered outside `LocaleProvider` all read English.
+ */
+export const FALLBACK_LOCALE: Locale = "en";
 
 export type Dictionary = Record<string, string>;
 
@@ -39,8 +49,10 @@ export function isLocale(value: unknown): value is Locale {
 
 /**
  * `system` means the OS, which in a webview is `navigator.language`. Anything
- * that starts with `ru` (ru, ru-RU, ru-KZ…) is Russian; everything else falls
- * back to English rather than guessing at a third locale that does not exist.
+ * that starts with `ru` (ru, ru-RU, ru-KZ…) is Russian, anything that starts
+ * with `en` is English; everything else falls back to the default locale
+ * (Russian, this build's first language) rather than guessing at a third
+ * locale that does not exist.
  */
 export function resolveLocale(
   setting: LocaleSetting | undefined | null,
@@ -48,7 +60,9 @@ export function resolveLocale(
 ): Locale {
   if (isLocale(setting)) return setting;
   const tag = (navigatorLanguage ?? "").toLowerCase();
-  return tag.startsWith("ru") ? "ru" : DEFAULT_LOCALE;
+  if (tag.startsWith("ru")) return "ru";
+  if (tag.startsWith("en")) return "en";
+  return DEFAULT_LOCALE;
 }
 
 export type PluralCategory = "one" | "few" | "many" | "other";
@@ -133,7 +147,7 @@ export function translate(
   params?: TranslateParams,
 ): string {
   const template =
-    DICTIONARIES[locale]?.[key] ?? DICTIONARIES[DEFAULT_LOCALE][key] ?? key;
+    DICTIONARIES[locale]?.[key] ?? DICTIONARIES[FALLBACK_LOCALE][key] ?? key;
   return interpolate(locale, template, params);
 }
 
