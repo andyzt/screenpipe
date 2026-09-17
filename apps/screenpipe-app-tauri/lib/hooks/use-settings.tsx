@@ -680,6 +680,35 @@ export function makeDefaultPresets(_isPro: boolean): AIPreset[] {
 const DEFAULT_DEEPSEEK_PRESET: AIPreset = makeDefaultPresets(false)[0];
 
 /**
+ * Drop the direct-endpoint DeepSeek preset the first accountless build seeded
+ * (`provider: "custom"`, `https://api.deepseek.com`, a per-user key). That
+ * account is not funded by the team, so every call from it fails with
+ * `402 Insufficient Balance`, and while it stayed the default preset the
+ * journal could not write a single card. The team gateway preset replaces it;
+ * when the dropped preset was the default, the gateway preset becomes the
+ * default. Returns `null` when there is nothing to drop.
+ */
+export function dropDirectDeepSeekPreset(value: unknown): AIPreset[] | null {
+	const presets: any[] = Array.isArray(value) ? value : [];
+	const isDirect = (p: any) =>
+		p &&
+		p.provider === "custom" &&
+		typeof p.url === "string" &&
+		p.url.startsWith("https://api.deepseek.com") &&
+		typeof p.model === "string" &&
+		p.model.toLowerCase().includes("deepseek");
+	if (!presets.some(isDirect)) return null;
+	const wasDefault = presets.some((p) => isDirect(p) && p.defaultPreset === true);
+	const kept = presets.filter((p) => !isDirect(p));
+	if (wasDefault && !kept.some((p) => p?.defaultPreset === true)) {
+		const gateway = kept.find((p) => p?.provider === "deepseek");
+		if (gateway) gateway.defaultPreset = true;
+		else kept.push({ ...DEFAULT_DEEPSEEK_PRESET, defaultPreset: true });
+	}
+	return kept as AIPreset[];
+}
+
+/**
  * Move keyless DeepSeek presets off the retired vision model onto the current
  * default. The vision model was the seed until 2026-09-18, but no feature in
  * this build sends images, and its reasoning pass made every journal window
@@ -1371,6 +1400,11 @@ function createSettingsStore() {
 			const retired = retireDeepSeekVisionModel(settings.aiPresets);
 			if (retired) {
 				settings.aiPresets = retired as any;
+				needsUpdate = true;
+			}
+			const dropped = dropDirectDeepSeekPreset(settings.aiPresets);
+			if (dropped) {
+				settings.aiPresets = dropped as any;
 				needsUpdate = true;
 			}
 		}

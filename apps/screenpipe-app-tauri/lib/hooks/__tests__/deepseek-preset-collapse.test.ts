@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import {
   collapseDuplicateDeepSeekPresets,
   DEEPSEEK_RETIRED_VISION_MODEL,
+  dropDirectDeepSeekPreset,
   retireDeepSeekVisionModel,
   DEEPSEEK_API_URL,
   DEEPSEEK_DEFAULT_MODEL,
@@ -157,5 +158,39 @@ describe("retireDeepSeekVisionModel", () => {
       ]),
     ).toBeNull();
     expect(retireDeepSeekVisionModel(makeDefaultPresets(false))).toBeNull();
+  });
+});
+
+describe("dropDirectDeepSeekPreset", () => {
+  const direct = {
+    id: "deepseek-v4-flash-vision-exp",
+    provider: "custom",
+    url: "https://api.deepseek.com",
+    model: "deepseek-v4-flash-vision-exp",
+    apiKey: "sk-dead-account",
+    defaultPreset: true,
+    maxContextChars: 512000,
+    prompt: "",
+  };
+
+  it("removes the direct-endpoint preset and hands default to the gateway preset", () => {
+    const [gateway] = makeDefaultPresets(false);
+    const kept = dropDirectDeepSeekPreset([{ ...gateway, defaultPreset: false }, direct]);
+    expect(kept).not.toBeNull();
+    expect(kept!.map((p) => p.id)).toEqual(["deepseek"]);
+    expect(kept![0].defaultPreset).toBe(true);
+  });
+
+  it("seeds the gateway preset when nothing else could become the default", () => {
+    const kept = dropDirectDeepSeekPreset([direct]);
+    expect(kept!.map((p) => [p.id, p.defaultPreset])).toEqual([["deepseek", true]]);
+  });
+
+  it("leaves other custom endpoints and non-default presets' flags alone", () => {
+    const other = { ...direct, id: "mine", url: "https://my.proxy/v1", defaultPreset: true };
+    const kept = dropDirectDeepSeekPreset([other, { ...direct, defaultPreset: false }]);
+    expect(kept!.map((p) => [p.id, p.defaultPreset])).toEqual([["mine", true]]);
+    expect(dropDirectDeepSeekPreset(makeDefaultPresets(false))).toBeNull();
+    expect(dropDirectDeepSeekPreset([])).toBeNull();
   });
 });
