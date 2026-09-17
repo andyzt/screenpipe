@@ -25,14 +25,15 @@ use oasgen::{oasgen, OaSchema};
 use screenpipe_db::{JournalCategory, JournalCategoryDraft};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::error;
 
 use crate::history_access::HistoryAccessPolicy;
 use crate::journal::day::{
-    attach_card_apps, compute_by_app, compute_day_totals, compute_review_totals,
-    fallback_category_id, to_card, ActivityCard, CategoryMinutes, DayTotals, ReviewTotals,
+    add_card_apps, attach_card_apps, compute_day_totals, compute_review_totals,
+    fallback_category_id, parse, rank_apps, to_card, ActivityCard, CategoryMinutes, DayTotals,
+    ReviewTotals, DAY_APPS_LIMIT,
 };
 use crate::journal::settings::JournalSettings;
 use crate::journal::time::{day_bounds, day_of};
@@ -190,7 +191,11 @@ async fn build_journal_day(
         .collect();
 
     let data_status = day_data_status(state, &activities, read_start, day_end, now).await;
-    let totals = compute_day_totals(&activities);
+    // The cards are loaded by span overlap, so the one straddling local 04:00
+    // is in this day and in its neighbour. The totals count only the part
+    // inside `[read_start, day_end)`; `activities` still carries whole cards,
+    // which is what the contract serves.
+    let totals = compute_day_totals(&activities, (read_start, day_end));
     // One query for the day's ratings; the cards themselves already carry the
     // per-card label the same rows produced.
     let ratings = state
@@ -198,7 +203,7 @@ async fn build_journal_day(
         .list_review_ratings(read_start, day_end)
         .await
         .map_err(internal)?;
-    let review_totals = compute_review_totals(&activities, &ratings);
+    let review_totals = compute_review_totals(&activities, &ratings, (read_start, day_end));
     let reviews = review_items(&ratings, read_start, day_end);
 
     Ok(JournalDayResponse {
@@ -212,8 +217,10 @@ async fn build_journal_day(
         activities,
         reviews,
         review_totals,
+        // The clamped start, so the staleness fingerprint is taken over the
+        // cards this response actually shows.
         recap: crate::routes::journal_recap::recap_status_for_day(
-            &state.db, date, day_start, day_end,
+            &state.db, date, read_start, day_end,
         )
         .await?,
     })
@@ -294,11 +301,13 @@ fn monday_of(date: NaiveDate) -> NaiveDate {
 }
 
 /// The week's totals, folded from the seven day totals so a number in the
-/// week header is always the sum of the numbers under it. `by_app` is
-/// recomputed from the cards themselves (deduplicated by id, because a card
-/// straddling local 04:00 is served by both of its days) rather than summed
-/// from the per-day top-12 lists, so an app that is never any single day's
-/// twelfth can still make the week's list.
+/// week header is always the sum of the numbers under it. Each day's totals
+/// count only the minutes inside that day, so a card straddling local 04:00 —
+/// served by both of its days — is summed once here.
+///
+/// `by_app` is recomputed from the cards themselves, each clipped to the day
+/// holding it, rather than summed from the per-day top-12 lists, so an app
+/// that is never any single day's twelfth can still make the week's list.
 fn week_totals(days: &[JournalDayResponse]) -> DayTotals {
     let mut totals = DayTotals::default();
     let mut by_category: Vec<CategoryMinutes> = Vec::new();
@@ -331,14 +340,14 @@ fn week_totals(days: &[JournalDayResponse]) -> DayTotals {
     });
     totals.by_category = by_category;
 
-    let mut seen: HashSet<i64> = HashSet::new();
-    let cards: Vec<ActivityCard> = days
-        .iter()
-        .flat_map(|day| day.activities.iter())
-        .filter(|card| seen.insert(card.id))
-        .cloned()
-        .collect();
-    totals.by_app = compute_by_app(&cards);
+    let mut app_minutes: HashMap<(String, Option<String>), f64> = HashMap::new();
+    for day in days {
+        let (Some(day_start), Some(day_end)) = (parse(&day.day_start), parse(&day.day_end)) else {
+            continue;
+        };
+        add_card_apps(&mut app_minutes, &day.activities, (day_start, day_end));
+    }
+    totals.by_app = rank_apps(app_minutes, DAY_APPS_LIMIT);
     totals
 }
 
@@ -1017,43 +1026,44 @@ mod tests {
         }
     }
 
-    #[test]
-    fn week_totals_fold_the_days_without_double_counting_a_straddling_card() {
-        let day = |date: &str, card: ActivityCard| JournalDayResponse {
-            date: date.to_string(),
-            day_start: String::new(),
-            day_end: String::new(),
-            data_status: "ok".to_string(),
-            generation: JournalGenerationStatus {
-                enabled: true,
-                provider_ready: true,
-                provider_message: None,
-                processing: false,
-                pending_windows: 0,
-                last_window_end_at: None,
-                last_error: None,
-            },
-            totals: compute_day_totals(std::slice::from_ref(&card)),
-            intentions: Vec::new(),
-            activities: vec![card],
-            reviews: Vec::new(),
-            review_totals: ReviewTotals::default(),
-            recap: crate::routes::journal_recap::JournalRecapStatus::none(),
-        };
-        let mut card = ActivityCard {
-            id: 7,
-            activity_key: "straddler".to_string(),
-            start_at: "2026-09-16T10:00:00Z".to_string(),
-            end_at: "2026-09-16T11:00:00Z".to_string(),
-            active_minutes: 50.0,
+    /// The seven days of the fixture week, with their local 04:00 bounds
+    /// written in UTC so the arithmetic below is readable.
+    fn week_days() -> Vec<(NaiveDate, DateTime<Utc>, DateTime<Utc>)> {
+        let monday: NaiveDate = "2026-09-14".parse().unwrap();
+        (0..WEEK_DAYS)
+            .map(|offset| {
+                let date = monday + Duration::days(offset);
+                (
+                    date,
+                    at(&format!("{date}T04:00:00Z")),
+                    at(&format!("{}T04:00:00Z", date + Duration::days(1))),
+                )
+            })
+            .collect()
+    }
+
+    fn test_card(
+        id: i64,
+        start: &str,
+        end: &str,
+        category_id: &str,
+        active_minutes: f64,
+        app_minutes: f64,
+    ) -> ActivityCard {
+        ActivityCard {
+            id,
+            activity_key: format!("card-{id}"),
+            start_at: at(start).to_rfc3339(),
+            end_at: at(end).to_rfc3339(),
+            active_minutes,
             state: "final".to_string(),
             producer: "llm-v1".to_string(),
-            title: "Work".to_string(),
+            title: format!("Card {id}"),
             summary: String::new(),
             detailed_summary: None,
             category: crate::journal::day::CardCategory {
-                id: "work".to_string(),
-                name: "Work".to_string(),
+                id: category_id.to_string(),
+                name: category_id.to_string(),
                 color_hex: "#B984FF".to_string(),
                 is_system: false,
                 is_idle: false,
@@ -1068,28 +1078,189 @@ mod tests {
             apps: vec![crate::journal::day::CardApp {
                 name: "Code".to_string(),
                 host: None,
-                minutes: 40.0,
+                minutes: app_minutes,
             }],
             distractions: Vec::new(),
             evidence_count: 0,
             feedback: None,
             review: None,
-        };
-        let first = day("2026-09-16", card.clone());
-        card.id = 8;
-        let second = day("2026-09-17", card);
-        let totals = week_totals(&[first.clone(), second]);
-        assert_eq!(totals.focus_minutes, 120.0);
-        assert_eq!(totals.longest_focus_block_minutes, 60.0);
-        assert_eq!(totals.by_category.len(), 1);
-        assert_eq!(totals.by_category[0].minutes, 120.0);
-        assert_eq!(totals.by_app.len(), 1);
-        assert_eq!(totals.by_app[0].minutes, 80.0);
+        }
+    }
 
-        // The same card id in two days (a card straddling local 04:00) is
-        // counted once by `by_app`.
-        let totals = week_totals(&[first.clone(), first]);
-        assert_eq!(totals.by_app[0].minutes, 40.0);
+    /// A week whose Wednesday card runs across the next local 04:00, exactly
+    /// as `GET /journal/day` loads it: both days are served the whole card.
+    fn straddling_week() -> Vec<ActivityCard> {
+        vec![
+            // Entirely inside Monday.
+            test_card(
+                7,
+                "2026-09-14T10:00:00Z",
+                "2026-09-14T11:00:00Z",
+                "work",
+                50.0,
+                40.0,
+            ),
+            // 03:30 → 04:30: half in Tuesday, half in Wednesday.
+            test_card(
+                8,
+                "2026-09-16T03:30:00Z",
+                "2026-09-16T04:30:00Z",
+                "work",
+                60.0,
+                60.0,
+            ),
+            // A whole-card distraction, inside Wednesday.
+            test_card(
+                9,
+                "2026-09-16T12:00:00Z",
+                "2026-09-16T12:30:00Z",
+                "distraction",
+                28.0,
+                30.0,
+            ),
+        ]
+    }
+
+    fn overlapping(
+        cards: &[ActivityCard],
+        day_start: DateTime<Utc>,
+        day_end: DateTime<Utc>,
+    ) -> Vec<ActivityCard> {
+        cards
+            .iter()
+            .filter(|card| match (parse(&card.start_at), parse(&card.end_at)) {
+                (Some(start), Some(end)) => start < day_end && end > day_start,
+                _ => false,
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// The seven day bodies `GET /journal/week` folds, built the way
+    /// `build_journal_day` builds them: cards loaded by span overlap, totals
+    /// clipped to the day.
+    fn week_bodies(cards: &[ActivityCard]) -> Vec<JournalDayResponse> {
+        week_days()
+            .into_iter()
+            .map(|(date, day_start, day_end)| {
+                let activities = overlapping(cards, day_start, day_end);
+                JournalDayResponse {
+                    date: date.to_string(),
+                    day_start: day_start.to_rfc3339(),
+                    day_end: day_end.to_rfc3339(),
+                    data_status: "ok".to_string(),
+                    generation: JournalGenerationStatus {
+                        enabled: true,
+                        provider_ready: true,
+                        provider_message: None,
+                        processing: false,
+                        pending_windows: 0,
+                        last_window_end_at: None,
+                        last_error: None,
+                    },
+                    totals: compute_day_totals(&activities, (day_start, day_end)),
+                    intentions: Vec::new(),
+                    activities,
+                    reviews: Vec::new(),
+                    review_totals: ReviewTotals::default(),
+                    recap: crate::routes::journal_recap::JournalRecapStatus::none(),
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn week_totals_fold_the_days_without_double_counting_a_straddling_card() {
+        let cards = straddling_week();
+        let days = week_bodies(&cards);
+
+        // The straddler really is served by both days, whole.
+        assert!(days[1].activities.iter().any(|card| card.id == 8));
+        assert!(days[2].activities.iter().any(|card| card.id == 8));
+        assert_eq!(days[1].activities.len(), 1);
+        assert_eq!(
+            days[1].activities[0].end_at,
+            at("2026-09-16T04:30:00Z").to_rfc3339()
+        );
+        // And each day counts only its own half of it.
+        assert_eq!(days[1].totals.wall_minutes, 30.0);
+        assert_eq!(days[1].totals.active_minutes, 30.0);
+
+        let totals = week_totals(&days);
+        // 60 (Monday) + 60 (the straddler) + 30 (the distraction card).
+        assert_eq!(totals.wall_minutes, 150.0);
+        // 50 + 60 + 28, each day counting the part of a card inside it.
+        assert_eq!(totals.active_minutes, 138.0);
+        assert_eq!(totals.focus_minutes, 120.0);
+        assert_eq!(totals.distraction_minutes, 30.0);
+        // Blocks never merge across the 04:00 boundary: Monday's hour is the
+        // longest, and the straddler's two halves are 30 minutes each.
+        assert_eq!(totals.longest_focus_block_minutes, 60.0);
+        assert_eq!(totals.by_category.len(), 2);
+        assert_eq!(totals.by_category[0].category_id, "work");
+        assert_eq!(totals.by_category[0].minutes, 120.0);
+        // 40 + 60 + 30, the straddler's app minutes split between its days.
+        assert_eq!(totals.by_app.len(), 1);
+        assert_eq!(totals.by_app[0].minutes, 130.0);
+    }
+
+    /// `GET /journal/week` and `GET /journal/week/dashboard` are computed from
+    /// the same cards by two different folds, and the contract says they never
+    /// disagree. A card across local 04:00 is where they used to.
+    #[test]
+    fn the_week_and_the_dashboard_agree_on_a_straddling_card() {
+        use crate::journal::dashboard::{compute_dashboard, DashboardDayInput, DashboardInput};
+
+        let cards = straddling_week();
+        let week = week_totals(&week_bodies(&cards));
+
+        let input = DashboardInput {
+            days: week_days()
+                .into_iter()
+                .map(|(date, day_start, day_end)| DashboardDayInput {
+                    date,
+                    day_start,
+                    day_end,
+                    cards: overlapping(&cards, day_start, day_end),
+                    intervals: Vec::new(),
+                })
+                .collect(),
+            compare_days: Vec::new(),
+            intentions: Vec::new(),
+            reviews: Vec::new(),
+            linked_intervals: std::collections::HashMap::new(),
+        };
+        let dashboard = compute_dashboard(&input, &Utc);
+
+        assert_eq!(dashboard.totals.active_minutes, week.active_minutes);
+        assert_eq!(dashboard.totals.focus_minutes, week.focus_minutes);
+        assert_eq!(
+            dashboard.totals.distraction_minutes,
+            week.distraction_minutes
+        );
+        assert_eq!(
+            dashboard.totals.longest_focus_block_minutes,
+            week.longest_focus_block_minutes
+        );
+        // The per-day rows agree too: Tuesday and Wednesday each hold their
+        // own half of the straddler.
+        assert_eq!(
+            dashboard.days[1].active_minutes,
+            days_active(&week_bodies(&cards), 1)
+        );
+        assert_eq!(
+            dashboard.days[2].active_minutes,
+            days_active(&week_bodies(&cards), 2)
+        );
+        // And the app minutes of the week match the week route's `by_app`.
+        assert_eq!(dashboard.apps.len(), 1);
+        assert_eq!(dashboard.apps[0].minutes, week.by_app[0].minutes);
+        // `compare` is absent when there is no compare week to report.
+        assert!(dashboard.compare.is_none());
+    }
+
+    fn days_active(days: &[JournalDayResponse], index: usize) -> f64 {
+        days[index].totals.active_minutes
     }
 
     #[test]

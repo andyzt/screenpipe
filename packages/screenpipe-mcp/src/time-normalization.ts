@@ -79,6 +79,48 @@ export function normalizeTimeFields(
   return normalized;
 }
 
+const JOURNAL_DAY_START_HOUR = 4;
+
+function localDateYMD(reference: Date): string {
+  const year = reference.getFullYear();
+  const month = String(reference.getMonth() + 1).padStart(2, "0");
+  const day = String(reference.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+// journal-day / journal-recap / journal-week take a plain calendar date
+// (YYYY-MM-DD), not a timestamp, so normalizeTime's "today"/"yesterday" (which
+// produce a UTC instant) are the wrong shape here. A journal day runs local
+// 04:00 to the next local 04:00 (see "Day boundary" in
+// docs/JOURNAL_API_CONTRACT.md): before 04:00 local, "today" still names
+// yesterday's journal day. Anything other than the two calendar words passes
+// through unchanged — the engine is the authority on a malformed date.
+export function normalizeJournalDate(
+  input: string | undefined,
+  now: Date = new Date(),
+): string | undefined {
+  if (!input) return input;
+  const value = input.trim();
+  if (!value) return input;
+
+  const journalNow = new Date(now);
+  if (journalNow.getHours() < JOURNAL_DAY_START_HOUR) {
+    journalNow.setDate(journalNow.getDate() - 1);
+  }
+
+  switch (value.toLowerCase()) {
+    case "today":
+      return localDateYMD(journalNow);
+    case "yesterday": {
+      const yesterday = new Date(journalNow);
+      yesterday.setDate(yesterday.getDate() - 1);
+      return localDateYMD(yesterday);
+    }
+    default:
+      return value;
+  }
+}
+
 export function localContextDayStarts(now: Date = new Date()): {
   today_start: string;
   yesterday_start: string;

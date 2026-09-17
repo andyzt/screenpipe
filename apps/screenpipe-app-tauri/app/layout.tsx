@@ -37,6 +37,7 @@ import {
   openChatConversationInCurrentChatSurface,
 } from "@/lib/chat-utils";
 import { useExperimentalFeaturesEnabled } from "@/lib/experimental-features";
+import { JOURNAL_THEME } from "@/lib/journal-shell";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -281,18 +282,28 @@ export default function RootLayout({
           dangerouslySetInnerHTML={{
             __html: `
               (function() {
-                // Apply theme to prevent flash and ensure sidebar/main content consistency.
-                // Priority: stored preference > system preference
                 // Apply theme to prevent flash and ensure sidebar/main content
                 // consistency. Priority: stored preference > system preference.
-                // The journal build also stamps data-theme before first paint;
-                // keep it identical to JOURNAL_THEME in lib/journal-shell.ts,
-                // since the two run either side of hydration.
+                // The journal build also stamps data-theme before first paint.
+                // The value is interpolated from JOURNAL_THEME in
+                // lib/journal-shell.ts — the same constant ThemeProvider reads —
+                // so the two cannot drift either side of hydration.
+                var journalTheme = ${JSON.stringify(JOURNAL_THEME)};
                 try {
-                  document.documentElement.setAttribute('data-theme', 'journal');
-                  var theme = localStorage.getItem('screenpipe-ui-theme');
-                  // The journal build's default is light, not the OS theme.
-                  if (!theme || theme === 'system') theme = 'light';
+                  if (journalTheme) {
+                    document.documentElement.setAttribute('data-theme', journalTheme);
+                  }
+                  var theme = localStorage.getItem('screenpipe-ui-theme') || 'system';
+                  if (theme !== 'light' && theme !== 'dark') {
+                    // Under the journal theme "system" means light, matching
+                    // components/theme-provider.tsx; otherwise follow the OS.
+                    theme =
+                      !journalTheme &&
+                      window.matchMedia &&
+                      window.matchMedia('(prefers-color-scheme: dark)').matches
+                        ? 'dark'
+                        : 'light';
+                  }
                   document.documentElement.classList.add(theme);
                 } catch (e) {
                   document.documentElement.classList.add('light');

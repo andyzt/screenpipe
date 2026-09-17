@@ -1249,7 +1249,7 @@ function buildMockRecap(date: string, cards: MockJournalCard[]): MockRecap {
     next,
     focus_note: focusNote,
     source_cards: written.length,
-    model: "deepseek/deepseek-v4-flash",
+    model: "deepseek/deepseek-v4.1-flash",
     prompt_version: "journal-recap-v1",
     error: null,
     markdown,
@@ -1948,7 +1948,7 @@ function mockJournalStatus(scenario: BrowserDevScenario) {
     enabled: scenario !== "empty",
     worker_running: scenario !== "empty",
     preset: ready
-      ? { id: "deepseek", provider: "deepseek", model: "deepseek/deepseek-v4-flash-vision-exp" }
+      ? { id: "deepseek", provider: "deepseek", model: "deepseek/deepseek-v4.1-flash" }
       : null,
     provider_ready: ready,
     provider_message: ready
@@ -1967,7 +1967,7 @@ function mockJournalStatus(scenario: BrowserDevScenario) {
       kind: "cards",
       ok: true,
       latency_ms: 8400,
-      model: "deepseek/deepseek-v4-flash-vision-exp",
+      model: "deepseek/deepseek-v4.1-flash",
       created_at: new Date().toISOString(),
       error: null,
     },

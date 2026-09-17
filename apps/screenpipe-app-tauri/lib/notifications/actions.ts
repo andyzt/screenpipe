@@ -72,6 +72,30 @@ export function isActivityDeeplink(url: string) {
 }
 
 /**
+ * A `screenpipe://` deep link pointing at exactly one route, or null.
+ *
+ * The route is the whole target, host included: `screenpipe://home` and
+ * `screenpipe:///home` are the same link, while `screenpipe://elsewhere/home`
+ * is a different host and therefore not this route at all. A notification is
+ * attacker-controllable, so matching on the path alone would let any host smuggle
+ * itself into a window this app opens.
+ */
+function screenpipeRoute(url: string, route: string): URL | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "screenpipe:") return null;
+  // `screenpipe://home/` and `screenpipe://home` are one link; so are
+  // `screenpipe://focus/override` and `screenpipe:///focus/override`.
+  const path = parsed.pathname.replace(/\/+$/, "").replace(/^\//, "");
+  const target = parsed.host ? (path ? `${parsed.host}/${path}` : parsed.host) : path;
+  return target === route ? parsed : null;
+}
+
+/**
  * `screenpipe://journal` and `screenpipe://home?section=journal` both open
  * the journal — the second is the general "open Home to a section" form used
  * elsewhere (onboarding, the sidebar); the journal case gets its own check
@@ -79,17 +103,9 @@ export function isActivityDeeplink(url: string) {
  * settings-bound sections.
  */
 export function isJournalDeeplink(url: string) {
-  if (url === "screenpipe://journal" || url.startsWith("screenpipe://journal?")) {
-    return true;
-  }
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return false;
-  }
-  const targetsHome = parsed.host === "home" || parsed.pathname === "/home";
-  return targetsHome && parsed.searchParams.get("section") === "journal";
+  if (screenpipeRoute(url, "journal")) return true;
+  const home = screenpipeRoute(url, "home");
+  return !!home && home.searchParams.get("section") === "journal";
 }
 
 /**
@@ -100,14 +116,8 @@ export function isJournalDeeplink(url: string) {
 export function focusOverrideRelationFromDeeplink(
   url: string,
 ): FocusOverrideRelation | null {
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return null;
-  }
-  if (parsed.protocol !== "screenpipe:") return null;
-  if (parsed.host !== "focus" || parsed.pathname !== "/override") return null;
+  const parsed = screenpipeRoute(url, "focus/override");
+  if (!parsed) return null;
   const relation = parsed.searchParams.get("relation");
   return relation === "other_work" || relation === "break" ? relation : null;
 }

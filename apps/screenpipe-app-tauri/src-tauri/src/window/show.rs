@@ -168,9 +168,34 @@ fn search_bar_width(logical_width: f64) -> f64 {
         .max(SEARCH_BAR_MIN_W)
 }
 
+/// Compose the `page` payload of [`ShowRewindWindow::Home`] from a section and
+/// its extra query parameters.
+///
+/// `page` is interpolated verbatim into `/home?section={page}`, so it is a
+/// whole query tail, not a single value: callers that want `intent=1` have to
+/// append `&intent=1` themselves. Doing that with `format!` is how an
+/// unescaped `&`, `#` or `=` inside a section or value silently becomes a
+/// different parameter. Everything that goes through here is percent-encoded
+/// per component and joined with `&` exactly once, so a caller cannot inject a
+/// parameter it did not name. Literal ASCII names and values (`journal`,
+/// `intent=1`) survive encoding unchanged, which keeps the produced URLs
+/// byte-identical to the hand-built ones.
+pub(crate) fn home_page_query(section: &str, params: &[(&str, &str)]) -> String {
+    let mut query = urlencoding::encode(section).into_owned();
+    for (key, value) in params {
+        query.push('&');
+        query.push_str(&urlencoding::encode(key));
+        query.push('=');
+        query.push_str(&urlencoding::encode(value));
+    }
+    query
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, specta::Type)]
 pub enum ShowRewindWindow {
     Main,
+    /// `page` is the query tail after `/home?section=`, built with
+    /// [`home_page_query`] whenever it carries more than a bare section name.
     Home { page: Option<String> },
     Search { query: Option<String> },
     Onboarding,
@@ -2210,7 +2235,35 @@ impl ShowRewindWindow {
 
 #[cfg(test)]
 mod tests {
-    use super::{allowed_while_hidden_ui, RewindWindowId};
+    use super::{allowed_while_hidden_ui, home_page_query, RewindWindowId};
+
+    #[test]
+    fn home_page_query_keeps_existing_urls_byte_identical() {
+        assert_eq!(home_page_query("journal", &[]), "journal");
+        assert_eq!(
+            home_page_query("journal", &[("intent", "1")]),
+            "journal&intent=1"
+        );
+        assert_eq!(
+            home_page_query("meetings", &[("meetingId", "42"), ("transcript", "true")]),
+            "meetings&meetingId=42&transcript=true"
+        );
+    }
+
+    /// The `page` value is interpolated into `/home?section={page}`. A section
+    /// or value carrying its own separators must stay one parameter.
+    #[test]
+    fn home_page_query_cannot_smuggle_extra_parameters() {
+        assert_eq!(
+            home_page_query("journal&admin=1", &[]),
+            "journal%26admin%3D1"
+        );
+        assert_eq!(
+            home_page_query("journal", &[("intent", "1&admin=1")]),
+            "journal&intent=1%26admin%3D1"
+        );
+        assert!(!home_page_query("journal", &[("intent", "1#top")]).contains('#'));
+    }
 
     #[test]
     fn hidden_ui_only_allows_incomplete_onboarding_and_permission_recovery() {

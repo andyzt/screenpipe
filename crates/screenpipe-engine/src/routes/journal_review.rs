@@ -170,6 +170,23 @@ pub async fn put_journal_activity_feedback(
         }
     }
 
+    // Visibility is decided before anything is written. The card's own span
+    // decides it, exactly as on the read route — and the order matters: a
+    // restricted account used to leave its thumb on a card it may not see and
+    // get a 404 back, with no way to look at what it had just written or to
+    // clear it.
+    let Some((activity, _, _)) = state
+        .db
+        .get_journal_activity(id, false)
+        .await
+        .map_err(internal)?
+    else {
+        return Err(not_found());
+    };
+    if !within_history(&activity.end_at, state.history_access.cutoff(Utc::now())) {
+        return Err(not_found());
+    }
+
     match rating {
         Some(rating) => {
             if !state
@@ -206,16 +223,14 @@ async fn card_response(state: &Arc<AppState>, id: i64) -> Result<ActivityCard, A
         return Err(not_found());
     };
     let mut card = to_card(activity, &categories);
+    // The card's own span decides visibility, exactly as on the read route: a
+    // restricted account cannot reach a card it may not see by rating it.
+    if !within_history(&card.end_at, state.history_access.cutoff(Utc::now())) {
+        return Err(not_found());
+    }
     let (Some(start), Some(end)) = (parse(&card.start_at), parse(&card.end_at)) else {
         return Ok(card);
     };
-    // The card's own span decides visibility, exactly as on the read route: a
-    // restricted account cannot reach a card it may not see by rating it.
-    if let Some(cutoff) = state.history_access.cutoff(Utc::now()) {
-        if end < cutoff {
-            return Err(not_found());
-        }
-    }
     let linked = state
         .db
         .list_journal_activity_intervals(start, end)
@@ -236,12 +251,22 @@ pub async fn get_journal_feedback(
         Some(value) => Some(parse_date(value)?),
         None => None,
     };
+    // The same clamp the day route applies, on the same terms: a day wholly
+    // behind the cutoff reads as empty, and a row the account may not see is
+    // not listed. Feedback rows carry a snapshot of the card they judged, so
+    // an unclamped listing handed back titles and times from outside the
+    // history window — the one thing the policy exists to prevent.
+    let cutoff = state.history_access.cutoff(Utc::now());
+    if date.is_some_and(|date| day_is_hidden(date, cutoff)) {
+        return Ok(JsonResponse(JournalFeedbackResponse { items: Vec::new() }));
+    }
     let items = state
         .db
         .list_journal_feedback(date.map(|date| date.to_string()).as_deref())
         .await
         .map_err(internal)?
         .into_iter()
+        .filter(|row| within_history(&row.end_at, cutoff))
         .map(JournalFeedbackItem::from)
         .collect();
     Ok(JsonResponse(JournalFeedbackResponse { items }))
@@ -351,6 +376,27 @@ async fn day_reviews(
     Ok(review_items(&ratings, read_start, day_end))
 }
 
+/// Whether a row that ends at `end_at` is inside the history window.
+///
+/// A timestamp that does not parse counts as outside it: the only caller that
+/// passes an unreadable one is a corrupt row, and hiding it from a restricted
+/// account is the cheaper mistake.
+fn within_history(end_at: &str, cutoff: Option<DateTime<Utc>>) -> bool {
+    let Some(cutoff) = cutoff else {
+        return true;
+    };
+    parse(end_at).is_some_and(|end| end >= cutoff)
+}
+
+/// Whether a whole journal day is behind the cutoff, the way
+/// `routes::journal::clamp` decides the same thing for the day route.
+fn day_is_hidden(date: NaiveDate, cutoff: Option<DateTime<Utc>>) -> bool {
+    let Some(cutoff) = cutoff else {
+        return false;
+    };
+    day_bounds(date).is_some_and(|(_, day_end)| day_end < cutoff)
+}
+
 fn parse_date(value: &str) -> Result<NaiveDate, ApiError> {
     value
         .trim()
@@ -389,6 +435,7 @@ fn internal(error: sqlx::Error) -> ApiError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::history_access::HistoryAccessPolicy;
 
     fn at(value: &str) -> DateTime<Utc> {
         value.parse().unwrap()
@@ -514,6 +561,38 @@ mod tests {
         assert_eq!(items[0].end_at, at("2026-09-16T05:00:00Z").to_rfc3339());
         assert_eq!(items[1].id, 2);
         assert_eq!(items[1].rating, "focused");
+    }
+
+    /// The history-access clamp on the two feedback surfaces. A feedback row
+    /// is a snapshot of the card it judged — title, times, category — so
+    /// listing one from outside the window hands back exactly what the policy
+    /// exists to withhold.
+    #[test]
+    fn feedback_is_clamped_by_the_history_policy_like_every_other_journal_read() {
+        let now = at("2026-09-20T12:00:00Z");
+        let restricted = HistoryAccessPolicy::last_24_hours().cutoff(now);
+        let open = HistoryAccessPolicy::unrestricted().cutoff(now);
+        assert_eq!(restricted, Some(at("2026-09-19T12:00:00Z")));
+
+        // A row that ends after the cutoff is visible; one that ends before it
+        // is not, whatever the request asked for.
+        assert!(within_history("2026-09-19T13:00:00Z", restricted));
+        assert!(within_history("2026-09-19T12:00:00Z", restricted));
+        assert!(!within_history("2026-09-19T11:59:59Z", restricted));
+        assert!(!within_history("2026-09-16T08:59:00Z", restricted));
+        // An unrestricted account sees all of it, including a row whose
+        // timestamp is unreadable.
+        assert!(within_history("2026-09-16T08:59:00Z", open));
+        assert!(within_history("not a timestamp", open));
+        assert!(!within_history("not a timestamp", restricted));
+
+        // A day entirely behind the cutoff is empty rather than filtered row
+        // by row, exactly as `GET /journal/day` answers it.
+        let date = |value: &str| value.parse::<NaiveDate>().unwrap();
+        assert!(day_is_hidden(date("2026-09-16"), restricted));
+        assert!(!day_is_hidden(date("2026-09-19"), restricted));
+        assert!(!day_is_hidden(date("2026-09-20"), restricted));
+        assert!(!day_is_hidden(date("2026-09-16"), open));
     }
 
     #[test]

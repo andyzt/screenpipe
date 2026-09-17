@@ -233,23 +233,25 @@ pub fn to_card(activity: JournalActivity, categories: &[JournalCategory]) -> Act
 /// covering each minute. Idle cards are excluded: the user rates what they
 /// were doing, and "the screen was up but nothing happened" is not that.
 ///
+/// `window` is the day being computed; every card is clipped to it first, for
+/// the reason [`compute_day_totals`] gives.
+///
 /// Ratings never overlap each other (the writer splits them), so the overlaps
 /// are simply summed and whatever a card's span has left over is unrated.
 pub fn compute_review_totals(
     cards: &[ActivityCard],
     ratings: &[JournalReviewRating],
+    window: (DateTime<Utc>, DateTime<Utc>),
 ) -> ReviewTotals {
     let mut totals = ReviewTotals::default();
     for card in cards {
         if card.category.is_idle {
             continue;
         }
-        let (Some(start), Some(end)) = (parse(&card.start_at), parse(&card.end_at)) else {
+        let Some(clip) = clip_to_window(card, window) else {
             continue;
         };
-        if end <= start {
-            continue;
-        }
+        let (start, end) = (clip.start, clip.end);
         let mut rated = 0.0;
         for rating in ratings {
             let from = rating.start_at.max(start);
@@ -362,20 +364,38 @@ pub fn compute_card_apps(
     rank_apps(minutes, CARD_APPS_LIMIT)
 }
 
-/// The day's (or week's) apps: every card's `apps` summed, top
-/// [`DAY_APPS_LIMIT`]. Runs over the same truncated per-card lists a client
-/// sees, so a number in `totals.by_app` is always reproducible from the cards
-/// next to it.
-pub fn compute_by_app(cards: &[ActivityCard]) -> Vec<CardApp> {
+/// The day's (or week's) apps: every card's `apps`, clipped to `window` and
+/// summed, top [`DAY_APPS_LIMIT`]. Runs over the same truncated per-card lists
+/// a client sees, so a number in `totals.by_app` is always reproducible from
+/// the cards next to it.
+pub fn compute_by_app(
+    cards: &[ActivityCard],
+    window: (DateTime<Utc>, DateTime<Utc>),
+) -> Vec<CardApp> {
     let mut minutes: HashMap<(String, Option<String>), f64> = HashMap::new();
+    add_card_apps(&mut minutes, cards, window);
+    rank_apps(minutes, DAY_APPS_LIMIT)
+}
+
+/// Fold one day's cards into a running app tally, each card's minutes scaled
+/// by the share of it that falls inside `window`. Exposed so `GET
+/// /journal/week` can sum seven days into one tally and rank once, instead of
+/// ranking each day and losing the app that is never any single day's twelfth.
+pub(crate) fn add_card_apps(
+    minutes: &mut HashMap<(String, Option<String>), f64>,
+    cards: &[ActivityCard],
+    window: (DateTime<Utc>, DateTime<Utc>),
+) {
     for card in cards {
+        let Some(clip) = clip_to_window(card, window) else {
+            continue;
+        };
         for app in &card.apps {
             *minutes
                 .entry((app.name.clone(), app.host.clone()))
-                .or_insert(0.0) += app.minutes;
+                .or_insert(0.0) += app.minutes * clip.share;
         }
     }
-    rank_apps(minutes, DAY_APPS_LIMIT)
 }
 
 /// Descending by minutes, then by name and host so equal minutes never
@@ -472,24 +492,32 @@ const FILE_EXTENSIONS: &[&str] = &[
 
 /// Day arithmetic over the cards of one day.
 ///
+/// `window` is the day itself (`[day_start, day_end)`, already clamped by the
+/// history-access policy) and **every card is clipped to it**. The day route
+/// loads cards by span overlap, so a card straddling local 04:00 is returned
+/// by both of its days; without the clip each day would count all of it and
+/// `GET /journal/week`, which sums the seven days, would report it twice.
+/// The day response still carries the whole card — only the totals clip.
+///
 /// `focus_minutes` counts cards that are neither idle, nor system, nor in the
 /// Distraction category, minus their own `distractions[]` sub-intervals.
 /// `distraction_minutes` counts Distraction-category cards plus those
 /// sub-intervals. The two never double-count the same second.
-pub fn compute_day_totals(cards: &[ActivityCard]) -> DayTotals {
+pub fn compute_day_totals(
+    cards: &[ActivityCard],
+    window: (DateTime<Utc>, DateTime<Utc>),
+) -> DayTotals {
     let mut totals = DayTotals::default();
     let mut by_category: Vec<CategoryMinutes> = Vec::new();
     let mut focus_spans: Vec<(DateTime<Utc>, DateTime<Utc>)> = Vec::new();
 
     for card in cards {
-        let (Some(start), Some(end)) = (parse(&card.start_at), parse(&card.end_at)) else {
+        let Some(clip) = clip_to_window(card, window) else {
             continue;
         };
-        if end <= start {
-            continue;
-        }
+        let (start, end) = (clip.start, clip.end);
         let span = minutes_between(start, end);
-        totals.active_minutes += card.active_minutes;
+        totals.active_minutes += card.active_minutes * clip.share;
         totals.wall_minutes += span;
 
         match by_category
@@ -537,8 +565,86 @@ pub fn compute_day_totals(cards: &[ActivityCard]) -> DayTotals {
             .then_with(|| left.category_id.cmp(&right.category_id))
     });
     totals.by_category = by_category;
-    totals.by_app = compute_by_app(cards);
+    totals.by_app = compute_by_app(cards, window);
     totals
+}
+
+/// The part of a card that falls inside a window, and the share of the card's
+/// own span it is.
+pub(crate) struct ClippedCard {
+    pub(crate) start: DateTime<Utc>,
+    pub(crate) end: DateTime<Utc>,
+    /// `0.0..=1.0`. Multiplies the card's estimates — `active_minutes` and its
+    /// `apps` minutes — which are spread over the span and have no finer
+    /// resolution on the read path.
+    pub(crate) share: f64,
+}
+
+/// Clip a card to `[from, to)`, or `None` when nothing of it is inside.
+///
+/// The estimates scale with the kept share exactly as
+/// `replace_activities_in_range` scales `active_minutes` when it trims the
+/// head of a card a rewrite runs into: a card's minutes belong to the part of
+/// it you are looking at, not to whichever day asked first.
+pub(crate) fn clip_to_window(
+    card: &ActivityCard,
+    window: (DateTime<Utc>, DateTime<Utc>),
+) -> Option<ClippedCard> {
+    let (Some(start), Some(end)) = (parse(&card.start_at), parse(&card.end_at)) else {
+        return None;
+    };
+    if end <= start {
+        return None;
+    }
+    let from = start.max(window.0);
+    let to = end.min(window.1);
+    if to <= from {
+        return None;
+    }
+    let share = ((to - from).num_milliseconds() as f64
+        / (end - start).num_milliseconds().max(1) as f64)
+        .clamp(0.0, 1.0);
+    Some(ClippedCard {
+        start: from,
+        end: to,
+        share,
+    })
+}
+
+/// The same card as it would read if it had happened entirely inside
+/// `window`: span, `active_minutes`, `apps` and `distractions` all clipped.
+///
+/// The weekly dashboard works on these so every one of its sections — days,
+/// categories, apps, focus blocks — counts a straddling card's minutes in the
+/// day they happened in, and none of them twice. It is never serialised: the
+/// card a client is served is always the whole card.
+pub fn clip_card(
+    card: &ActivityCard,
+    window: (DateTime<Utc>, DateTime<Utc>),
+) -> Option<ActivityCard> {
+    let clip = clip_to_window(card, window)?;
+    let mut clipped = card.clone();
+    clipped.start_at = clip.start.to_rfc3339();
+    clipped.end_at = clip.end.to_rfc3339();
+    clipped.active_minutes = card.active_minutes * clip.share;
+    for app in clipped.apps.iter_mut() {
+        app.minutes *= clip.share;
+    }
+    clipped.distractions = card
+        .distractions
+        .iter()
+        .filter_map(|detour| {
+            let from = parse(&detour.start_at)?.max(clip.start);
+            let to = parse(&detour.end_at)?.min(clip.end);
+            (to > from).then(|| CardDistraction {
+                start_at: from.to_rfc3339(),
+                end_at: to.to_rfc3339(),
+                title: detour.title.clone(),
+                summary: detour.summary.clone(),
+            })
+        })
+        .collect();
+    Some(clipped)
 }
 
 /// The longest run of focus once spans closer than five minutes are treated as
@@ -692,6 +798,12 @@ mod tests {
         card(start, end, category("work", "Work", false, false))
     }
 
+    /// The journal day every card in these tests lives inside: local 04:00 to
+    /// local 04:00, written in UTC so the arithmetic stays readable.
+    fn day_window() -> (DateTime<Utc>, DateTime<Utc>) {
+        (at("2026-09-16T04:00:00Z"), at("2026-09-17T04:00:00Z"))
+    }
+
     #[test]
     fn review_totals_split_the_day_by_what_the_user_said_about_it() {
         let rating = |start: &str, end: &str, label: &str| JournalReviewRating {
@@ -719,6 +831,7 @@ mod tests {
                 rating("2026-09-16T08:00:00Z", "2026-09-16T08:45:00Z", "focused"),
                 rating("2026-09-16T09:30:00Z", "2026-09-16T11:00:00Z", "distracted"),
             ],
+            day_window(),
         );
         assert_eq!(totals.focused_minutes, 45.0);
         assert_eq!(totals.distracted_minutes, 30.0);
@@ -735,7 +848,7 @@ mod tests {
         );
 
         // No ratings at all: everything non-idle is unrated.
-        let empty = compute_review_totals(&cards, &[]);
+        let empty = compute_review_totals(&cards, &[], day_window());
         assert_eq!(empty.unrated_minutes, 120.0);
         assert_eq!(empty.focused_minutes, 0.0);
     }
@@ -768,7 +881,7 @@ mod tests {
                 category("system", "System", true, false),
             ),
         ];
-        let totals = compute_day_totals(&cards);
+        let totals = compute_day_totals(&cards, day_window());
         assert_eq!(totals.focus_minutes, 57.0);
         assert_eq!(totals.distraction_minutes, 23.0);
         assert_eq!(totals.idle_minutes, 30.0);
@@ -787,7 +900,7 @@ mod tests {
             // 20 minute gap: new, shorter block.
             work("2026-09-16T09:47:00Z", "2026-09-16T10:07:00Z"),
         ];
-        let totals = compute_day_totals(&cards);
+        let totals = compute_day_totals(&cards, day_window());
         assert_eq!(totals.longest_focus_block_minutes, 87.0);
     }
 
@@ -800,7 +913,7 @@ mod tests {
             title: "Long detour".to_string(),
             summary: String::new(),
         }];
-        let totals = compute_day_totals(&[interrupted]);
+        let totals = compute_day_totals(&[interrupted], day_window());
         // Two halves, 50 and 60 minutes, separated by a 10 minute detour.
         assert_eq!(totals.longest_focus_block_minutes, 60.0);
         assert_eq!(totals.focus_minutes, 110.0);
@@ -824,7 +937,7 @@ mod tests {
                 summary: String::new(),
             },
         ];
-        let totals = compute_day_totals(&[overlapped]);
+        let totals = compute_day_totals(&[overlapped], day_window());
         assert_eq!(totals.distraction_minutes, 15.0);
         assert_eq!(totals.focus_minutes, 45.0);
     }
@@ -1065,7 +1178,7 @@ mod tests {
                 minutes: 30.0,
             },
         ];
-        let by_app = compute_by_app(&[one.clone(), two.clone()]);
+        let by_app = compute_by_app(&[one.clone(), two.clone()], day_window());
         assert_eq!(by_app.len(), 3);
         assert_eq!(by_app[0].name, "Chrome");
         assert_eq!(by_app[0].host.as_deref(), Some("github.com"));
@@ -1077,12 +1190,123 @@ mod tests {
         assert_eq!(by_app[2].minutes, 5.0);
 
         // And the day totals carry the same list.
-        assert_eq!(compute_day_totals(&[one, two]).by_app, by_app);
+        assert_eq!(compute_day_totals(&[one, two], day_window()).by_app, by_app);
+    }
+
+    /// A card that runs across local 04:00 is loaded by both of its days.
+    /// Each day may count only the part that happened inside it, or the week
+    /// — which sums the seven days — counts it twice.
+    #[test]
+    fn a_straddling_card_is_clipped_to_the_day_being_computed() {
+        let first = (at("2026-09-16T04:00:00Z"), at("2026-09-17T04:00:00Z"));
+        let second = (at("2026-09-17T04:00:00Z"), at("2026-09-18T04:00:00Z"));
+        // 03:30 → 04:30 local: 30 minutes in each day.
+        let mut straddler = work("2026-09-17T03:30:00Z", "2026-09-17T04:30:00Z");
+        straddler.active_minutes = 50.0;
+        straddler.apps = vec![CardApp {
+            name: "Code".to_string(),
+            host: None,
+            minutes: 40.0,
+        }];
+        straddler.distractions = vec![CardDistraction {
+            // Entirely inside the second day.
+            start_at: "2026-09-17T04:10:00Z".to_string(),
+            end_at: "2026-09-17T04:20:00Z".to_string(),
+            title: "Checked the feed".to_string(),
+            summary: String::new(),
+        }];
+        let cards = [straddler.clone()];
+
+        let head = compute_day_totals(&cards, first);
+        let tail = compute_day_totals(&cards, second);
+        assert_eq!(head.wall_minutes, 30.0);
+        assert_eq!(tail.wall_minutes, 30.0);
+        // Estimates scale with the kept share, so the two halves add up.
+        assert_eq!(head.active_minutes, 25.0);
+        assert_eq!(tail.active_minutes, 25.0);
+        assert_eq!(head.active_minutes + tail.active_minutes, 50.0);
+        assert_eq!(head.by_app[0].minutes, 20.0);
+        assert_eq!(tail.by_app[0].minutes, 20.0);
+        // The detour is in the second day only, and neither focus block runs
+        // across the boundary.
+        assert_eq!(head.distraction_minutes, 0.0);
+        assert_eq!(tail.distraction_minutes, 10.0);
+        assert_eq!(head.focus_minutes, 30.0);
+        assert_eq!(tail.focus_minutes, 20.0);
+        assert_eq!(head.longest_focus_block_minutes, 30.0);
+        assert_eq!(tail.longest_focus_block_minutes, 10.0);
+        assert_eq!(head.by_category[0].minutes, 30.0);
+
+        // Review totals split the same way.
+        let rating = JournalReviewRating {
+            id: 1,
+            start_at: at("2026-09-17T03:00:00Z"),
+            end_at: at("2026-09-17T05:00:00Z"),
+            rating: "focused".to_string(),
+            source: "app".to_string(),
+            created_at: String::new(),
+            updated_at: String::new(),
+        };
+        assert_eq!(
+            compute_review_totals(&cards, &[rating.clone()], first).focused_minutes,
+            30.0
+        );
+        assert_eq!(
+            compute_review_totals(&cards, &[rating], second).focused_minutes,
+            30.0
+        );
+
+        // A card entirely outside the day contributes nothing at all.
+        let elsewhere = compute_day_totals(
+            &cards,
+            (at("2026-09-18T04:00:00Z"), at("2026-09-19T04:00:00Z")),
+        );
+        assert_eq!(elsewhere, DayTotals::default());
+    }
+
+    #[test]
+    fn a_clipped_card_carries_only_the_part_inside_the_window() {
+        let mut straddler = work("2026-09-17T03:30:00Z", "2026-09-17T04:30:00Z");
+        straddler.active_minutes = 50.0;
+        straddler.apps = vec![CardApp {
+            name: "Code".to_string(),
+            host: None,
+            minutes: 40.0,
+        }];
+        straddler.distractions = vec![CardDistraction {
+            start_at: "2026-09-17T03:50:00Z".to_string(),
+            end_at: "2026-09-17T04:10:00Z".to_string(),
+            title: "Checked the feed".to_string(),
+            summary: String::new(),
+        }];
+        let head = clip_card(
+            &straddler,
+            (at("2026-09-16T04:00:00Z"), at("2026-09-17T04:00:00Z")),
+        )
+        .unwrap();
+        assert_eq!(head.start_at, at("2026-09-17T03:30:00Z").to_rfc3339());
+        assert_eq!(head.end_at, at("2026-09-17T04:00:00Z").to_rfc3339());
+        assert_eq!(head.active_minutes, 25.0);
+        assert_eq!(head.apps[0].minutes, 20.0);
+        // The detour is cut at the boundary with the card.
+        assert_eq!(head.distractions.len(), 1);
+        assert_eq!(
+            head.distractions[0].end_at,
+            at("2026-09-17T04:00:00Z").to_rfc3339()
+        );
+        // Everything else about the card is untouched.
+        assert_eq!(head.id, straddler.id);
+        assert_eq!(head.title, straddler.title);
+        assert!(clip_card(
+            &straddler,
+            (at("2026-09-18T04:00:00Z"), at("2026-09-19T04:00:00Z"))
+        )
+        .is_none());
     }
 
     #[test]
     fn an_empty_day_totals_to_zero() {
-        let totals = compute_day_totals(&[]);
+        let totals = compute_day_totals(&[], day_window());
         assert_eq!(totals, DayTotals::default());
     }
 }

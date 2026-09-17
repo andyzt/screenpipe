@@ -148,6 +148,42 @@ function CardDetail({
   const [noteOpen, setNoteOpen] = React.useState(false);
   const [note, setNote] = React.useState(card.feedback?.note ?? "");
   const [review, setReview] = React.useState(card.review ?? null);
+
+  // …but optimistic is not the same as frozen. `refreshDay` hands the same card
+  // back with whatever the engine settled on — a rating it turned into `mixed`,
+  // a thumb written from another surface — and the lit segment has to follow
+  // that, not the value the card carried at mount.
+  //
+  // Keyed on the values themselves rather than on `card.feedback`, which is a
+  // fresh object on every re-read: a poll that changes nothing must not clobber
+  // a write the person is still watching land.
+  const cardId = card.id;
+  const incomingRating = card.feedback?.rating ?? null;
+  const incomingNote = card.feedback?.note ?? null;
+  const incomingCreatedAt = card.feedback?.created_at ?? null;
+  const incomingReview = card.review ?? null;
+
+  React.useEffect(() => {
+    setFeedback((current) => {
+      const unchanged =
+        (current?.rating ?? null) === incomingRating &&
+        (current?.note ?? null) === incomingNote;
+      if (unchanged) return current;
+      return incomingRating
+        ? {
+            rating: incomingRating,
+            note: incomingNote,
+            created_at: incomingCreatedAt ?? new Date().toISOString(),
+          }
+        : null;
+    });
+    setNote(incomingNote ?? "");
+  }, [cardId, incomingRating, incomingNote, incomingCreatedAt]);
+
+  React.useEffect(() => {
+    setReview(incomingReview);
+  }, [cardId, incomingReview]);
+
   const relation = relationLabel(card.intention_relation, locale);
   const confidence = categoryConfidenceLabel(card.category_confidence, locale);
   const apps = [card.app_primary, card.app_secondary].filter(Boolean).join(" · ");

@@ -53,15 +53,51 @@ export function NowStrip({ refreshToken = 0 }: { refreshToken?: number }) {
     }
   }, []);
 
+  /**
+   * Poll only while someone can see the strip.
+   *
+   * A hidden window has nothing to keep live, and this poll costs a round trip
+   * to the engine every thirty seconds for as long as the app is open — on a
+   * laptop that is battery spent on a surface nobody is looking at. The first
+   * read still happens on mount and on every `refreshToken`, because those are
+   * explicit "read now" signals; what pauses is the repeat. Becoming visible
+   * re-reads at once, since the strip is stale by however long the window was
+   * away.
+   */
   useEffect(() => {
     const controller = new AbortController();
-    void load(controller.signal);
-    const timer = window.setInterval(() => {
+    let timer: number | null = null;
+
+    const stopPolling = () => {
+      if (timer === null) return;
+      window.clearInterval(timer);
+      timer = null;
+    };
+    const startPolling = () => {
+      if (timer !== null) return;
+      timer = window.setInterval(() => {
+        void load(controller.signal);
+      }, POLL_MS);
+    };
+    const hidden = () =>
+      typeof document !== "undefined" && document.visibilityState === "hidden";
+
+    const onVisibilityChange = () => {
+      if (hidden()) {
+        stopPolling();
+        return;
+      }
       void load(controller.signal);
-    }, POLL_MS);
+      startPolling();
+    };
+
+    void load(controller.signal);
+    if (!hidden()) startPolling();
+    document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       controller.abort();
-      window.clearInterval(timer);
+      stopPolling();
+      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [load, refreshToken]);
 

@@ -84,6 +84,18 @@ export type DayTotals = {
   by_app?: CardApp[];
 };
 
+export type ReviewTotals = {
+  focused_minutes?: number;
+  neutral_minutes?: number;
+  distracted_minutes?: number;
+  unrated_minutes?: number;
+};
+
+export type DayRecapSummary = {
+  status?: string;
+  generated_at?: string | null;
+};
+
 export type JournalDayPayload = {
   date?: string;
   day_start?: string;
@@ -93,6 +105,12 @@ export type JournalDayPayload = {
   totals?: DayTotals;
   intentions?: unknown[];
   activities?: ActivityCard[];
+  // Ratings touching the day and their split of wall_minutes (see "Review
+  // ratings" in docs/JOURNAL_API_CONTRACT.md) — rendered in formatJournalDay
+  // so the model sees what's already rated before calling journal-review.
+  reviews?: ReviewRating[];
+  review_totals?: ReviewTotals;
+  recap?: DayRecapSummary;
 };
 
 export type EvidenceRow = {
@@ -230,6 +248,10 @@ export type WeekDashboardPayload = {
 
 const MAX_EVIDENCE_ROWS = 24;
 const SUMMARY_CAP = 240;
+const DETAILED_SUMMARY_CAP = 2000;
+const MAX_DAY_CARDS = 30;
+const ACTIVITY_APPS_SHOWN = 6;
+const WEEK_TOP_INTENTIONS = 8;
 
 function pad2(n: number): string {
   return String(n).padStart(2, "0");
@@ -250,6 +272,26 @@ function localHHMMSS(iso: string | null | undefined): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "?";
   return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+}
+
+// Local calendar date (YYYY-MM-DD) of a timestamp — used to flag a card or
+// review row that lands on the calendar day after the journal day's `date`
+// (i.e. after local midnight but still before the next local 04:00 close).
+function localDateYMD(iso: string | null | undefined): string | undefined {
+  if (!iso) return undefined;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return undefined;
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+
+// " +1" suffix for a card/review whose local calendar date is after the
+// journal day's own `date` — e.g. a card starting at 00:30 local in a day
+// that runs 04:00 to the next 04:00. Empty when it can't be determined
+// (older engine without `date`, or a row on the day's own calendar date).
+function nextDayMarker(iso: string | null | undefined, referenceDate: string | undefined): string {
+  if (!referenceDate) return "";
+  const rowDate = localDateYMD(iso);
+  return rowDate && rowDate > referenceDate ? " +1" : "";
 }
 
 function minutesBetween(startIso?: string | null, endIso?: string | null): number {
@@ -366,11 +408,44 @@ function generationLine(generation: GenerationStatus | undefined): string | unde
   return `Generating cards: ${pendingWindows} window(s) pending${processingNote}.`;
 }
 
+// "Journal day 04:00 → 04:00 next day" — day_start/day_end are always exactly
+// 24h apart (see "Day boundary" in the contract), so their local HH:MM always
+// match; the "next day" suffix is what actually distinguishes them. Absent on
+// an older engine that doesn't send day_start/day_end yet.
+function dayBoundaryLine(dayStart: string | undefined, dayEnd: string | undefined): string | undefined {
+  if (!dayStart || !dayEnd) return undefined;
+  const start = localHHMM(dayStart);
+  const end = localHHMM(dayEnd);
+  if (start === "?" || end === "?") return undefined;
+  return `Journal day ${start} → ${end} next day`;
+}
+
+function reviewTotalsLine(totals: ReviewTotals | undefined): string | undefined {
+  if (!totals) return undefined;
+  return (
+    `Review totals: focused ${formatMinutes(totals.focused_minutes)} min · ` +
+    `neutral ${formatMinutes(totals.neutral_minutes)} min · ` +
+    `distracted ${formatMinutes(totals.distracted_minutes)} min · ` +
+    `unrated ${formatMinutes(totals.unrated_minutes)} min`
+  );
+}
+
+// Short freshness line for the day's stored recap, so the model can decide
+// whether to fetch/regenerate it via journal-recap without a separate call.
+function dayRecapLine(recap: DayRecapSummary | undefined): string | undefined {
+  if (!recap || !recap.status || recap.status === "none") return undefined;
+  const when = recap.generated_at ? ` (generated ${localHHMM(recap.generated_at)} local)` : "";
+  return `Recap: ${recap.status}${when} — use journal-recap for the full text.`;
+}
+
 export function formatJournalDay(data: JournalDayPayload): string {
   const lines: string[] = [];
   const date = data.date || "?";
   const status = data.data_status || "unknown";
   lines.push(`Journal — ${date} (status: ${status})`);
+
+  const boundaryLine = dayBoundaryLine(data.day_start, data.day_end);
+  if (boundaryLine) lines.push(boundaryLine);
 
   const genLine = generationLine(data.generation);
   if (genLine) lines.push(genLine);
@@ -395,19 +470,40 @@ export function formatJournalDay(data: JournalDayPayload): string {
     if (topApps) lines.push(`Top apps: ${topApps}`);
   }
 
+  const totalsLine = reviewTotalsLine(data.review_totals);
+  if (totalsLine) lines.push(totalsLine);
+
+  const recapLine = dayRecapLine(data.recap);
+  if (recapLine) lines.push(recapLine);
+
+  // Rendered before the cards so the model looks at what's already rated
+  // before calling journal-review (which replaces whatever it overlaps).
+  const reviews = data.reviews ?? [];
+  if (reviews.length) {
+    lines.push("", "Reviews:");
+    for (const review of reviews) {
+      const marker = nextDayMarker(review.start_at, data.date);
+      lines.push(
+        `  ${localHHMM(review.start_at)}–${localHHMM(review.end_at)}${marker}: ${review.rating || "?"}`,
+      );
+    }
+  }
+
   const activities = data.activities ?? [];
   if (!activities.length) {
     lines.push("", "No activity cards for this day yet.");
     return lines.join("\n");
   }
 
-  const cardBlocks = activities.map((card) => {
+  const shownActivities = activities.slice(0, MAX_DAY_CARDS);
+  const cardBlocks = shownActivities.map((card) => {
     const block: string[] = [];
+    const marker = nextDayMarker(card.start_at, data.date);
     const start = localHHMM(card.start_at);
     const end = localHHMM(card.end_at);
     const cardApps = appList(card.apps, CARD_APPS_SHOWN);
     block.push(
-      `#${card.id} ${start}–${end} (${formatMinutes(card.active_minutes)} min est.) ` +
+      `#${card.id} ${start}–${end}${marker} (${formatMinutes(card.active_minutes)} min est.) ` +
         `[${categoryLabel(card.category)}] ${card.title || "(untitled)"}` +
         (cardApps ? ` · apps: ${cardApps}` : ""),
     );
@@ -427,6 +523,10 @@ export function formatJournalDay(data: JournalDayPayload): string {
   });
 
   lines.push("", cardBlocks.join("\n\n"));
+  const hiddenCount = activities.length - shownActivities.length;
+  if (hiddenCount > 0) {
+    lines.push("", `(+${hiddenCount} more — narrow with journal-activity)`);
+  }
   lines.push("", "Use journal-activity with an id above for the full card, apps, and evidence.");
   return lines.join("\n");
 }
@@ -446,7 +546,9 @@ export function formatJournalActivity(
   lines.push(`Category: ${categoryLabel(data.category)}${categoryConfidence}`);
 
   if (data.summary) lines.push(`Summary: ${data.summary}`);
-  if (data.detailed_summary) lines.push(`Detailed: ${data.detailed_summary}`);
+  if (data.detailed_summary) {
+    lines.push(`Detailed: ${capText(data.detailed_summary, DETAILED_SUMMARY_CAP)}`);
+  }
 
   if (data.intention?.title) {
     lines.push(`Intention: ${data.intention.title}`);
@@ -458,7 +560,7 @@ export function formatJournalActivity(
     lines.push(`Relation: ${data.intention_relation}${confidence}${reason}`);
   }
 
-  const ledgerApps = appList(data.apps, data.apps?.length ?? 0);
+  const ledgerApps = appList(data.apps, ACTIVITY_APPS_SHOWN);
   const apps = [data.app_primary, data.app_secondary].filter(Boolean);
   if (ledgerApps) lines.push(`Apps: ${ledgerApps}`);
   else if (apps.length) lines.push(`Apps: ${apps.join(", ")}`);
@@ -720,7 +822,8 @@ export function formatJournalWeek(data: WeekDashboardPayload): string {
       (a, b) =>
         (b.supporting_minutes ?? 0) - (a.supporting_minutes ?? 0) ||
         (a.title || "").localeCompare(b.title || ""),
-    );
+    )
+    .slice(0, WEEK_TOP_INTENTIONS);
   if (!intentions.length) {
     lines.push("  none");
   }

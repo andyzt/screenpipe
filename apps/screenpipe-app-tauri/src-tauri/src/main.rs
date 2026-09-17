@@ -134,6 +134,7 @@ mod tray;
 mod staged_update;
 mod stale_tier;
 mod startup_auth;
+mod ui_language;
 mod updates;
 mod voice_training;
 mod window;

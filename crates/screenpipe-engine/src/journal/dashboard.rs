@@ -20,7 +20,9 @@
 //! Three rules apply everywhere, from `docs/JOURNAL_API_CONTRACT.md`:
 //!
 //! - idle and system cards are excluded from every section;
-//! - a card straddling local 04:00 is counted once, in the day of `start_at`;
+//! - a card straddling local 04:00 is split at the boundary: each day counts
+//!   the minutes that happened inside it and no more, so summing the days
+//!   gives the card once;
 //! - hours are local journal hours 4…27, where 27 is 03:00 of the next day.
 
 use chrono::{DateTime, Duration, NaiveDate, TimeZone, Timelike, Utc};
@@ -30,7 +32,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
 use super::day::{
-    app_name_of, card_focus_spans, clipped_detours, compute_by_app, compute_day_totals,
+    app_name_of, card_focus_spans, clip_card, clipped_detours, compute_by_app, compute_day_totals,
     host_of_title, merge_focus_blocks, minutes_between, parse, rank_apps, ActivityCard, CardApp,
     CARD_APPS_LIMIT, DISTRACTION_CATEGORY_ID, UNOBSERVED_TASK_KIND,
 };
@@ -59,10 +61,11 @@ const RATING_DISTRACTED: &str = "distracted";
 
 // ---------- input ----------
 
-/// One day of already-loaded material. `cards` holds only the cards whose
-/// `start_at` falls inside this day (the caller applies the straddle rule),
-/// with `apps` already attached; `intervals` holds the day's ledger intervals,
-/// which is what `switches` counts.
+/// One day of already-loaded material. `cards` holds every card overlapping
+/// this day, with `apps` already attached — a card straddling local 04:00 is
+/// handed to both of its days and clipped to each here, so the caller does not
+/// have to; `intervals` holds the day's ledger intervals, which is what
+/// `switches` counts.
 #[derive(Debug, Clone)]
 pub struct DashboardDayInput {
     pub date: NaiveDate,
@@ -239,12 +242,8 @@ pub fn compute_dashboard<Tz: TimeZone>(
     input: &DashboardInput,
     tz: &Tz,
 ) -> JournalDashboardResponse {
-    let days: Vec<Vec<ActivityCard>> = input.days.iter().map(|day| countable(&day.cards)).collect();
-    let compare_cards: Vec<Vec<ActivityCard>> = input
-        .compare_days
-        .iter()
-        .map(|day| countable(&day.cards))
-        .collect();
+    let days: Vec<Vec<ActivityCard>> = input.days.iter().map(countable).collect();
+    let compare_cards: Vec<Vec<ActivityCard>> = input.compare_days.iter().map(countable).collect();
 
     let day_rows: Vec<DashboardDay> = input
         .days
@@ -267,7 +266,12 @@ pub fn compute_dashboard<Tz: TimeZone>(
     let compare_week: Vec<&ActivityCard> = compare_cards.iter().flatten().collect();
 
     let categories = categories_of(&week_cards, &compare_week, has_compare);
-    let apps = apps_of(&week_cards, &compare_week, has_compare);
+    let apps = apps_of(
+        &week_cards,
+        &compare_week,
+        has_compare,
+        window_of(&input.days),
+    );
     let flows = flows_of(&week_cards, &apps);
     let heatmap = heatmap_of(&input.days, &days, tz);
     let workflow = workflow_of(input, &days, &apps, tz);
@@ -298,12 +302,18 @@ pub fn compute_dashboard<Tz: TimeZone>(
     }
 }
 
-/// Idle and system cards are not part of any section of the dashboard.
-fn countable(cards: &[ActivityCard]) -> Vec<ActivityCard> {
-    cards
+/// The cards every section of the dashboard works on: the day's cards without
+/// the idle and system ones, each clipped to the day.
+///
+/// Clipping here rather than in the route is what makes the straddle rule hold
+/// in *all* of the sections at once — the day rows, the week's categories and
+/// apps, the focus blocks — because from here on a card is entirely inside the
+/// day that holds it.
+fn countable(day: &DashboardDayInput) -> Vec<ActivityCard> {
+    day.cards
         .iter()
         .filter(|card| !card.category.is_idle && !card.category.is_system)
-        .cloned()
+        .filter_map(|card| clip_card(card, (day.day_start, day.day_end)))
         .collect()
 }
 
@@ -316,7 +326,7 @@ fn day_row(
     cards: &[ActivityCard],
     reviews: &[JournalReviewSpan],
 ) -> DashboardDay {
-    let totals = compute_day_totals(cards);
+    let totals = compute_day_totals(cards, (day.day_start, day.day_end));
     let mut first: Option<DateTime<Utc>> = None;
     let mut last: Option<DateTime<Utc>> = None;
     for card in cards {
@@ -510,9 +520,10 @@ fn apps_of(
     cards: &[&ActivityCard],
     compare: &[&ActivityCard],
     has_compare: bool,
+    window: (DateTime<Utc>, DateTime<Utc>),
 ) -> Vec<DashboardApp> {
     let owned: Vec<ActivityCard> = cards.iter().map(|card| (*card).clone()).collect();
-    let ranked = compute_by_app(&owned);
+    let ranked = compute_by_app(&owned, window);
     let total: f64 = app_minutes(cards).values().sum();
     let compare_minutes = app_minutes(compare);
 
@@ -885,6 +896,16 @@ fn intentions_of(
             row
         })
         .collect()
+}
+
+/// The span the requested week covers, for the helpers that take a clipping
+/// window. The cards reaching them are already clipped to their own day, so
+/// this only has to contain the week.
+fn window_of(days: &[DashboardDayInput]) -> (DateTime<Utc>, DateTime<Utc>) {
+    match (days.first(), days.last()) {
+        (Some(first), Some(last)) => (first.day_start, last.day_end),
+        _ => (DateTime::<Utc>::MIN_UTC, DateTime::<Utc>::MAX_UTC),
+    }
 }
 
 fn card_span_minutes(card: &ActivityCard) -> Option<f64> {
@@ -1555,6 +1576,59 @@ mod tests {
         assert_eq!(personal.compare_minutes, Some(0.0));
         let code = &dashboard.apps[0];
         assert_eq!(code.compare_minutes, Some(60.0));
+
+        // A caller that dropped the compare week — the route does when the
+        // history-access policy cuts into it — reports no comparison at all,
+        // not a zero: `null` everywhere it appears.
+        input.compare_days = Vec::new();
+        let dashboard = compute_dashboard(&input, &Utc);
+        assert!(dashboard.compare.is_none());
+        assert!(dashboard
+            .categories
+            .iter()
+            .all(|entry| entry.compare_minutes.is_none()));
+        assert!(dashboard
+            .apps
+            .iter()
+            .all(|entry| entry.compare_minutes.is_none()));
+    }
+
+    /// The straddle rule, from the pure side: a card handed to both of its
+    /// days contributes its own minutes to each and the week counts it once.
+    #[test]
+    fn a_card_across_the_boundary_is_split_between_its_two_days() {
+        let mut input = DashboardInput {
+            days: empty_week(date("2026-09-14")),
+            compare_days: Vec::new(),
+            intentions: Vec::new(),
+            reviews: Vec::new(),
+            linked_intervals: HashMap::new(),
+        };
+        // 03:30 → 04:30 on the Tuesday/Wednesday boundary, as both days load
+        // it: whole, in each.
+        let straddler = card(
+            42,
+            "2026-09-16T03:30:00Z",
+            "2026-09-16T04:30:00Z",
+            "work",
+            "Night deploy",
+            60.0,
+            &[("Code", None, 60.0)],
+        );
+        input.days[1].cards = vec![straddler.clone()];
+        input.days[2].cards = vec![straddler];
+        let dashboard = compute_dashboard(&input, &Utc);
+
+        assert!(close(dashboard.days[1].active_minutes, 30.0));
+        assert!(close(dashboard.days[2].active_minutes, 30.0));
+        assert!(close(dashboard.totals.active_minutes, 60.0));
+        assert!(close(dashboard.totals.focus_minutes, 60.0));
+        // Neither half merges across the boundary into a one-hour block.
+        assert!(close(dashboard.totals.longest_focus_block_minutes, 30.0));
+        assert_eq!(dashboard.focus_blocks.len(), 2);
+        assert_eq!(dashboard.apps.len(), 1);
+        assert!(close(dashboard.apps[0].minutes, 60.0));
+        assert!(close(dashboard.categories[0].minutes, 60.0));
     }
 
     #[test]

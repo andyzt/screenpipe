@@ -23,11 +23,33 @@ if [ "${SCREENPIPE_RELEASE_BUILD:-0}" = "1" ]; then
   : "${APPLE_SIGNING_IDENTITY:?SCREENPIPE_RELEASE_BUILD needs APPLE_SIGNING_IDENTITY}"
 
   CONF=src-tauri/tauri.conf.json
-  CONF_BAK=src-tauri/tauri.conf.json.releasebuild.bak
-  cp -f "$CONF" "$CONF_BAK"
-  restore_conf() { [ -f "$CONF_BAK" ] && mv -f "$CONF_BAK" "$CONF"; }
-  trap restore_conf EXIT
-  cp -f src-tauri/tauri.prod.conf.json "$CONF"
+  PROD_CONF=src-tauri/tauri.prod.conf.json
+  # Until 2026-09 this script copied tauri.prod.conf.json over the tracked
+  # tauri.conf.json and restored it from a .bak on EXIT. SIGKILL, a closed
+  # terminal or a reboot skipped that trap and left the prod config checked in
+  # as the dev one; the next run then backed *that* up and made the clobber
+  # permanent. Nothing writes the tracked file any more, but a leftover backup
+  # from the old script means the working tree is still in that broken state.
+  LEGACY_CONF_BAK=src-tauri/tauri.conf.json.releasebuild.bak
+  if [ -e "$LEGACY_CONF_BAK" ]; then
+    echo "ERROR: $LEGACY_CONF_BAK exists — an older release build was killed before it" >&2
+    echo "       restored the tracked config. $CONF is probably the production config." >&2
+    echo "       Restore it (e.g. 'git checkout -- $CONF'), delete the backup, then rerun." >&2
+    exit 1
+  fi
+
+  # Everything this build creates outside the repo lives under one temp root,
+  # so a single cleanup covers it — and it fires on Ctrl-C and SIGTERM, not
+  # only on a clean exit. (SIGKILL still cannot be trapped; that is why
+  # nothing here is a mutation of the working tree.)
+  TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/sp-release-build.XXXXXX")"
+  cleanup_release_build() { rm -rf "$TMP_ROOT"; }
+  # A signal handler that does not exit would let the script fall through to
+  # the codesign steps with no bundle, so it ends the run itself.
+  abort_release_build() { cleanup_release_build; exit 130; }
+  trap abort_release_build INT TERM
+  trap cleanup_release_build EXIT
+  RELEASE_CONF="$TMP_ROOT/tauri.release.conf.json"
 
   rm -rf src-tauri/target/release/bundle
 
@@ -42,7 +64,8 @@ if [ "${SCREENPIPE_RELEASE_BUILD:-0}" = "1" ]; then
     export TOOLCHAINS
     xcrun metal --version
     find src-tauri/target/release/build -maxdepth 1 -name "mlx-sys-*" -exec rm -rf {} + 2>/dev/null || true
-    WRAPPER_DIR="$(mktemp -d "${TMPDIR:-/tmp}/sp-compiler-wrapper.XXXXXX")"
+    WRAPPER_DIR="$TMP_ROOT/compiler-wrappers"
+    mkdir -p "$WRAPPER_DIR"
     for tool in cc c++ xcrun; do
       REAL_PATH="$(command -v $tool)"
       printf '#!/bin/bash\nnew=(); for x in "$@"; do [[ "$x" == -mmacosx-version-min=* ]] && x="-mmacosx-version-min=14.0"; new+=("$x"); done; exec %s "${new[@]}"\n' "$REAL_PATH" > "$WRAPPER_DIR/$tool"
@@ -60,7 +83,52 @@ if [ "${SCREENPIPE_RELEASE_BUILD:-0}" = "1" ]; then
   fi
   OVERLAY="{\"bundle\":{\"createUpdaterArtifacts\":false,\"externalBin\":[\"bun\",\"ffmpeg\",\"ffprobe\",\"mlx.metallib\"],\"macOS\":{\"files\":{$FILES}}}}"
 
-  bun tauri build --bundles app --config "$OVERLAY" \
+  # The production config plus this build's overlay, merged into one throwaway
+  # file that `--config` layers over the tracked tauri.conf.json (RFC 7386
+  # merge patch, the same semantics the CLI applies). The tracked file is only
+  # ever read. The guard below is what keeps "layer" equivalent to the old
+  # "replace": a key the dev config has and the prod config lacks would
+  # survive the merge instead of disappearing, so the build stops and says so
+  # rather than shipping a dev value.
+  SCREENPIPE_BASE_CONF="$CONF" \
+  SCREENPIPE_PROD_CONF="$PROD_CONF" \
+  SCREENPIPE_OVERLAY="$OVERLAY" \
+  SCREENPIPE_RELEASE_CONF="$RELEASE_CONF" \
+  bun -e '
+const fs = require("fs");
+const read = (p) => JSON.parse(fs.readFileSync(p, "utf8"));
+const base = read(process.env.SCREENPIPE_BASE_CONF);
+const prod = read(process.env.SCREENPIPE_PROD_CONF);
+const overlay = JSON.parse(process.env.SCREENPIPE_OVERLAY);
+const isObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+const missing = [];
+(function check(a, b, at) {
+  if (!isObject(a)) return;
+  for (const key of Object.keys(a)) {
+    const path = at ? at + "." + key : key;
+    if (!isObject(b) || !(key in b)) { missing.push(path); continue; }
+    check(a[key], b[key], path);
+  }
+})(base, prod, "");
+if (missing.length) {
+  console.error("ERROR: production config does not override: " + missing.join(", "));
+  process.exit(1);
+}
+// Combines two merge patches into one. A null is kept, not applied: it is an
+// instruction for the CLI ("remove this key", e.g. the plain-file entries
+// tauri.macos.conf.json adds under bundle.macOS.files) and must reach it.
+const merge = (a, b) => {
+  if (!isObject(b)) return b;
+  const out = isObject(a) ? { ...a } : {};
+  for (const [key, value] of Object.entries(b)) {
+    out[key] = value === null ? null : merge(out[key], value);
+  }
+  return out;
+};
+fs.writeFileSync(process.env.SCREENPIPE_RELEASE_CONF, JSON.stringify(merge(prod, overlay), null, 2));
+'
+
+  bun tauri build --bundles app --config "$RELEASE_CONF" \
     --features metal,parakeet-mlx,rfdetr-mlx,redact-onnx-coreml
 
   APP_PATH="src-tauri/target/release/bundle/macos/screenpipe.app"

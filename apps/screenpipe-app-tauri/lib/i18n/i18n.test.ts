@@ -131,6 +131,27 @@ describe("plural rules", () => {
     ]);
   });
 
+  it("declines непрочитанное in the notification bell label", () => {
+    const t = translatorFor("ru");
+    expect(t("notification.bell.labelUnread", { count: 1 })).toBe(
+      "уведомления, 1 важное непрочитанное",
+    );
+    expect(t("notification.bell.labelUnread", { count: 3 })).toBe(
+      "уведомления, 3 важных непрочитанных",
+    );
+    expect(t("notification.bell.labelUnread", { count: 12 })).toBe(
+      "уведомления, 12 важных непрочитанных",
+    );
+  });
+
+  it("keeps the number and its unit on one line in the inbox", () => {
+    // sasha, references/04-typography: a non-breaking space between a number
+    // and a unit, so "5 мин назад" never wraps after the digit.
+    const ru = DICTIONARIES.ru;
+    expect(ru["notification.inbox.time.minutes"]).toContain("\u00a0мин");
+    expect(ru["notification.inbox.time.hours"]).toContain("\u00a0ч");
+  });
+
   it("declines окно when the canvas says what is being written", () => {
     const t = translatorFor("ru");
     expect(t("canvas.writing", { count: 1 })).toBe("пишем 1 окно");

@@ -21,6 +21,7 @@ mod util;
 
 pub use gesture::init_magnify_handler;
 pub use panel::main_label_for_mode;
+pub(crate) use show::home_page_query;
 pub use show::{RewindWindowId, ShowRewindWindow};
 pub use util::with_autorelease_pool;
 

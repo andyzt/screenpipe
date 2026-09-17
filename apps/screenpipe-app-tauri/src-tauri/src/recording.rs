@@ -136,7 +136,14 @@ fn recording_access_policy(
     if trial_activation_paywall {
         return false;
     }
-    if authentication_status == crate::startup_auth::AuthenticationStatus::NotRequired {
+    // `NotRequired` is the accountless build's answer, and accountless builds
+    // are never enterprise ones (`startup_auth::ACCOUNTLESS_BUILD`). Spelling
+    // that out here keeps the bypass unreachable even if some other path —
+    // `should_skip_onboarding`, a future resolver — produced `NotRequired` in
+    // an enterprise binary: entitlement is then still decided below.
+    if !is_enterprise_build
+        && authentication_status == crate::startup_auth::AuthenticationStatus::NotRequired
+    {
         return true;
     }
     server_access_policy(
@@ -186,8 +193,13 @@ pub(crate) fn server_access_allowed(app: &tauri::AppHandle, store: &SettingsStor
         return false;
     }
     // An accountless build resolves to `NotRequired`: there is no plan to
-    // verify, so the engine starts exactly as it does in dev builds.
-    if startup_authentication == crate::startup_auth::AuthenticationStatus::NotRequired {
+    // verify, so the engine starts exactly as it does in dev builds. Gated on
+    // the same condition as `startup_auth::ACCOUNTLESS_BUILD`, so an
+    // enterprise binary keeps its entitlement check below no matter what
+    // resolved this status.
+    if crate::startup_auth::ACCOUNTLESS_BUILD
+        && startup_authentication == crate::startup_auth::AuthenticationStatus::NotRequired
+    {
         return true;
     }
 
@@ -1802,15 +1814,34 @@ mod recording_access_tests {
             false,
             AuthenticationStatus::NotRequired,
         ));
-        assert!(recording_access_policy(
+    }
+
+    /// `NotRequired` belongs to the accountless build, which is never an
+    /// enterprise one. An enterprise binary that somehow resolved it must
+    /// still be refused until the organization's grant is in place — otherwise
+    /// `--features enterprise-build` records without seat enrollment.
+    #[test]
+    fn enterprise_builds_are_never_signup_free() {
+        assert!(!recording_access_policy(
             true,
             false,
             false,
-            false,
+            /* enterprise_authorized */ false,
             false,
             false,
             AuthenticationStatus::NotRequired,
         ));
+        // With the grant in place it behaves like any other enterprise start.
+        assert!(recording_access_policy(
+            true,
+            false,
+            false,
+            /* enterprise_authorized */ true,
+            false,
+            false,
+            AuthenticationStatus::NotRequired,
+        ));
+        assert!(!crate::startup_auth::ACCOUNTLESS_BUILD || !cfg!(feature = "enterprise-build"));
     }
 
     #[test]

@@ -120,6 +120,7 @@ import { JournalView } from "@/components/journal/journal-view";
 import { journalDayToday } from "@/lib/journal/format";
 import { mondayOf } from "@/lib/journal/week-layout";
 import { JournalRail } from "@/components/journal-rail";
+import { useT } from "@/lib/i18n";
 import { JOURNAL_SHELL, type RailSectionId } from "@/lib/journal-shell";
 import { ShortcutKeycap } from "@/components/shortcut-keycap";
 import { ExperimentalShortcutGuide } from "@/components/shortcut-guide";
@@ -270,6 +271,7 @@ function HomeContent() {
   }, [activeSection, setActiveSection, trialActivationLocked]);
 
   const { settings, updateSettings, isSettingsLoaded } = useSettings();
+  const t = useT();
   const { toast } = useToast();
   const updateSettingsRef = useRef(updateSettings);
   updateSettingsRef.current = updateSettings;
@@ -1188,18 +1190,21 @@ function HomeContent() {
   // Sidebar nav definitions. The user owns order and which rows are visible
   // (see lib/utils/sidebar-nav-layout); enterprise policy and the
   // timeline-disabled rule decide what is even eligible, and always win.
+  // The labels are the rail's own `rail.*` keys: these rows and the rail name
+  // the same destinations, and the command palette searches this label, so an
+  // English string here would be an untranslated hit in a Russian palette.
   const SIDEBAR_SECTION_DEFS: Record<SidebarNavId, { label: string; icon: React.ReactNode }> = {
-    journal: { label: "Journal", icon: <NotebookPen className="h-3.5 w-3.5" /> },
+    journal: { label: t("rail.journal"), icon: <NotebookPen className="h-3.5 w-3.5" /> },
     // The Chat row doubles as "go to chat view + start a fresh conversation".
     // Each click allocates a new session id (empty rows are not reused — that
     // felt like opening an old recent).
-    home: { label: "Chat", icon: <Plus className="h-3.5 w-3.5" /> },
-    meetings: { label: "Meetings", icon: <CalendarClock className="h-3.5 w-3.5" /> },
-    timeline: { label: "Timeline", icon: <MonitorPlay className="h-3.5 w-3.5" /> },
-    activity: { label: "Activity", icon: <ListTree className="h-3.5 w-3.5" /> },
-    brain: { label: "Library", icon: <Brain className="h-3.5 w-3.5" /> },
-    pipes: { label: "Automations", icon: <TimerReset className="h-3.5 w-3.5" /> },
-    connections: { label: "Connections", icon: <Plug className="h-3.5 w-3.5" /> },
+    home: { label: t("rail.home"), icon: <Plus className="h-3.5 w-3.5" /> },
+    meetings: { label: t("rail.meetings"), icon: <CalendarClock className="h-3.5 w-3.5" /> },
+    timeline: { label: t("rail.timeline"), icon: <MonitorPlay className="h-3.5 w-3.5" /> },
+    activity: { label: t("rail.activity"), icon: <ListTree className="h-3.5 w-3.5" /> },
+    brain: { label: t("rail.brain"), icon: <Brain className="h-3.5 w-3.5" /> },
+    pipes: { label: t("rail.pipes"), icon: <TimerReset className="h-3.5 w-3.5" /> },
+    connections: { label: t("rail.connections"), icon: <Plug className="h-3.5 w-3.5" /> },
   };
 
   // The journal fork's shell. Kept as a constant rather than a setting: it is

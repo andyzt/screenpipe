@@ -162,6 +162,9 @@ describe("retireDeepSeekVisionModel", () => {
 });
 
 describe("dropDirectDeepSeekPreset", () => {
+  // Exactly what the first accountless build seeded: custom provider, the
+  // direct DeepSeek endpoint, the vision model id, a per-user key on a dead
+  // account.
   const direct = {
     id: "deepseek-v4-flash-vision-exp",
     provider: "custom",
@@ -178,11 +181,27 @@ describe("dropDirectDeepSeekPreset", () => {
     const kept = dropDirectDeepSeekPreset([{ ...gateway, defaultPreset: false }, direct]);
     expect(kept).not.toBeNull();
     expect(kept!.map((p) => p.id)).toEqual(["deepseek"]);
+    expect(kept!.filter((p) => p.defaultPreset === true)).toHaveLength(1);
     expect(kept![0].defaultPreset).toBe(true);
   });
 
-  it("seeds the gateway preset when nothing else could become the default", () => {
+  it("also matches the prefixed model id the same build wrote", () => {
+    const kept = dropDirectDeepSeekPreset([
+      { ...direct, model: "deepseek/deepseek-v4-flash-vision-exp" },
+      { id: "openai", provider: "openai", model: "gpt-5", defaultPreset: false },
+    ] as unknown as AIPreset[]);
+    expect(kept!.map((p) => p.id)).toEqual(["openai", DEEPSEEK_PRESET_ID]);
+  });
+
+  it("replaces a lone seeded preset with exactly one default gateway preset", () => {
     const kept = dropDirectDeepSeekPreset([direct]);
+    expect(kept!.map((p) => [p.id, p.defaultPreset])).toEqual([["deepseek", true]]);
+    expect(kept!.filter((p) => p.defaultPreset === true)).toHaveLength(1);
+    expect(kept![0]).toEqual({ ...makeDefaultPresets(false)[0], defaultPreset: true });
+  });
+
+  it("seeds the gateway preset even when the lone seeded preset was not the default", () => {
+    const kept = dropDirectDeepSeekPreset([{ ...direct, defaultPreset: false }]);
     expect(kept!.map((p) => [p.id, p.defaultPreset])).toEqual([["deepseek", true]]);
   });
 
@@ -192,5 +211,177 @@ describe("dropDirectDeepSeekPreset", () => {
     expect(kept!.map((p) => [p.id, p.defaultPreset])).toEqual([["mine", true]]);
     expect(dropDirectDeepSeekPreset(makeDefaultPresets(false))).toBeNull();
     expect(dropDirectDeepSeekPreset([])).toBeNull();
+    expect(dropDirectDeepSeekPreset(undefined)).toBeNull();
+  });
+
+  // The whole point of the narrow match: the user's own DeepSeek account.
+  it("never drops a preset the user made against their own DeepSeek key", () => {
+    const mine = [
+      {
+        id: "my-chat",
+        provider: "custom",
+        url: "https://api.deepseek.com/v1",
+        model: "deepseek-chat",
+        apiKey: "sk-mine",
+        defaultPreset: true,
+        prompt: "",
+      },
+      {
+        id: "my-reasoner",
+        provider: "custom",
+        url: "https://api.deepseek.com/v1",
+        model: "deepseek-reasoner",
+        apiKey: "sk-mine",
+        defaultPreset: false,
+        prompt: "",
+      },
+    ] as unknown as AIPreset[];
+
+    expect(dropDirectDeepSeekPreset(mine)).toBeNull();
+
+    // …and they survive untouched when a seeded preset is dropped next to them.
+    const kept = dropDirectDeepSeekPreset([...mine, { ...direct, defaultPreset: false }]);
+    expect(kept!.map((p) => p.id)).toEqual(["my-chat", "my-reasoner"]);
+    expect(kept![0]).toEqual(mine[0]);
+    expect(kept![1]).toEqual(mine[1]);
+  });
+
+  it("does not match a lookalike host or a path prefix", () => {
+    for (const url of [
+      "https://api.deepseek.com.evil.test",
+      "https://api.deepseek.com.evil.test/v1",
+      "https://evil.test/https://api.deepseek.com",
+      "https://evil.test/api.deepseek.com/v1",
+      "https://apiXdeepseek.com",
+      "not a url at all",
+    ]) {
+      expect(dropDirectDeepSeekPreset([{ ...direct, url }])).toBeNull();
+    }
+    // The real host still matches whatever case or port-free form it is in.
+    expect(dropDirectDeepSeekPreset([{ ...direct, url: "https://API.DeepSeek.COM/v1" }])).not.toBeNull();
+  });
+
+  it("only matches the custom provider", () => {
+    expect(
+      dropDirectDeepSeekPreset([{ ...direct, provider: "deepseek" }]),
+    ).toBeNull();
+  });
+
+  it("never mutates the presets it was given", () => {
+    const [gateway] = makeDefaultPresets(false);
+    const input = [{ ...gateway, defaultPreset: false }, { ...direct }].map((p) =>
+      Object.freeze(p),
+    ) as unknown as AIPreset[];
+    const before = JSON.stringify(input);
+
+    const kept = dropDirectDeepSeekPreset(Object.freeze(input));
+
+    expect(JSON.stringify(input)).toBe(before);
+    expect(input[0].defaultPreset).toBe(false);
+    expect(kept![0]).not.toBe(input[0]);
+    expect(kept![0].defaultPreset).toBe(true);
+  });
+});
+
+// The seeding step that runs right after the three migrations above, expressed
+// purely. Mirrors the `_deepseekPresetSeeded` block in use-settings.tsx.
+function seedGatewayPresetIfMissing(presets: AIPreset[]): AIPreset[] {
+  const hasDeepSeekPreset = presets.some((p: any) => p.provider === "deepseek");
+  if (presets.length === 0 || hasDeepSeekPreset) return presets;
+  const onlyCloudDefaults = presets.every(
+    (p: any) => !p.defaultPreset || p.provider === "screenpipe-cloud",
+  );
+  return [
+    { ...makeDefaultPresets(false)[0], defaultPreset: onlyCloudDefaults },
+    ...presets.map((p: any) => (onlyCloudDefaults ? { ...p, defaultPreset: false } : p)),
+  ] as AIPreset[];
+}
+
+describe("the migration chain", () => {
+  it("leaves exactly one default and keeps the user's own DeepSeek preset", () => {
+    // A store that went through every bad state: two keyless gateway rows (one
+    // still on the retired vision model, one downgraded to "custom"), the
+    // user's own keyed deepseek-chat preset on the direct endpoint, and the
+    // dead direct preset the first accountless build seeded as the default.
+    const store = [
+      { id: "openai", provider: "openai", model: "gpt-5", apiKey: "sk-oa", defaultPreset: false },
+      {
+        id: DEEPSEEK_PRESET_ID,
+        provider: "deepseek",
+        apiKey: "",
+        url: DEEPSEEK_API_URL,
+        model: DEEPSEEK_RETIRED_VISION_MODEL,
+        maxContextChars: 200000,
+        defaultPreset: false,
+        prompt: "",
+      },
+      {
+        id: "my-chat",
+        provider: "custom",
+        apiKey: "sk-mine",
+        url: "https://api.deepseek.com/v1",
+        model: "deepseek-chat",
+        maxContextChars: 128000,
+        defaultPreset: false,
+        prompt: "mine",
+      },
+      {
+        id: "deepseek-v4-flash-vision-exp",
+        provider: "custom",
+        apiKey: "sk-dead-account",
+        url: "https://api.deepseek.com",
+        model: "deepseek-v4-flash-vision-exp",
+        maxContextChars: 512000,
+        defaultPreset: true,
+        prompt: "",
+      },
+      {
+        id: "deepseek-dupe",
+        provider: "custom",
+        apiKey: "",
+        url: DEEPSEEK_API_URL,
+        model: DEEPSEEK_DEFAULT_MODEL,
+        maxContextChars: 200000,
+        defaultPreset: false,
+        prompt: "",
+      },
+    ] as unknown as AIPreset[];
+
+    let presets = store;
+    presets = collapseDuplicateDeepSeekPresets(presets) ?? presets;
+    // Collapsing already put the survivor on the current model, so retiring the
+    // vision model has nothing left to do.
+    expect(retireDeepSeekVisionModel(presets)).toBeNull();
+    presets = dropDirectDeepSeekPreset(presets) ?? presets;
+    presets = seedGatewayPresetIfMissing(presets);
+
+    expect(presets.filter((p) => p.defaultPreset === true)).toHaveLength(1);
+    const [theDefault] = presets.filter((p) => p.defaultPreset === true);
+    expect(theDefault.id).toBe(DEEPSEEK_PRESET_ID);
+    expect(theDefault.provider).toBe("deepseek");
+    expect(theDefault.url).toBe(DEEPSEEK_API_URL);
+    expect(theDefault.model).toBe(DEEPSEEK_DEFAULT_MODEL);
+
+    // The user's own keyed preset survives byte for byte, the dead one is gone.
+    expect(presets.map((p) => p.id)).toEqual(["openai", DEEPSEEK_PRESET_ID, "my-chat"]);
+    expect(presets.find((p) => p.id === "my-chat")).toEqual(store[2]);
+  });
+
+  it("does not resurrect a gateway preset the user deleted, once seeding has run", () => {
+    // After the chain the store is marked seeded, so the only presets left are
+    // the ones the user kept — the seeding step is simply not reached again.
+    const afterDeletion = [
+      { id: "openai", provider: "openai", model: "gpt-5", apiKey: "sk-oa", defaultPreset: true },
+    ] as unknown as AIPreset[];
+
+    expect(collapseDuplicateDeepSeekPresets(afterDeletion)).toBeNull();
+    expect(retireDeepSeekVisionModel(afterDeletion)).toBeNull();
+    expect(dropDirectDeepSeekPreset(afterDeletion)).toBeNull();
+    // The seeding step *would* re-add it, which is exactly why use-settings.tsx
+    // guards it with the one-shot `_deepseekPresetSeeded` marker.
+    expect(seedGatewayPresetIfMissing(afterDeletion).map((p) => p.id)).toEqual([
+      DEEPSEEK_PRESET_ID,
+      "openai",
+    ]);
   });
 });

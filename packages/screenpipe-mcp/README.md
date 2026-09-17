@@ -280,10 +280,13 @@ plain-text digest: totals with week-over-week deltas, a per-day line, top
 categories and apps, the week's five longest focus blocks, and each active
 intention's supporting/other/distraction minute split.
 
-`set-intention` and `journal-review` are the only writes among these seven —
-every other tool here is read-only. On an older screenpipe build without
-these routes, all seven return a short "journal not available" message
-instead of an error.
+`set-intention`, `journal-recap` (when it triggers generation), and
+`journal-review` are the three writes among these seven — every other tool
+here is read-only. `journal-review` is destructive: a new rating replaces any
+existing rating(s) inside the span; `journal-day`'s `reviews` and
+`review_totals` show what's already there before you overwrite it. On an
+older screenpipe build without these routes, all seven return a short
+"journal not available" message instead of an error.
 
 ### list-meetings
 List detected meetings with id, duration, app, attendees, and note snippet. Pass `q` to filter by substring (title, attendees, notes) — `q` searches all meeting history, so omit the time range when looking for a person or topic. Follow up with `get-meeting` (optionally `include_transcript: true`) for the full note and speaker-attributed transcript.

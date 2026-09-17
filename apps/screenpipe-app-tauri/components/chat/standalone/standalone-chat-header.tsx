@@ -133,7 +133,7 @@ export function StandaloneChatHeader({
             setShowHistory(!showHistory);
           }}
           className="relative z-10 h-7 w-7"
-          title="Chat history"
+          title={t("chat.header.historyTooltip")}
         >
           <History size={14} />
         </Button>

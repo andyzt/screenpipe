@@ -263,6 +263,7 @@ export default function NotificationPanelPage() {
       payload?.pipe_name,
       payload?.source_url,
       hide,
+      t,
     ],
   );
 

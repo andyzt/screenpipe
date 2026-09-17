@@ -130,6 +130,24 @@ pub struct JournalDistraction {
     pub summary: String,
 }
 
+/// A card reduced to the fields a classifier reads: what it was, when, and
+/// how it related to the intention. Served by
+/// [`DatabaseManager::list_journal_activity_spans`] for the callers that would
+/// otherwise pay for a card's whole retinue — evidence counts, distractions,
+/// feedback, review ratings, the category join — and use none of it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, FromRow)]
+pub struct JournalActivitySpan {
+    pub id: i64,
+    pub start_at: String,
+    pub end_at: String,
+    pub state: String,
+    pub category_id: String,
+    pub intention_id: Option<i64>,
+    pub intention_relation: Option<String>,
+    pub app_primary: Option<String>,
+    pub app_secondary: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct JournalActivity {
     pub id: i64,
@@ -369,6 +387,29 @@ impl From<RawCategory> for JournalCategory {
     }
 }
 
+/// How far either side of a span the `day` bound is widened. It absorbs the
+/// local 04:00 roll-back, any zone offset, and a card that started before the
+/// span and runs into it. Only a merged idle card can be longer than this, and
+/// nothing that reads spans cares what the machine did while nobody was there.
+const SCAN_DAY_SLACK_DAYS: i64 = 2;
+
+/// Day keys that contain every card overlapping `[start_at, end_at)`.
+///
+/// `journal_activities.day` is the local journal day of the card's start —
+/// the local calendar date, rolled back before local 04:00; `screenpipe-engine`'s
+/// `journal::time::day_of` owns that rule and this file deliberately does not
+/// repeat it. All that is needed here is a bound loose enough that it can
+/// never hide a card and tight enough to keep `idx_journal_activities_day`
+/// from degenerating into a scan of the whole table.
+fn scan_day_bounds(start_at: DateTime<Utc>, end_at: DateTime<Utc>) -> (String, String) {
+    let slack = chrono::Duration::days(SCAN_DAY_SLACK_DAYS);
+    let from = (start_at - slack)
+        .with_timezone(&chrono::Local)
+        .date_naive();
+    let to = (end_at + slack).with_timezone(&chrono::Local).date_naive();
+    (from.to_string(), to.to_string())
+}
+
 pub(super) fn parse_ts(value: &str) -> Option<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(value)
         .ok()
@@ -505,6 +546,15 @@ impl DatabaseManager {
         Ok(claimed)
     }
 
+    /// Close the window this pass claimed. Conditional on the row still being
+    /// `processing`: a user who asks for a regenerate while the window is
+    /// in flight sets it back to `pending`, and writing `done` over that would
+    /// silently throw their request away — the next pass would see a finished
+    /// window and never rerun it.
+    ///
+    /// Returns whether the update applied. `false` means someone else moved
+    /// the row (in practice: a regenerate re-queued it), and the caller leaves
+    /// it alone.
     pub async fn finish_journal_window(
         &self,
         id: i64,
@@ -513,16 +563,16 @@ impl DatabaseManager {
         evidence_hash: Option<&str>,
         prompt_version: Option<&str>,
         model: Option<&str>,
-    ) -> Result<(), SqlxError> {
+    ) -> Result<bool, SqlxError> {
         let mut tx = self.begin_immediate_with_retry().await?;
-        sqlx::query(
+        let result = sqlx::query(
             "UPDATE journal_windows \
              SET status = ?2, error = ?3, \
                  evidence_hash = COALESCE(?4, evidence_hash), \
                  prompt_version = COALESCE(?5, prompt_version), \
                  model = COALESCE(?6, model), \
                  updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') \
-             WHERE id = ?1",
+             WHERE id = ?1 AND status = 'processing'",
         )
         .bind(id)
         .bind(status)
@@ -532,12 +582,19 @@ impl DatabaseManager {
         .bind(model)
         .execute(&mut **tx.conn())
         .await?;
+        let applied = result.rows_affected() > 0;
         tx.commit().await?;
-        Ok(())
+        Ok(applied)
     }
 
     /// Manual reprocess: every window overlapping the range goes back to
     /// `pending`. Cards are replaced as those windows complete.
+    ///
+    /// A window that is `processing` right now is reset too — the user asked
+    /// for a rewrite of what they are looking at, and skipping the in-flight
+    /// window would quietly leave that minute of the day on the old cards.
+    /// [`Self::finish_journal_window`] is what makes that safe: the pass that
+    /// is mid-flight can no longer close a window it no longer owns.
     pub async fn reset_journal_windows_in_range(
         &self,
         start_at: DateTime<Utc>,
@@ -620,6 +677,71 @@ impl DatabaseManager {
             .bind(&range_start)
             .bind(active_minutes * kept.clamp(0.0, 1.0))
             .bind(&now_text)
+            .execute(&mut **tx.conn())
+            .await?;
+        }
+
+        // The mirror image at the other end: a card that runs past the range
+        // keeps its tail. The minutes after `end_at` belong to a later window
+        // that has already interpreted them (or to no window yet), and this
+        // rewrite has nothing to say about them — deleting the card outright
+        // used to erase them with no replacement.
+        //
+        // It runs *after* the head trim on purpose, so a card that encloses
+        // the whole range has already been trimmed to end at `range_start` and
+        // no longer matches here: it keeps its head. Keeping both halves would
+        // mean splitting one row in two, and a rewrite has no second
+        // `activity_key` to give the other half.
+        let trailing: Vec<(i64, String, String, f64)> = sqlx::query_as(
+            "SELECT id, start_at, end_at, active_minutes FROM journal_activities \
+             WHERE deleted_at IS NULL AND user_locked = 0 \
+               AND start_at < ?1 AND end_at > ?1",
+        )
+        .bind(&range_end)
+        .fetch_all(&mut **tx.conn())
+        .await?;
+        for (id, start, end, active_minutes) in trailing {
+            let (Some(start), Some(end)) = (parse_ts(&start), parse_ts(&end)) else {
+                continue;
+            };
+            let kept = (end - end_at).num_milliseconds() as f64
+                / (end - start).num_milliseconds().max(1) as f64;
+            sqlx::query(
+                "UPDATE journal_activities \
+                 SET start_at = ?2, active_minutes = ?3, updated_at = ?4 WHERE id = ?1",
+            )
+            .bind(id)
+            .bind(&range_end)
+            .bind(active_minutes * kept.clamp(0.0, 1.0))
+            .bind(&now_text)
+            .execute(&mut **tx.conn())
+            .await?;
+            // The evidence and ledger links that fall inside the rewritten
+            // range belong to the new cards now; what the tail still covers
+            // stays with it.
+            sqlx::query(
+                "DELETE FROM journal_activity_evidence \
+                 WHERE activity_id = ?1 AND occurred_at < ?2",
+            )
+            .bind(id)
+            .bind(&range_end)
+            .execute(&mut **tx.conn())
+            .await?;
+            sqlx::query(
+                "DELETE FROM journal_activity_intervals \
+                 WHERE activity_id = ?1 AND interval_key IN \
+                   (SELECT interval_key FROM activity_intervals WHERE end_at <= ?2)",
+            )
+            .bind(id)
+            .bind(&range_end)
+            .execute(&mut **tx.conn())
+            .await?;
+            sqlx::query(
+                "DELETE FROM journal_activity_distractions \
+                 WHERE activity_id = ?1 AND end_at <= ?2",
+            )
+            .bind(id)
+            .bind(&range_end)
             .execute(&mut **tx.conn())
             .await?;
         }
@@ -825,6 +947,38 @@ impl DatabaseManager {
                 activity_from_row(row, &categories, distractions, thumb, review)
             })
             .collect())
+    }
+
+    /// The same cards as [`Self::list_journal_activities`], reduced to what a
+    /// classifier needs: no evidence count, no distractions, no feedback, no
+    /// review ratings, no category join.
+    ///
+    /// The focus detector runs this every 60 seconds over the last 24 hours;
+    /// the full read builds five extra result sets per call and throws all of
+    /// them away. The `day` bound is what keeps it off a full index scan:
+    /// `idx_journal_activities_day` is `(day, start_at, id)`, so naming the
+    /// days turns "every card ever written before `end_at`" into "the two or
+    /// three days this span touches".
+    pub async fn list_journal_activity_spans(
+        &self,
+        start_at: DateTime<Utc>,
+        end_at: DateTime<Utc>,
+    ) -> Result<Vec<JournalActivitySpan>, SqlxError> {
+        let (day_from, day_to) = scan_day_bounds(start_at, end_at);
+        sqlx::query_as::<_, JournalActivitySpan>(
+            r#"SELECT id, start_at, end_at, state, category_id, intention_id,
+                      intention_relation, app_primary, app_secondary
+               FROM journal_activities
+               WHERE deleted_at IS NULL AND day BETWEEN ?3 AND ?4
+                 AND end_at > ?1 AND start_at < ?2
+               ORDER BY start_at, end_at, id"#,
+        )
+        .bind(start_at.to_rfc3339())
+        .bind(end_at.to_rfc3339())
+        .bind(day_from)
+        .bind(day_to)
+        .fetch_all(&self.pool)
+        .await
     }
 
     pub async fn get_journal_activity(
@@ -1576,6 +1730,252 @@ mod tests {
             "active minutes {}",
             cards[0].active_minutes
         );
+    }
+
+    /// The mirror of the test above. A card that runs *past* the rewritten
+    /// range used to be soft-deleted whole, so a regenerate of one window
+    /// erased every minute of the card after that window — minutes the rewrite
+    /// never replaces, because its drafts stop at `end_at`.
+    #[tokio::test]
+    async fn replace_in_range_trims_a_card_running_past_the_range_instead_of_deleting_it() {
+        let (db, _dir) = test_db().await;
+        let mut long = draft("long", "2026-09-16T18:00:00Z", "2026-09-16T19:00:00Z");
+        long.evidence = vec![
+            JournalEvidenceDraft {
+                source_type: "frame".to_string(),
+                source_id: 1,
+                occurred_at: at("2026-09-16T18:10:00Z"),
+            },
+            JournalEvidenceDraft {
+                source_type: "frame".to_string(),
+                source_id: 2,
+                occurred_at: at("2026-09-16T18:50:00Z"),
+            },
+        ];
+        db.replace_activities_in_range(
+            at("2026-09-16T18:00:00Z"),
+            at("2026-09-16T19:00:00Z"),
+            &[long],
+        )
+        .await
+        .unwrap();
+
+        // One 30-minute window inside that card is regenerated.
+        db.replace_activities_in_range(
+            at("2026-09-16T18:00:00Z"),
+            at("2026-09-16T18:30:00Z"),
+            &[draft(
+                "newer",
+                "2026-09-16T18:00:00Z",
+                "2026-09-16T18:30:00Z",
+            )],
+        )
+        .await
+        .unwrap();
+
+        let cards = db
+            .list_journal_activities(at("2026-09-16T00:00:00Z"), at("2026-09-17T00:00:00Z"))
+            .await
+            .unwrap();
+        let keys: Vec<&str> = cards
+            .iter()
+            .map(|card| card.activity_key.as_str())
+            .collect();
+        assert_eq!(keys, vec!["newer", "long"], "the later half survives");
+        assert_eq!(
+            cards[1].start_at,
+            at("2026-09-16T18:30:00Z").to_rfc3339(),
+            "trimmed to the end of the rewritten range"
+        );
+        assert_eq!(cards[1].end_at, at("2026-09-16T19:00:00Z").to_rfc3339());
+        // Half the span is kept, so is half of the active minutes.
+        assert!(
+            (cards[1].active_minutes - 6.0).abs() < 0.01,
+            "active minutes {}",
+            cards[1].active_minutes
+        );
+        // The evidence inside the rewritten range belongs to the new card now;
+        // the evidence the tail still covers stays with it.
+        assert_eq!(cards[1].evidence_count, 1);
+
+        // A card that encloses the whole range keeps its head, as before: the
+        // two halves cannot both survive under one `activity_key`.
+        db.replace_activities_in_range(
+            at("2026-09-16T20:00:00Z"),
+            at("2026-09-16T22:00:00Z"),
+            &[draft(
+                "enclosing",
+                "2026-09-16T20:00:00Z",
+                "2026-09-16T22:00:00Z",
+            )],
+        )
+        .await
+        .unwrap();
+        db.replace_activities_in_range(
+            at("2026-09-16T20:30:00Z"),
+            at("2026-09-16T21:00:00Z"),
+            &[draft(
+                "inner",
+                "2026-09-16T20:30:00Z",
+                "2026-09-16T21:00:00Z",
+            )],
+        )
+        .await
+        .unwrap();
+        let cards = db
+            .list_journal_activities(at("2026-09-16T19:30:00Z"), at("2026-09-17T00:00:00Z"))
+            .await
+            .unwrap();
+        let keys: Vec<&str> = cards
+            .iter()
+            .map(|card| card.activity_key.as_str())
+            .collect();
+        assert_eq!(keys, vec!["enclosing", "inner"]);
+        assert_eq!(cards[0].end_at, at("2026-09-16T20:30:00Z").to_rfc3339());
+    }
+
+    /// The focus detector's read: the same rows as the full list, without the
+    /// five result sets it would throw away.
+    #[tokio::test]
+    async fn activity_spans_are_the_same_cards_read_narrowly() {
+        let (db, _dir) = test_db().await;
+        let mut card = draft("spanned", "2026-09-16T08:00:00Z", "2026-09-16T08:40:00Z");
+        card.intention_relation = Some("supports_intention".to_string());
+        card.app_secondary = Some("github.com".to_string());
+        card.distractions = vec![JournalDistractionDraft {
+            start_at: at("2026-09-16T08:10:00Z"),
+            end_at: at("2026-09-16T08:12:00Z"),
+            title: "Checked X".to_string(),
+            summary: String::new(),
+        }];
+        db.replace_activities_in_range(
+            at("2026-09-16T08:00:00Z"),
+            at("2026-09-16T09:00:00Z"),
+            &[
+                card,
+                draft("later", "2026-09-16T08:40:00Z", "2026-09-16T09:00:00Z"),
+            ],
+        )
+        .await
+        .unwrap();
+
+        let spans = db
+            .list_journal_activity_spans(at("2026-09-16T07:00:00Z"), at("2026-09-16T08:41:00Z"))
+            .await
+            .unwrap();
+        assert_eq!(spans.len(), 2, "both cards overlap the span");
+        assert_eq!(spans[0].start_at, at("2026-09-16T08:00:00Z").to_rfc3339());
+        assert_eq!(spans[0].state, "provisional");
+        assert_eq!(spans[0].category_id, "work");
+        assert_eq!(
+            spans[0].intention_relation.as_deref(),
+            Some("supports_intention")
+        );
+        assert_eq!(spans[0].app_primary.as_deref(), Some("Code"));
+        assert_eq!(spans[0].app_secondary.as_deref(), Some("github.com"));
+        assert_eq!(spans[0].intention_id, None);
+
+        // Same overlap rule as the full read, and the same ids.
+        let full = db
+            .list_journal_activities(at("2026-09-16T07:00:00Z"), at("2026-09-16T08:41:00Z"))
+            .await
+            .unwrap();
+        assert_eq!(
+            spans.iter().map(|span| span.id).collect::<Vec<_>>(),
+            full.iter().map(|card| card.id).collect::<Vec<_>>()
+        );
+
+        // A span that touches neither card reads empty, and a soft-deleted
+        // card is gone from both reads.
+        assert!(db
+            .list_journal_activity_spans(at("2026-09-16T05:00:00Z"), at("2026-09-16T06:00:00Z"))
+            .await
+            .unwrap()
+            .is_empty());
+        db.execute_raw_sql_write(
+            "UPDATE journal_activities SET deleted_at = '2026-09-16T09:00:00Z' \
+             WHERE activity_key = 'later'",
+        )
+        .await
+        .unwrap();
+        let spans = db
+            .list_journal_activity_spans(at("2026-09-16T07:00:00Z"), at("2026-09-16T09:00:00Z"))
+            .await
+            .unwrap();
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].id, full[0].id);
+
+        // The indexes that keep both overlap scans bounded are really on the
+        // database, not only in the migration file.
+        let indexes = db
+            .execute_raw_sql_write(
+                "SELECT name FROM sqlite_master WHERE type = 'index' \
+                 AND name IN ('idx_journal_activities_end', 'idx_journal_review_ratings_end')",
+            )
+            .await
+            .unwrap()
+            .to_string();
+        assert!(indexes.contains("idx_journal_activities_end"), "{indexes}");
+        assert!(
+            indexes.contains("idx_journal_review_ratings_end"),
+            "{indexes}"
+        );
+    }
+
+    /// A regenerate lands while the worker is mid-flight on the same window.
+    /// The user asked for a rewrite, so the reset wins: the pass that was
+    /// running may not close a window it no longer owns.
+    #[tokio::test]
+    async fn a_regenerate_during_a_pass_leaves_the_window_pending() {
+        let (db, _dir) = test_db().await;
+        let spans = vec![(at("2026-09-16T08:00:00Z"), at("2026-09-16T08:15:00Z"))];
+        db.insert_journal_windows(&spans).await.unwrap();
+        let window = db
+            .list_journal_windows_by_status("pending", 10)
+            .await
+            .unwrap()
+            .remove(0);
+        assert!(db.claim_journal_window(window.id).await.unwrap());
+
+        // The user hits Regenerate while the provider call is in flight.
+        assert_eq!(
+            db.reset_journal_windows_in_range(
+                at("2026-09-16T08:00:00Z"),
+                at("2026-09-16T08:15:00Z")
+            )
+            .await
+            .unwrap(),
+            1,
+            "an in-flight window is reset too"
+        );
+
+        // The pass that was running comes back and tries to close it.
+        assert!(
+            !db.finish_journal_window(window.id, "done", None, Some("hash"), None, None)
+                .await
+                .unwrap(),
+            "closing a window that was re-queued must not apply"
+        );
+        let counts = db.journal_window_counts().await.unwrap();
+        assert_eq!(counts.pending, 1);
+        assert_eq!(counts.done, 0);
+        let pending = db
+            .list_journal_windows_by_status("pending", 10)
+            .await
+            .unwrap();
+        assert_eq!(pending[0].attempt, 0, "the reset cleared the attempt count");
+        assert_eq!(
+            pending[0].evidence_hash, None,
+            "and the hash, so the rerun really regenerates"
+        );
+
+        // The ordinary path still closes the window it owns.
+        assert!(db.claim_journal_window(window.id).await.unwrap());
+        assert!(db
+            .finish_journal_window(window.id, "done", None, Some("hash"), None, None)
+            .await
+            .unwrap());
+        assert_eq!(db.journal_window_counts().await.unwrap().done, 1);
     }
 
     #[tokio::test]

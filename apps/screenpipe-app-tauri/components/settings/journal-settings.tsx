@@ -99,6 +99,10 @@ export const searchFields: LocalizedSettingsField[] = [
     keywords: ["role", "preset", "template", "categories", "роль", "набор"],
   },
   {
+    key: "settings.journal.favicons.title",
+    keywords: ["favicon", "icon", "site", "internet", "иконки", "сайт"],
+  },
+  {
     key: "settings.journal.nudges.title",
     keywords: ["nudge", "notification", "distraction", "focus", "фокус"],
   },
@@ -124,6 +128,13 @@ const DEFAULT_WORK_PROFILE: JournalWorkProfile = {
 };
 
 const DEFAULT_GRACE_MINUTES = 10;
+
+/**
+ * The one editable category the list will not let go of: `distraction_minutes`
+ * — the figure on every day, week and dashboard — is counted against this id,
+ * so a store without it reports no distraction at all rather than none.
+ */
+const DISTRACTION_CATEGORY_ID = "distraction";
 
 /**
  * The description shown for a preset row in the confirm dialog.
@@ -457,6 +468,7 @@ function RolePresetPicker({
 function CategoriesEditor({ reloadKey = 0 }: { reloadKey?: number }) {
   const t = useT();
   const locale = useLocale();
+  const { updateSettings } = useSettings();
   const [categories, setCategories] = useState<JournalCategory[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -499,12 +511,16 @@ function CategoriesEditor({ reloadKey = 0 }: { reloadKey?: number }) {
       const next = await saveJournalCategories(categories);
       setCategories(next);
       setSaved(true);
+      // Hand-edited categories end the pending role preset: a role chosen
+      // during onboarding that has not reconciled yet would otherwise land
+      // later and overwrite this list with the preset's rows.
+      void updateSettings({ journalRolePresetApplied: true });
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
       setSaving(false);
     }
-  }, [categories]);
+  }, [categories, updateSettings]);
 
   return (
     <div className="px-4 py-3" data-testid="journal-categories">
@@ -591,6 +607,18 @@ function CategoriesEditor({ reloadKey = 0 }: { reloadKey?: number }) {
               {category.is_system ? (
                 <span className="font-mono text-[10px] lowercase text-muted-foreground">
                   {t("settings.journal.categories.system")}
+                </span>
+              ) : category.id === DISTRACTION_CATEGORY_ID ? (
+                // Distraction is not a taste: every figure about time away
+                // from an intention is counted against it, so removing it
+                // would silently empty the day's distraction column. It can
+                // still be renamed and described.
+                <span
+                  data-testid="journal-category-required"
+                  title={t("settings.journal.categories.requiredTooltip")}
+                  className="font-mono text-[10px] lowercase text-muted-foreground"
+                >
+                  {t("settings.journal.categories.required")}
                 </span>
               ) : (
                 <Button
@@ -764,6 +792,20 @@ export function JournalSettings() {
               </span>
             ) : null}
           </div>
+        </SettingRow>
+
+        <SettingRow
+          title={t("settings.journal.favicons.title")}
+          description={t("settings.journal.favicons.description")}
+        >
+          <Switch
+            data-testid="journal-remote-favicons-toggle"
+            checked={settings.journalRemoteFavicons === true}
+            aria-label={t("settings.journal.favicons.title")}
+            onCheckedChange={(checked) =>
+              void updateSettings({ journalRemoteFavicons: checked })
+            }
+          />
         </SettingRow>
       </div>
 

@@ -80,6 +80,17 @@ pub const ERROR_PRODUCER: &str = "system";
 /// can style it and a user can recognise it.
 pub const ERROR_TITLE: &str = "Could not summarize this period";
 
+/// How many failed passes over the same window it takes before the failure is
+/// written into the day as an error card over cards that are already there.
+///
+/// A window that has never produced a card has a hole either way, so the first
+/// failure fills it. A window that *has* cards is a different story: a
+/// regenerate that hits a rate limit or a dropped connection would otherwise
+/// replace a good afternoon with a row of "Could not summarize this period",
+/// and the provider is usually fine a minute later. Only a window that keeps
+/// failing is worth telling the user about at the cost of what they had.
+pub const MAX_WINDOW_ATTEMPTS: i64 = 3;
+
 static SPAWNED: AtomicBool = AtomicBool::new(false);
 
 /// What one tick did. Returned so tests can assert on the pipeline without
@@ -95,6 +106,13 @@ pub struct TickReport {
     /// Windows whose evidence and prompt version had not changed since they
     /// were last generated: closed again without a provider call.
     pub unchanged: usize,
+    /// Failures that left the cards that were already there alone — a
+    /// transient provider error under a window that already has a day on it.
+    /// Counted in `failed` as well.
+    pub failed_without_card: usize,
+    /// Windows a regenerate re-queued while this pass was running. The pass's
+    /// verdict was dropped and the window is `pending` again.
+    pub requeued: usize,
 }
 
 /// Start the engine-owned journal worker. Spawned from
@@ -193,7 +211,9 @@ pub async fn run_tick(
         report.processed += 1;
         match process_window(db, generator, settings, &window, now).await {
             Ok(Outcome::Cards(evidence_hash)) => {
-                db.finish_journal_window(
+                close_window(
+                    db,
+                    &mut report,
                     window.id,
                     "done",
                     None,
@@ -205,7 +225,9 @@ pub async fn run_tick(
             }
             Ok(Outcome::Unchanged) => {
                 report.unchanged += 1;
-                db.finish_journal_window(
+                close_window(
+                    db,
+                    &mut report,
                     window.id,
                     "done",
                     None,
@@ -217,33 +239,56 @@ pub async fn run_tick(
             }
             Ok(Outcome::Idle) => {
                 report.idle += 1;
-                db.finish_journal_window(window.id, "idle", None, None, None, None)
-                    .await?;
+                close_window(db, &mut report, window.id, "idle", None, None, None, None).await?;
             }
             Ok(Outcome::TooShort) => {
                 report.skipped_short += 1;
-                db.finish_journal_window(window.id, "skipped_short", None, None, None, None)
-                    .await?;
+                close_window(
+                    db,
+                    &mut report,
+                    window.id,
+                    "skipped_short",
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .await?;
             }
             Err(error) => {
                 report.failed += 1;
                 warn!(window = window.id, %error, "journal window failed");
                 // A failed window must not leave a hole in the day: one system
                 // card says so in the timeline, where the user is actually
-                // looking, instead of only in a log nobody reads.
-                if let Err(write_error) = write_error_card(
-                    db,
-                    window.id,
-                    window.start_at,
-                    window.end_at,
-                    now,
-                    &error.to_string(),
-                )
-                .await
-                {
-                    warn!(window = window.id, %write_error, "journal error card could not be written");
+                // looking, instead of only in a log nobody reads. It must not
+                // dig one either — see `error_card_is_due`.
+                //
+                // `claim_journal_window` incremented the counter, so the pass
+                // that just failed is the `attempt + 1`-th.
+                if error_card_is_due(db, &window, window.attempt + 1).await? {
+                    if let Err(write_error) = write_error_card(
+                        db,
+                        window.id,
+                        window.start_at,
+                        window.end_at,
+                        now,
+                        &error.to_string(),
+                    )
+                    .await
+                    {
+                        warn!(window = window.id, %write_error, "journal error card could not be written");
+                    }
+                } else {
+                    report.failed_without_card += 1;
+                    debug!(
+                        window = window.id,
+                        attempt = window.attempt + 1,
+                        "journal: window failed but its cards stand; only the run is recorded"
+                    );
                 }
-                db.finish_journal_window(
+                close_window(
+                    db,
+                    &mut report,
                     window.id,
                     "failed",
                     Some(&error.to_string()),
@@ -267,6 +312,69 @@ enum Outcome {
     Unchanged,
     Idle,
     TooShort,
+}
+
+/// Close the window this pass claimed.
+///
+/// The write is conditional on the row still being `processing`. A regenerate
+/// that lands mid-pass puts the window back to `pending` on purpose — the user
+/// asked for a rewrite of exactly this span — and stamping `done` over that
+/// would throw the request away silently: the next pass sees a finished window
+/// and never reruns it. When the update does not apply, the window stays
+/// `pending` and the next tick picks it up.
+async fn close_window(
+    db: &DatabaseManager,
+    report: &mut TickReport,
+    window_id: i64,
+    status: &str,
+    error: Option<&str>,
+    evidence_hash: Option<&str>,
+    prompt_version: Option<&str>,
+    model: Option<&str>,
+) -> anyhow::Result<()> {
+    let applied = db
+        .finish_journal_window(
+            window_id,
+            status,
+            error,
+            evidence_hash,
+            prompt_version,
+            model,
+        )
+        .await?;
+    if !applied {
+        report.requeued += 1;
+        info!(
+            window = window_id,
+            status, "journal: window was re-queued while it ran, leaving it pending"
+        );
+    }
+    Ok(())
+}
+
+/// Whether a failed window should say so in the timeline.
+///
+/// Two cases, and only two. A window with no live card of its own leaves a
+/// hole in the day, and one system card is a better answer than a gap the user
+/// cannot explain. A window that already has cards is the regenerate case: the
+/// user asked for better words, the provider was briefly unavailable, and
+/// replacing a good hour with "Could not summarize this period" would be the
+/// worst possible answer to "make this nicer". That one only gets an error
+/// card once the failure has stopped looking transient
+/// ([`MAX_WINDOW_ATTEMPTS`]); the failure itself is in `journal_runs` and in
+/// the window's own `error` from the first attempt on.
+async fn error_card_is_due(
+    db: &DatabaseManager,
+    window: &screenpipe_db::JournalWindow,
+    attempt: i64,
+) -> anyhow::Result<bool> {
+    if attempt >= MAX_WINDOW_ATTEMPTS {
+        return Ok(true);
+    }
+    Ok(db
+        .list_journal_activity_spans(window.start_at, window.end_at)
+        .await?
+        .is_empty())
 }
 
 /// Cut every window that has closed since the checkpoint and queue it.
@@ -1450,6 +1558,156 @@ mod tests {
         assert!(!run.ok);
         assert_eq!(run.kind, "cards");
         assert!(run.error.unwrap().contains("rate limiting"));
+    }
+
+    /// The user hits Regenerate while the worker is mid-call on the same
+    /// window. The reset is what they asked for, so the pass that was running
+    /// may not close the window behind it: `done` there would mean the next
+    /// pass sees finished work and never reruns the span.
+    #[tokio::test]
+    async fn a_regenerate_during_a_pass_leaves_the_window_pending() {
+        let (_dir, db) = test_db().await;
+        let db = Arc::new(db);
+        let start = at("2026-09-16T08:00:00Z");
+        seed_capture(&db, start, 20, "Code", "auth.rs", true, false).await;
+        let now = start + Duration::minutes(60);
+
+        struct RegeneratingGenerator {
+            db: Arc<DatabaseManager>,
+        }
+
+        #[async_trait::async_trait]
+        impl CardGenerator for RegeneratingGenerator {
+            fn producer(&self) -> &'static str {
+                "llm-v1"
+            }
+
+            async fn generate(
+                &self,
+                compiled: &CompiledWindow,
+                _previous_cards: &[ActivityCard],
+                ctx: &GenerationContext,
+            ) -> anyhow::Result<Vec<CardDraft>> {
+                // Mid-call: the user asks for this very span to be rewritten.
+                self.db
+                    .reset_journal_windows_in_range(compiled.window_start, compiled.window_end)
+                    .await?;
+                let observed: Vec<Span> = compiled
+                    .intervals
+                    .iter()
+                    .map(|interval| Span::new(interval.start_at, interval.end_at))
+                    .collect();
+                Ok(merge_spans(&observed, SOURCE_CONNECTION)
+                    .into_iter()
+                    .map(|span| CardDraft {
+                        start_at: span.start,
+                        end_at: span.end,
+                        title: "Edited the MVP implementation plan".to_string(),
+                        summary: "Worked through section 5 in iTerm2.".to_string(),
+                        detailed_summary: None,
+                        category_id: ctx.fallback_category_id.clone(),
+                        category_confidence: 0.9,
+                        intention_relation: None,
+                        relation_confidence: None,
+                        relation_reason: None,
+                        app_primary: None,
+                        app_secondary: None,
+                        distractions: Vec::new(),
+                        interval_keys: Vec::new(),
+                    })
+                    .collect())
+            }
+        }
+
+        let generator = RegeneratingGenerator { db: db.clone() };
+        let report = run_tick(&db, &generator, &settings(), now).await.unwrap();
+        assert!(report.processed >= 1, "{report:?}");
+        assert!(
+            report.requeued >= 1,
+            "the window was re-queued under the pass that was generating it: {report:?}"
+        );
+        let counts = db.journal_window_counts().await.unwrap();
+        assert_eq!(counts.done, 0, "a re-queued window must not read as done");
+        assert!(counts.pending >= 1, "it is pending again: {counts:?}");
+
+        // And the next pass really does rerun it.
+        let second = run_tick(&db, &DeterministicGenerator, &settings(), now)
+            .await
+            .unwrap();
+        assert!(second.processed >= 1, "{second:?}");
+        assert_eq!(second.requeued, 0);
+        assert!(db.journal_window_counts().await.unwrap().done >= 1);
+    }
+
+    /// A regenerate that hits a rate limit must not replace a good afternoon
+    /// with "Could not summarize this period". The failure is recorded; the
+    /// cards stand until the window has failed [`MAX_WINDOW_ATTEMPTS`] times.
+    #[tokio::test]
+    async fn a_transient_failure_over_existing_cards_records_the_run_and_keeps_them() {
+        let (_dir, db) = test_db().await;
+        let start = at("2026-09-16T08:00:00Z");
+        seed_capture(&db, start, 20, "Code", "auth.rs", true, false).await;
+        let now = start + Duration::minutes(60);
+
+        run_tick(&db, &DeterministicGenerator, &settings(), now)
+            .await
+            .unwrap();
+        let before = db
+            .list_journal_activities(start - Duration::hours(1), now)
+            .await
+            .unwrap();
+        assert!(!before.is_empty());
+
+        // The user asks for a rewrite and the provider is having a bad minute.
+        let reset = db
+            .reset_journal_windows_in_range(start - Duration::hours(1), now)
+            .await
+            .unwrap();
+        assert!(reset >= 1);
+        let report = run_tick(&db, &FailingGenerator, &settings(), now)
+            .await
+            .unwrap();
+        assert!(report.failed >= 1, "{report:?}");
+        assert_eq!(
+            report.failed_without_card, report.failed,
+            "no failure may overwrite a card that is already there: {report:?}"
+        );
+
+        let after = db
+            .list_journal_activities(start - Duration::hours(1), now)
+            .await
+            .unwrap();
+        assert_eq!(
+            before.iter().map(|card| card.id).collect::<Vec<_>>(),
+            after.iter().map(|card| card.id).collect::<Vec<_>>(),
+            "the cards the user was looking at are untouched"
+        );
+        assert!(after.iter().all(|card| card.title != ERROR_TITLE));
+        // The failure is not swallowed: it is in the audit and on the window.
+        let run = db.last_journal_run().await.unwrap().expect("a run");
+        assert!(!run.ok);
+        assert!(run.error.unwrap().contains("rate limiting"));
+        assert_eq!(db.journal_window_counts().await.unwrap().failed as usize, 1);
+
+        // It keeps failing. Requeued the way a crash recovery does, so the
+        // attempt counter survives; at the third attempt the user is told.
+        for _ in 0..2 {
+            db.execute_raw_sql_write("UPDATE journal_windows SET status = 'pending'")
+                .await
+                .unwrap();
+            run_tick(&db, &FailingGenerator, &settings(), now)
+                .await
+                .unwrap();
+        }
+        let after = db
+            .list_journal_activities(start - Duration::hours(1), now)
+            .await
+            .unwrap();
+        assert!(
+            after.iter().any(|card| card.title == ERROR_TITLE),
+            "a window that keeps failing says so: {:?}",
+            after.iter().map(|card| &card.title).collect::<Vec<_>>()
+        );
     }
 
     #[tokio::test]

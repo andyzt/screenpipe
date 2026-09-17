@@ -158,9 +158,15 @@ async fn error_from(resp: reqwest::Response) -> String {
 }
 
 /// What the frontend needs to decide whether DeepSeek calls can be made.
+///
+/// `async` on purpose: a synchronous Tauri command runs on the main thread,
+/// and resolving the config reads (and, on a legacy store, sanitizes and
+/// rewrites) `store.bin` — a decrypt plus a disk write on the thread that
+/// draws the UI. As an async command Tauri runs it on the async runtime
+/// instead. The body stays blocking, but it no longer blocks the window.
 #[tauri::command]
 #[specta::specta]
-pub fn deepseek_config(app: tauri::AppHandle) -> DeepSeekConfig {
+pub async fn deepseek_config(app: tauri::AppHandle) -> DeepSeekConfig {
     let r = resolve(&app);
     DeepSeekConfig {
         base_url: r.base_url,
