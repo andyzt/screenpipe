@@ -43,6 +43,34 @@
       "description": "Lightweight compressed activity overview for a time range (apps, recent texts, audio summary)"
     },
     {
+      "name": "journal-day",
+      "description": "Curated activity cards and totals for one calendar day; the first call for 'what did I do today?'"
+    },
+    {
+      "name": "journal-activity",
+      "description": "Full detail and sampled evidence for one journal activity card, by id"
+    },
+    {
+      "name": "focus-status",
+      "description": "Current work intention, how recent activity relates to it, and divergence"
+    },
+    {
+      "name": "set-intention",
+      "description": "Start or end the tracked work intention (one of three writes among the journal/focus tools, with journal-recap and journal-review)"
+    },
+    {
+      "name": "journal-recap",
+      "description": "LLM-written daily recap; generates one when none is stored yet or the stored one is stale (a write)"
+    },
+    {
+      "name": "journal-review",
+      "description": "Mark a span of the day as focused, neutral, or distracted, replacing any rating already covering it (a write)"
+    },
+    {
+      "name": "journal-week",
+      "description": "Analytical week dashboard: totals with week-over-week deltas, top categories/apps, longest focus blocks, intention split"
+    },
+    {
       "name": "search-elements",
       "description": "Search structured UI elements (accessibility tree nodes and OCR text blocks)"
     },

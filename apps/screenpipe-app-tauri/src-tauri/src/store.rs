@@ -1566,6 +1566,8 @@ pub enum AIProviderType {
     NativeOllama,
     #[serde(rename = "custom")]
     Custom,
+    #[serde(rename = "deepseek")]
+    DeepSeek,
     #[serde(rename = "screenpipe-cloud", alias = "claude-code")]
     ScreenpipeCloud,
     #[serde(rename = "acp")]
@@ -2109,6 +2111,7 @@ impl SettingsStore {
                 "openai-chatgpt",
                 "native-ollama",
                 "custom",
+                "deepseek",
                 "screenpipe-cloud",
                 "acp",
                 "opencode",

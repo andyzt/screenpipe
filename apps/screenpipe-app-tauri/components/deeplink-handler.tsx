@@ -5,6 +5,7 @@
 
 import { useEffect } from "react";
 import { useToast } from "@/components/ui/use-toast";
+import { useT } from "@/lib/i18n";
 import { useChangelogDialog } from "@/lib/hooks/use-changelog-dialog";
 import { useStatusDialog } from "@/lib/hooks/use-status-dialog";
 import { useSettings } from "@/lib/hooks/use-settings";
@@ -40,6 +41,10 @@ import {
   artifactOpenRequestFromUrl,
   OPEN_BRAIN_ARTIFACT_EVENT,
 } from "@/lib/artifact-deeplink";
+import {
+  applyFocusOverrideDeeplink,
+  isJournalDeeplink,
+} from "@/lib/notifications/actions";
 
 const DEEPLINK_RECENT_TTL_MS = 1_000;
 const activeDeepLinks = new Set<string>();
@@ -70,6 +75,7 @@ function finishDeepLink(url: string) {
 
 export function DeeplinkHandler() {
   const { toast } = useToast();
+  const t = useT();
   const { setShowChangelogDialog } = useChangelogDialog();
   const { open: openStatusDialog } = useStatusDialog();
   const { settings, loadUser, reloadStore } = useSettings();
@@ -344,7 +350,12 @@ export function DeeplinkHandler() {
         }
       }
 
-      if (url.includes("settings") || url.includes("home")) {
+      // `screenpipe://home?section=journal` is the general "open Home to a
+      // section" form (also used for brain/connections elsewhere); it is
+      // handled by the dedicated journal case below instead of falling into
+      // the generic settings-section lookup, which only knows about the
+      // sections that redirect into Settings.
+      if (!isJournalDeeplink(url) && (url.includes("settings") || url.includes("home"))) {
         await openSettingsWindow(settingsSectionFromDeepLink(parsedUrl));
       }
 
@@ -353,6 +364,36 @@ export function DeeplinkHandler() {
         parsedUrl.pathname === "/activity"
       ) {
         await commands.showWindowActivated({ Home: { page: "activity" } });
+      }
+
+      // Handle journal deep links, mirroring the Activity case above:
+      //   screenpipe://journal
+      //   screenpipe://home?section=journal
+      if (isJournalDeeplink(url)) {
+        await commands.showWindowActivated({ Home: { page: "journal" } });
+      }
+
+      // Handle the focus-override nudge action:
+      //   screenpipe://focus/override?relation=other_work
+      //   screenpipe://focus/override?relation=break
+      // Sent by focus-divergence notification actions ("this is fine" /
+      // "take a break"); reachable here too so a raw OS-opened link works the
+      // same way as clicking the action from the notification panel.
+      if (parsedUrl.host === "focus" && parsedUrl.pathname === "/override") {
+        try {
+          const handled = await applyFocusOverrideDeeplink(url);
+          if (!handled) {
+            throw new Error(`unrecognized focus override link: ${url}`);
+          }
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          toast({
+            title: t("deeplink.focusOverride.failed.title"),
+            description: msg || t("deeplink.focusOverride.failed.description"),
+            variant: "destructive",
+          });
+        }
+        return;
       }
 
       // A Live View follow-up notification points directly at the dashboard
@@ -669,6 +710,7 @@ export function DeeplinkHandler() {
       });
     };
   }, [
+    t,
     toast,
     setShowChangelogDialog,
     openStatusDialog,

@@ -459,7 +459,12 @@ mod audio;
 mod display_layout;
 mod elements;
 mod feedback;
+mod focus;
 mod frames;
+mod journal;
+mod journal_dashboard;
+mod journal_recap;
+mod journal_review;
 mod maintenance;
 mod meetings;
 mod memories;
@@ -476,6 +481,20 @@ mod write_ops;
 pub use self::activity_ledger::{
     ActivityActionDraft, ActivityActionRecord, ActivityEvidenceDraft, ActivityEvidenceRecord,
     ActivityIntervalDraft, ActivityIntervalRecord, ActivityLedgerObservation, ActivityTaskDraft,
+};
+pub use self::focus::{FocusIntention, FocusStateDraft, FocusStateRecord, NewFocusIntention};
+pub use self::journal::{
+    evenly_spaced_indices, JournalActivity, JournalActivityDraft, JournalActivitySpan,
+    JournalCategory, JournalCategoryDraft, JournalDistraction, JournalDistractionDraft,
+    JournalEvidence, JournalEvidenceDraft, JournalFrameSample, JournalLedgerInterval, JournalRun,
+    JournalRunDraft, JournalWindow, JournalWindowCounts, JOURNAL_STATE_PRODUCER,
+};
+pub use self::journal_dashboard::JournalReviewSpan;
+pub use self::journal_recap::{JournalActivityWriteMark, JournalRecap, JournalRecapDraft};
+pub use self::journal_review::{
+    review_label_for_span, JournalActivityFeedback, JournalCardFeedback, JournalReviewRating,
+    FEEDBACK_RATINGS, FEEDBACK_RECENT_LIMIT, MAX_FEEDBACK_NOTE_CHARS, MAX_REVIEW_SPAN_HOURS,
+    REVIEW_MIXED, REVIEW_RATINGS, REVIEW_SOURCES,
 };
 pub use self::semantic::{
     SemanticActor, SemanticActorAlias, SemanticActorReference, SemanticAttachResult,

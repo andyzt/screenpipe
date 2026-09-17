@@ -6,7 +6,25 @@ import { toast } from "@/components/ui/use-toast";
 import { cn } from "@/lib/utils";
 import { Pencil, X } from "lucide-react";
 import { commands } from "@/lib/utils/tauri";
+import { useT } from "@/lib/i18n";
 import hotkeys from "hotkeys-js";
+
+/**
+ * Dictionary key per global shortcut, so a conflict toast can name the other
+ * shortcut the way the user sees it instead of echoing the settings key.
+ * Lives here rather than in `shortcut-section` because both files need it and
+ * the section already imports this one.
+ */
+export const SHORTCUT_TITLE_KEYS: Record<string, string> = {
+  showScreenpipeShortcut: "settings.shortcuts.showScreenpipeShortcut.title",
+  showChatShortcut: "settings.shortcuts.showChatShortcut.title",
+  searchShortcut: "settings.shortcuts.searchShortcut.title",
+  startRecordingShortcut: "settings.shortcuts.startRecordingShortcut.title",
+  stopRecordingShortcut: "settings.shortcuts.stopRecordingShortcut.title",
+  startAudioShortcut: "settings.shortcuts.startAudioShortcut.title",
+  stopAudioShortcut: "settings.shortcuts.stopAudioShortcut.title",
+  lockVaultShortcut: "settings.shortcuts.lockVaultShortcut.title",
+};
 
 interface ShortcutRowProps {
   shortcut: string;
@@ -36,6 +54,13 @@ const ShortcutRow = ({
   ]);
   const [isRecording, setIsRecording] = useState(false);
   const { settings, updateSettings } = useSettings();
+  const t = useT();
+
+  /** The name a user recognises for a shortcut settings key. */
+  const shortcutName = (key: string): string =>
+    SHORTCUT_TITLE_KEYS[key]
+      ? t(SHORTCUT_TITLE_KEYS[key])
+      : key.replace(/([A-Z])/g, " $1").trim().toLowerCase();
 
   useEffect(() => {
     if (!isRecording) return;
@@ -166,16 +191,20 @@ const ShortcutRow = ({
       );
       if (conflict) {
         toast({
-          title: "shortcut conflict",
-          description: `this shortcut is already used by "${conflict[0].replace(/([A-Z])/g, " $1").trim().toLowerCase()}". choose a different combination.`,
+          title: t("settings.shortcuts.row.toast.conflict"),
+          description: t("settings.shortcuts.row.toast.conflictBody", {
+            name: shortcutName(conflict[0]),
+          }),
           variant: "destructive",
         });
         return;
       }
 
       toast({
-        title: "shortcut enabled",
-        description: `${shortcut.replace(/_/g, " ")} enabled`,
+        title: t("settings.shortcuts.row.toast.enabled"),
+        description: t("settings.shortcuts.row.toast.enabledBody", {
+          name: shortcutName(shortcut),
+        }),
       });
 
       // Remove from disabled shortcuts and set the key value in a single update
@@ -224,9 +253,8 @@ const ShortcutRow = ({
     } catch (error) {
       console.error("error updating shortcut", error);
       toast({
-        title: "error updating shortcut",
-        description:
-          "failed to register shortcut. please try a different combination.",
+        title: t("settings.shortcuts.row.toast.error"),
+        description: t("settings.shortcuts.row.toast.errorBody"),
         variant: "destructive",
       });
     }
@@ -234,8 +262,10 @@ const ShortcutRow = ({
 
   const handleDisableShortcut = async () => {
     toast({
-      title: "shortcut disabled",
-      description: `${shortcut.replace(/_/g, " ")} disabled`,
+      title: t("settings.shortcuts.row.toast.disabled"),
+      description: t("settings.shortcuts.row.toast.disabledBody", {
+        name: shortcutName(shortcut),
+      }),
     });
     await updateSettings({
       disabledShortcuts: Array.from(
@@ -274,8 +304,10 @@ const ShortcutRow = ({
   const isValueEmpty = (v: string | undefined): boolean =>
     !v || v.trim() === "";
 
+  // Key names (⌘, Ctrl, Shift, letters) are printed on the keyboard, so they
+  // are never translated — only the "nothing assigned" stand-in is.
   const currentKeys = isValueEmpty(value)
-    ? ["Unassigned"]
+    ? [t("settings.shortcuts.row.unassigned")]
     : parseKeyboardShortcut(value || "").split("+");
 
   const getShortcutState = (): ShortcutState => {
@@ -309,18 +341,20 @@ const ShortcutRow = ({
         >
           {isRecording ? (
             <span className="flex items-center justify-between gap-2 w-full">
-              <span className="animate-pulse">press keys...</span>
+              <span className="animate-pulse">
+                {t("settings.shortcuts.row.pressKeys")}
+              </span>
               <span
                 role="button"
                 onClick={(e) => { e.stopPropagation(); setIsRecording(false); }}
                 className="text-muted-foreground hover:text-foreground transition-colors"
-                title="cancel"
+                title={t("settings.shortcuts.row.cancel")}
               >
                 <X className="h-3 w-3" />
               </span>
             </span>
           ) : getShortcutState() === ShortcutState.DISABLED ? (
-            <span>Disabled</span>
+            <span>{t("settings.shortcuts.row.disabled")}</span>
           ) : (
             <span className="flex items-center justify-between gap-2">
               {currentKeys.map((key, i) => (

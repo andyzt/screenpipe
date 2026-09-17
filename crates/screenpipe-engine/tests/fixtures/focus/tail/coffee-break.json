@@ -1,0 +1,90 @@
+{
+  "expected_relation": "break",
+  "thin_evidence": false,
+  "notes": "Three minutes of screen across ten, a timer and the weather. A pause, not a detour.",
+  "now": "2026-09-16T15:40:00Z",
+  "tail_start": "2026-09-16T15:30:00Z",
+  "intention": {
+    "id": 7,
+    "title": "Finish the journal repair pass",
+    "project": "screenpipe",
+    "notes": "Card geometry repair in crates/screenpipe-engine/src/journal/repair.rs and its tests.",
+    "started_at": "2026-09-16T13:05:00Z",
+    "ended_at": null,
+    "source": "app"
+  },
+  "dominant": {
+    "task_key": "task-timer",
+    "title": "Kitchen timer",
+    "app": "Clock",
+    "parent_title": null,
+    "active_minutes": 1.0
+  },
+  "support_set": [
+    "code",
+    "repair.rs — screenpipe",
+    "github.com"
+  ],
+  "candidate": "possible_distraction",
+  "candidate_reason": "the dominant task 'Kitchen timer' is not among the apps this intention has been worked on",
+  "divergence_minutes": 12.0,
+  "grace_minutes": 10,
+  "work_profile": {
+    "role": "Rust engineer on a desktop capture product",
+    "projects": [
+      {
+        "name": "screenpipe",
+        "keywords": [
+          "journal",
+          "repair.rs",
+          "activity ledger"
+        ]
+      }
+    ],
+    "notes": "Writes code in Code, reviews on github.com, plans in Notion."
+  },
+  "observations": {
+    "window_start": "2026-09-16T15:30:00Z",
+    "window_end": "2026-09-16T15:40:00Z",
+    "context_start": "2026-09-16T15:30:00Z",
+    "active_minutes": 3.0,
+    "intervals": [
+      {
+        "interval_key": "tf-1",
+        "task_key": "task-timer",
+        "title": "Kitchen timer",
+        "app": "Clock",
+        "window_title": "Kitchen timer",
+        "host": null,
+        "document": null,
+        "start_at": "2026-09-16T15:30:00Z",
+        "end_at": "2026-09-16T15:33:00Z",
+        "active_minutes": 1.0,
+        "click_count": 3,
+        "text_event_count": 0,
+        "audio_segments": 0,
+        "text_snippets": [
+          "4:00 remaining"
+        ]
+      },
+      {
+        "interval_key": "tf-2",
+        "task_key": "task-weather",
+        "title": "Weather — Berlin",
+        "app": "Weather",
+        "window_title": "Weather — Berlin",
+        "host": null,
+        "document": null,
+        "start_at": "2026-09-16T15:36:00Z",
+        "end_at": "2026-09-16T15:40:00Z",
+        "active_minutes": 2.0,
+        "click_count": 4,
+        "text_event_count": 0,
+        "audio_segments": 0,
+        "text_snippets": [
+          "Berlin — 14°, light rain this afternoon"
+        ]
+      }
+    ]
+  }
+}

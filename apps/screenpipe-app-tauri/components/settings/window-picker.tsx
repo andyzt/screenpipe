@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/dialog";
 import { useAppWindowTree, AppWindowNode } from "@/lib/hooks/use-sql-autocomplete";
 import { appIconUrl } from "./capture-filters/icon-urls";
+import { useT } from "@/lib/i18n";
 
 function formatCount(n: number): string {
   if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
@@ -65,6 +66,7 @@ export function WindowPicker({
   onAdd,
   action,
 }: WindowPickerProps) {
+  const t = useT();
   const { data, isLoading } = useAppWindowTree();
   const [search, setSearch] = React.useState("");
   const [expanded, setExpanded] = React.useState<Set<string>>(new Set());
@@ -127,7 +129,18 @@ export function WindowPicker({
     onAdd(`${app}::${title}`);
   };
 
-  const title = action === "ignore" ? "Browse to ignore" : "Browse to include";
+  const title =
+    action === "ignore"
+      ? t("settings.privacy.picker.title.ignore")
+      : t("settings.privacy.picker.title.include");
+  const actionLabel =
+    action === "ignore"
+      ? t("settings.privacy.picker.ignore")
+      : t("settings.privacy.picker.include");
+  const actionAppLabel =
+    action === "ignore"
+      ? t("settings.privacy.picker.ignoreApp")
+      : t("settings.privacy.picker.includeApp");
   const totalApps = merged.length;
   const totalWindows = merged.reduce((s, n) => s + n.windowCount, 0);
 
@@ -139,11 +152,15 @@ export function WindowPicker({
             <AppWindowMac className="h-4 w-4" /> {title}
           </DialogTitle>
           <DialogDescription className="text-xs">
-            Last 7 days · {totalApps} apps · {formatCount(totalWindows)} windows.
-            Click an app to expand its top windows. Adding an{" "}
-            <span className="font-mono">App</span> blocks the entire app;
-            adding a window adds it as{" "}
-            <span className="font-mono">App::Title</span> (scoped).
+            {t("settings.privacy.picker.summary", {
+              apps: totalApps,
+              windows: formatCount(totalWindows),
+            })}{" "}
+            {t("settings.privacy.picker.hint1")}{" "}
+            <span className="font-mono">App</span>{" "}
+            {t("settings.privacy.picker.hint2")}{" "}
+            <span className="font-mono">App::Title</span>{" "}
+            {t("settings.privacy.picker.hint3")}
           </DialogDescription>
         </DialogHeader>
 
@@ -152,7 +169,7 @@ export function WindowPicker({
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search apps or windows..."
+            placeholder={t("settings.privacy.picker.search")}
             className="pl-8 h-8 text-sm"
             autoFocus
           />
@@ -161,14 +178,14 @@ export function WindowPicker({
         <div className="flex-1 overflow-y-auto border border-border rounded-md">
           {isLoading && (
             <div className="p-4 text-xs text-muted-foreground text-center">
-              loading apps and windows...
+              {t("settings.privacy.picker.loading")}
             </div>
           )}
           {!isLoading && filtered.length === 0 && (
             <div className="p-4 text-xs text-muted-foreground text-center">
               {search
-                ? `nothing in the last 7 days matches "${search}".`
-                : "no recorded apps yet. record something first."}
+                ? t("settings.privacy.picker.noMatch", { query: search })
+                : t("settings.privacy.picker.empty")}
             </div>
           )}
           {!isLoading &&
@@ -203,9 +220,12 @@ export function WindowPicker({
                     </span>
                     <span className="text-[10px] text-muted-foreground tabular-nums">
                       {node.totalCount === 0
-                        ? "not captured yet"
+                        ? t("settings.privacy.picker.notCaptured")
                         : node.windowCount > 1
-                          ? `${node.windowCount} windows · ${formatCount(node.totalCount)}`
+                          ? t("settings.privacy.picker.windowsCount", {
+                              count: node.windowCount,
+                              total: formatCount(node.totalCount),
+                            })
                           : formatCount(node.totalCount)}
                     </span>
                     <Button
@@ -219,17 +239,25 @@ export function WindowPicker({
                       }}
                       title={
                         appAdded
-                          ? `${node.app} already added`
-                          : `${action} all of ${node.app}`
+                          ? t("settings.privacy.picker.alreadyAdded", {
+                              app: node.app,
+                            })
+                          : t(
+                              action === "ignore"
+                                ? "settings.privacy.picker.ignoreAllOf"
+                                : "settings.privacy.picker.includeAllOf",
+                              { app: node.app },
+                            )
                       }
                     >
                       {appAdded ? (
                         <>
-                          <Check className="h-3 w-3 mr-1" /> added
+                          <Check className="h-3 w-3 mr-1" />{" "}
+                          {t("settings.privacy.picker.added")}
                         </>
                       ) : (
                         <>
-                          <Plus className="h-3 w-3 mr-1" /> {action} app
+                          <Plus className="h-3 w-3 mr-1" /> {actionAppLabel}
                         </>
                       )}
                     </Button>
@@ -239,8 +267,8 @@ export function WindowPicker({
                       {node.windows.length === 0 && (
                         <div className="pl-9 pr-2 py-1.5 text-[11px] text-muted-foreground italic">
                           {node.totalCount === 0
-                            ? "not captured yet. add the whole app above."
-                            : "no window titles available — accessibility permission may be blocked for this app"}
+                            ? t("settings.privacy.picker.notCapturedAdd")
+                            : t("settings.privacy.picker.noTitles")}
                         </div>
                       )}
                       {node.windows.map((w) => {
@@ -274,15 +302,21 @@ export function WindowPicker({
                               }}
                               title={
                                 winAdded
-                                  ? "already covered"
-                                  : `${action} ${scoped}`
+                                  ? t("settings.privacy.picker.covered")
+                                  : t(
+                                      action === "ignore"
+                                        ? "settings.privacy.picker.ignorePattern"
+                                        : "settings.privacy.picker.includePattern",
+                                      { pattern: scoped },
+                                    )
                               }
                             >
                               {winAdded ? (
                                 <Check className="h-3 w-3" />
                               ) : (
                                 <>
-                                  <Plus className="h-3 w-3 mr-1" /> {action}
+                                  <Plus className="h-3 w-3 mr-1" />{" "}
+                                  {actionLabel}
                                 </>
                               )}
                             </Button>
@@ -291,8 +325,9 @@ export function WindowPicker({
                       })}
                       {moreCount > 0 && (
                         <div className="pl-9 pr-2 py-1 text-[10px] text-muted-foreground italic">
-                          + {moreCount} more window{moreCount === 1 ? "" : "s"}{" "}
-                          not shown — type to search them
+                          {t("settings.privacy.picker.moreWindows", {
+                            count: moreCount,
+                          })}
                         </div>
                       )}
                     </div>
@@ -304,7 +339,7 @@ export function WindowPicker({
 
         <div className="text-[10px] text-muted-foreground flex items-center gap-2">
           <span>
-            tip: typing in the search filters both apps and window titles.
+            {t("settings.privacy.picker.tip")}
           </span>
         </div>
       </DialogContent>

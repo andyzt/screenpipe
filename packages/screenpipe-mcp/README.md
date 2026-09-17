@@ -253,6 +253,41 @@ and audio samples are supporting context only; their counts are not time.
 Parsed capture is experimental and may be disabled or unsupported; the base
 activity summary remains complete without it.
 
+### journal-day / journal-activity / focus-status / set-intention / journal-recap / journal-review / journal-week
+Journal tools, for screenpipe builds with the journal feature (see
+`docs/JOURNAL_API_CONTRACT.md`). `journal-day` returns one calendar day
+(local 04:00–04:00) as curated activity cards plus totals — active, focus,
+distraction, and idle minutes, longest focus block, and top categories. Try it
+**first** for "what did I do today/yesterday?"; fall back to `activity-summary`
+or `search-content` for an arbitrary time range or a specific keyword.
+`journal-activity` returns one card's full detail (summary, category,
+intention relation, apps, distractions) by id, and with `include_evidence:
+true` up to 24 sampled frame/audio rows — follow up with `frame-context` on a
+returned frame id. `focus-status` reports the active intention, how recent
+activity relates to it, divergence time, and dominant app/task; when
+`evidence_ok` is false it says plainly that capture data is missing rather
+than guessing. `set-intention` starts (or, with `end: true`, ends) the tracked
+work intention that `focus-status` and journal cards' `intention_relation` are
+computed against.
+
+`journal-recap` returns the engine's LLM-written daily recap (a short
+narrative plus one status line); it regenerates automatically when there is
+no stored recap yet or the stored one is stale, and `regenerate: true` forces
+a fresh one. `journal-review` marks a span of the day as `focused`, `neutral`,
+or `distracted` (`rating: null` clears it) and echoes back the day's full
+rating list. `journal-week` returns `GET /journal/week/dashboard` as a
+plain-text digest: totals with week-over-week deltas, a per-day line, top
+categories and apps, the week's five longest focus blocks, and each active
+intention's supporting/other/distraction minute split.
+
+`set-intention`, `journal-recap` (when it triggers generation), and
+`journal-review` are the three writes among these seven — every other tool
+here is read-only. `journal-review` is destructive: a new rating replaces any
+existing rating(s) inside the span; `journal-day`'s `reviews` and
+`review_totals` show what's already there before you overwrite it. On an
+older screenpipe build without these routes, all seven return a short
+"journal not available" message instead of an error.
+
 ### list-meetings
 List detected meetings with id, duration, app, attendees, and note snippet. Pass `q` to filter by substring (title, attendees, notes) — `q` searches all meeting history, so omit the time range when looking for a person or topic. Follow up with `get-meeting` (optionally `include_transcript: true`) for the full note and speaker-attributed transcript.
 

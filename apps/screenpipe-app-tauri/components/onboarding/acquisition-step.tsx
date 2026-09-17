@@ -9,6 +9,8 @@ import { motion } from "framer-motion";
 import posthog from "posthog-js";
 import { useSettings } from "@/lib/hooks/use-settings";
 import { commands, type Attribution } from "@/lib/utils/tauri";
+import { useT } from "@/lib/i18n";
+import { LanguageSelect } from "@/components/settings/display-section";
 
 interface AcquisitionStepProps {
   handleNextSlide: () => void;
@@ -26,19 +28,19 @@ interface AcquisitionStepProps {
  * users who made it through.
  */
 export const ACQUISITION_SOURCES = [
-  { value: "search", label: "search engine" },
-  { value: "friend", label: "friend or colleague" },
-  { value: "x", label: "x / twitter" },
-  { value: "linkedin", label: "linkedin" },
-  { value: "reddit", label: "reddit" },
-  { value: "hacker_news", label: "hacker news" },
-  { value: "youtube", label: "youtube or video" },
-  { value: "github", label: "github" },
-  { value: "newsletter", label: "newsletter" },
-  { value: "podcast", label: "podcast" },
-  { value: "ai_assistant", label: "an ai assistant" },
-  { value: "ai_directory", label: "ai tool directory" },
-  { value: "other", label: "something else" },
+  { value: "search" },
+  { value: "friend" },
+  { value: "x" },
+  { value: "linkedin" },
+  { value: "reddit" },
+  { value: "hacker_news" },
+  { value: "youtube" },
+  { value: "github" },
+  { value: "newsletter" },
+  { value: "podcast" },
+  { value: "ai_assistant" },
+  { value: "ai_directory" },
+  { value: "other" },
 ] as const;
 
 export type AcquisitionSource = (typeof ACQUISITION_SOURCES)[number]["value"];
@@ -70,6 +72,7 @@ const AcquisitionStep: React.FC<AcquisitionStepProps> = ({
   handleNextSlide,
 }) => {
   const { updateSettings } = useSettings();
+  const t = useT();
   const [selected, setSelected] = useState<AcquisitionSource | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -128,11 +131,17 @@ const AcquisitionStep: React.FC<AcquisitionStepProps> = ({
         animate={{ opacity: 1 }}
         transition={{ delay: 0.1 }}
       >
+        {/* The very first screen of setup is the only place a Russian speaker
+            can switch before reading anything, so the picker rides in the
+            corner here as well as in Settings → Appearance. */}
+        <div className="mb-2 flex w-full justify-end">
+          <LanguageSelect compact />
+        </div>
         <h2 className="font-mono text-base font-bold lowercase">
-          how did you find screenpipe?
+          {t("onboarding.acquisition.title")}
         </h2>
         <p className="font-mono text-[10px] text-muted-foreground/60 mt-1 max-w-[320px]">
-          one tap. it helps us know where to show up.
+          {t("onboarding.acquisition.subtitle")}
         </p>
       </motion.div>
 
@@ -159,7 +168,7 @@ const AcquisitionStep: React.FC<AcquisitionStepProps> = ({
                 : "border-border/60 hover:border-foreground/40"
             }`}
           >
-            {source.label}
+            {t(`onboarding.acquisition.${source.value}`)}
           </button>
         ))}
       </motion.div>
@@ -174,7 +183,7 @@ const AcquisitionStep: React.FC<AcquisitionStepProps> = ({
         animate={{ opacity: 1 }}
         transition={{ delay: 0.3 }}
       >
-        skip →
+        {t("onboarding.acquisition.skip")}
       </motion.button>
     </motion.div>
   );

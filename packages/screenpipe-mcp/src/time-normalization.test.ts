@@ -5,6 +5,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   localContextDayStarts,
+  normalizeJournalDate,
   normalizeTime,
   normalizeTimeFields,
 } from "./time-normalization";
@@ -90,5 +91,43 @@ describe("local calendar time normalization", () => {
       today_start: "2026-08-14T07:00:00Z",
       yesterday_start: "2026-08-13T07:00:00Z",
     });
+  });
+});
+
+describe("normalizeJournalDate", () => {
+  const originalTimeZone = process.env.TZ;
+
+  beforeAll(() => {
+    process.env.TZ = "America/Los_Angeles";
+  });
+
+  afterAll(() => {
+    if (originalTimeZone === undefined) delete process.env.TZ;
+    else process.env.TZ = originalTimeZone;
+  });
+
+  it("resolves 'today'/'yesterday' to plain YYYY-MM-DD after 04:00 local", () => {
+    // 2026-09-16T12:00:00Z is 05:00 local (PDT, UTC-7) — after the 04:00
+    // journal-day boundary, so "today" is the calendar day already underway.
+    const now = new Date("2026-09-16T12:00:00Z");
+    expect(normalizeJournalDate("today", now)).toBe("2026-09-16");
+    expect(normalizeJournalDate("yesterday", now)).toBe("2026-09-15");
+    expect(normalizeJournalDate("TODAY", now)).toBe("2026-09-16");
+  });
+
+  it("rolls 'today'/'yesterday' back a day before 04:00 local", () => {
+    // 2026-09-16T09:00:00Z is 02:00 local (PDT) — before the 04:00 boundary,
+    // so the journal day still underway is the previous calendar date.
+    const now = new Date("2026-09-16T09:00:00Z");
+    expect(normalizeJournalDate("today", now)).toBe("2026-09-15");
+    expect(normalizeJournalDate("yesterday", now)).toBe("2026-09-14");
+  });
+
+  it("passes through explicit dates and other input unchanged", () => {
+    const now = new Date("2026-09-16T12:00:00Z");
+    expect(normalizeJournalDate("2026-09-10", now)).toBe("2026-09-10");
+    expect(normalizeJournalDate(undefined, now)).toBeUndefined();
+    expect(normalizeJournalDate("", now)).toBe("");
+    expect(normalizeJournalDate("not-a-date", now)).toBe("not-a-date");
   });
 });

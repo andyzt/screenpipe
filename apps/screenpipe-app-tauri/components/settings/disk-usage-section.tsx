@@ -29,8 +29,10 @@ import { Skeleton } from "../ui/skeleton";
 import { cn } from "@/lib/utils";
 import { Progress } from "../ui/progress";
 import { RetentionSettings } from "./retention-settings";
+import { useT } from "@/lib/i18n";
 
 export function DiskUsageSection() {
+  const t = useT();
   const { diskUsage, isLoading, error, refetch } = useDiskUsage();
 
   const handleRefresh = () => {
@@ -41,19 +43,19 @@ export function DiskUsageSection() {
     return (
       <div className="space-y-6">
         <p className="text-muted-foreground text-sm mb-4">
-          Monitor storage usage for your Screenpipe data
+          {t("settings.disk.errorIntro")}
         </p>
         <Card>
           <CardContent className="pt-6">
             <div className="text-center text-destructive">
-              <p>Failed to load disk usage: {error}</p>
+              <p>{t("settings.disk.error", { error })}</p>
               <Button
                 onClick={handleRefresh}
                 variant="outline"
                 className="mt-2"
               >
                 <RefreshCw className="h-4 w-4 mr-2" />
-                Retry
+                {t("settings.disk.retry")}
               </Button>
             </div>
           </CardContent>
@@ -65,7 +67,7 @@ export function DiskUsageSection() {
   return (
     <div className="space-y-5">
       <p className="text-muted-foreground text-sm mb-4">
-        Storage usage at ~/.screenpipe
+        {t("settings.disk.intro")}
       </p>
 
       <div className="flex items-center justify-end">
@@ -79,14 +81,14 @@ export function DiskUsageSection() {
           <RefreshCw
             className={`h-3 w-3 mr-1.5 ${isLoading ? "animate-spin" : ""}`}
           />
-          {isLoading ? "..." : "Refresh"}
+          {isLoading ? "..." : t("settings.disk.refresh")}
         </Button>
       </div>
 
       {isLoading && (
         <div className="flex items-center space-x-2 px-1 text-xs text-muted-foreground">
           <Calculator className="h-3 w-3 animate-pulse" />
-          <span>Calculating...</span>
+          <span>{t("settings.disk.calculating")}</span>
         </div>
       )}
 
@@ -116,13 +118,14 @@ export function DiskUsageSection() {
           return (
             <div className="rounded-md border border-border bg-card px-3 py-2.5 space-y-1.5">
               <p className="text-sm font-medium">
-                {months} {months === 1 ? "month" : "months"} of memory in{" "}
-                {dataGb} GB
+                {t("settings.disk.memorySummary", {
+                  count: months,
+                  size: dataGb,
+                })}
               </p>
               <Progress value={usedPct} className="h-1.5" />
               <p className="text-xs text-muted-foreground">
-                ~{remainingMonths} {remainingMonths === 1 ? "month" : "months"}{" "}
-                of space remaining
+                {t("settings.disk.spaceRemaining", { count: remainingMonths })}
               </p>
             </div>
           );
@@ -135,7 +138,9 @@ export function DiskUsageSection() {
         >
           <CardContent className="px-3 py-2.5">
             <div className="flex items-center justify-between mb-1">
-              <span className="text-xs text-muted-foreground">Data</span>
+              <span className="text-xs text-muted-foreground">
+                {t("settings.disk.data")}
+              </span>
               <Database
                 className={cn(
                   "h-3 w-3 text-muted-foreground",
@@ -158,7 +163,9 @@ export function DiskUsageSection() {
         >
           <CardContent className="px-3 py-2.5">
             <div className="flex items-center justify-between mb-1">
-              <span className="text-xs text-muted-foreground">Cache</span>
+              <span className="text-xs text-muted-foreground">
+                {t("settings.disk.cache")}
+              </span>
               <Folder
                 className={cn(
                   "h-3 w-3 text-muted-foreground",
@@ -181,7 +188,9 @@ export function DiskUsageSection() {
         >
           <CardContent className="px-3 py-2.5">
             <div className="flex items-center justify-between mb-1">
-              <span className="text-xs text-muted-foreground">Free</span>
+              <span className="text-xs text-muted-foreground">
+                {t("settings.disk.free")}
+              </span>
               <HardDrive
                 className={cn(
                   "h-3 w-3 text-muted-foreground",
@@ -193,7 +202,7 @@ export function DiskUsageSection() {
               <Skeleton className="h-5 w-16" />
             ) : (
               <div className="text-sm font-bold">
-                {diskUsage?.available_space || "Unknown"}
+                {diskUsage?.available_space || t("settings.disk.unknown")}
               </div>
             )}
           </CardContent>
@@ -210,7 +219,9 @@ export function DiskUsageSection() {
                 isLoading && "animate-pulse",
               )}
             />
-            <h3 className="text-sm font-medium text-foreground">Media Files</h3>
+            <h3 className="text-sm font-medium text-foreground">
+              {t("settings.disk.media.title")}
+            </h3>
           </div>
           {isLoading ? (
             <div className="space-y-1.5 ml-[26px]">
@@ -244,8 +255,13 @@ export function DiskUsageSection() {
                         {m.size}
                         {months && (
                           <span className="text-muted-foreground font-normal ml-1">
-                            (~{(m.size_bytes / months / 1024 ** 3).toFixed(1)}{" "}
-                            GB/mo)
+                            {t("settings.disk.perMonth", {
+                              size: (
+                                m.size_bytes /
+                                months /
+                                1024 ** 3
+                              ).toFixed(1),
+                            })}
                           </span>
                         )}
                       </span>
@@ -253,13 +269,15 @@ export function DiskUsageSection() {
                   ));
                 })()}
               <div className="flex items-center justify-between text-xs">
-                <span className="text-muted-foreground">Audio</span>
+                <span className="text-muted-foreground">
+                  {t("settings.disk.audio")}
+                </span>
                 <span className="font-medium">
                   {diskUsage?.media.audios_size || "0 KB"}
                 </span>
               </div>
               <div className="flex items-center justify-between text-xs pt-1 border-t">
-                <span className="font-medium">Total</span>
+                <span className="font-medium">{t("settings.disk.total")}</span>
                 <span className="font-bold">
                   {diskUsage?.media.total_media_size || "0 KB"}
                 </span>
@@ -279,7 +297,9 @@ export function DiskUsageSection() {
                 isLoading && "animate-pulse",
               )}
             />
-            <h3 className="text-sm font-medium text-foreground">Other Files</h3>
+            <h3 className="text-sm font-medium text-foreground">
+              {t("settings.disk.other.title")}
+            </h3>
           </div>
           {isLoading ? (
             <div className="space-y-1.5 ml-[26px]">
@@ -289,13 +309,17 @@ export function DiskUsageSection() {
           ) : (
             <div className="space-y-1.5 ml-[26px]">
               <div className="flex items-center justify-between text-xs">
-                <span className="text-muted-foreground">Database</span>
+                <span className="text-muted-foreground">
+                  {t("settings.disk.database")}
+                </span>
                 <span className="font-medium">
                   {diskUsage?.other?.database_size || "0 KB"}
                 </span>
               </div>
               <div className="flex items-center justify-between text-xs">
-                <span className="text-muted-foreground">Logs</span>
+                <span className="text-muted-foreground">
+                  {t("settings.disk.logs")}
+                </span>
                 <span
                   className={cn(
                     "font-medium",
@@ -308,11 +332,13 @@ export function DiskUsageSection() {
               </div>
               {diskUsage?.other?.logs_size?.includes("GB") && (
                 <p className="text-[11px] text-destructive mt-1">
-                  ⚠️ Logs are large. Delete old ones at ~/.screenpipe/*.log
+                  {t("settings.disk.logsWarning")}
                 </p>
               )}
               <div className="flex items-center justify-between text-xs">
-                <span className="text-muted-foreground">Scheduled tasks</span>
+                <span className="text-muted-foreground">
+                  {t("settings.disk.scheduledTasks")}
+                </span>
                 <span className="font-medium">
                   {diskUsage?.other?.pipes_size || "0 KB"}
                 </span>
@@ -320,7 +346,9 @@ export function DiskUsageSection() {
               {diskUsage?.other?.other_size &&
                 diskUsage.other.other_size !== "0 B" && (
                   <div className="flex items-center justify-between text-xs">
-                    <span className="text-muted-foreground">Other</span>
+                    <span className="text-muted-foreground">
+                      {t("settings.disk.other")}
+                    </span>
                     <span className="font-medium">
                       {diskUsage.other.other_size}
                     </span>

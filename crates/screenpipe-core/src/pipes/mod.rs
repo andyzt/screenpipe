@@ -15,6 +15,7 @@ pub mod connection_triggers;
 pub mod connections;
 pub mod favorites;
 pub mod mcp_access;
+mod output_language;
 pub mod permissions;
 pub mod preset_fallback;
 pub mod sync;
@@ -1929,6 +1930,21 @@ fn read_store_bin(path: &Path) -> Option<serde_json::Value> {
     serde_json::from_slice(&data).ok()
 }
 
+/// The language pipes write their user-facing output in.
+///
+/// `store.bin` is a sibling of `pipes/` — the same file [`resolve_preset`]
+/// reads. An absent, unreadable or encrypted-without-a-key store is not a
+/// failure here: a pipe still has to run, it just runs in the default
+/// language.
+fn resolve_output_language(pipes_dir: &Path) -> String {
+    pipes_dir
+        .parent()
+        .map(|parent| parent.join("store.bin"))
+        .and_then(|path| read_store_bin(&path))
+        .map(|store| output_language::language_from_store(&store))
+        .unwrap_or_else(|| output_language::DEFAULT_LANGUAGE.to_string())
+}
+
 /// Read `~/.screenpipe/store.bin` and find the preset by id.
 /// Falls back to the default preset if `preset_id` is `"default"`.
 /// Creates store.bin with a default preset if it doesn't exist (CLI mode).
@@ -2059,6 +2075,7 @@ fn resolve_preset(pipes_dir: &Path, preset_id: &str) -> Option<ResolvedPreset> {
             "openai-chatgpt" => Some("openai-chatgpt"),
             "anthropic" => Some("anthropic"),
             "custom" => Some("custom"), // custom uses openai-compatible API at a user-specified URL
+            "deepseek" => Some("deepseek"),
             "acp" => Some("acp"),
             _ => None,
         })
@@ -4109,6 +4126,7 @@ impl PipeManager {
             None
         };
 
+        let output_language = resolve_output_language(&self.pipes_dir);
         let pipe_system_prompt = render_pipe_system_prompt(
             &body,
             self.api_port,
@@ -4116,6 +4134,7 @@ impl PipeManager {
             self.connections_context.as_deref(),
             self.local_api_key.as_deref(),
             run_agent == "pi" && pi_package_enabled("pi-subagents"),
+            Some(&output_language),
         );
         let combined_context = match (self.extra_context.as_deref(), run_context) {
             (Some(shared), Some(scoped)) => Some(format!("{shared}\n{scoped}")),
@@ -4791,6 +4810,7 @@ impl PipeManager {
             };
 
             // Build prompt with context header
+            let output_language = resolve_output_language(&self.pipes_dir);
             let pipe_system_prompt = render_pipe_system_prompt(
                 &body,
                 self.api_port,
@@ -4798,6 +4818,7 @@ impl PipeManager {
                 self.connections_context.as_deref(),
                 self.local_api_key.as_deref(),
                 run_agent == "pi" && pi_package_enabled("pi-subagents"),
+                Some(&output_language),
             );
             let combined_context = match (self.extra_context.as_deref(), run_context) {
                 (Some(shared), Some(scoped)) => Some(format!("{shared}\n{scoped}")),
@@ -6634,6 +6655,7 @@ impl PipeManager {
 
                     let pipe_dir = pipes_dir.join(name);
 
+                    let output_language = resolve_output_language(&pipes_dir);
                     let pipe_system_prompt = render_pipe_system_prompt(
                         body,
                         api_port,
@@ -6641,6 +6663,7 @@ impl PipeManager {
                         connections_context.as_deref(),
                         local_api_key.as_deref(),
                         run_agent == "pi" && pi_package_enabled("pi-subagents"),
+                        Some(&output_language),
                     );
                     // Resolve this run's own context (Live View targets it owns)
                     // and append it to the shared context, exactly as the
@@ -7601,6 +7624,11 @@ pub fn serialize_pipe(config: &PipeConfig, body: &str) -> Result<String> {
 /// Contains the pipe body (instructions from pipe.md) and the preset system prompt.
 /// These are identical across runs and across turns within a run, making them
 /// ideal for Anthropic prompt caching (90% input cost reduction on cache hits).
+///
+/// `output_language` is the resolved `settings.uiLanguage` (see
+/// [`resolve_output_language`]); it decides the language every user-facing
+/// string the pipe produces is written in. `None` or `Some("en")` renders the
+/// prompt exactly as it was before the setting existed.
 fn render_pipe_system_prompt(
     body: &str,
     api_port: u16,
@@ -7608,6 +7636,7 @@ fn render_pipe_system_prompt(
     connections_context: Option<&str>,
     local_api_key: Option<&str>,
     subagents_available: bool,
+    output_language: Option<&str>,
 ) -> String {
     let os = std::env::consts::OS;
     let mut sys = String::new();
@@ -7615,6 +7644,15 @@ fn render_pipe_system_prompt(
     // Prepend preset system prompt if present
     if let Some(sp) = system_prompt {
         sys.push_str(sp);
+        sys.push_str("\n\n");
+    }
+
+    // The user's language, right after the preset that sets the model's voice
+    // and before anything the pipe itself says. English adds nothing — the
+    // rest of this prompt is already English — so an English user's prompt
+    // stays byte-identical and its cache entry stays warm.
+    if let Some(block) = output_language.and_then(output_language::output_language_block) {
+        sys.push_str(&block);
         sys.push_str("\n\n");
     }
 
@@ -12100,7 +12138,7 @@ Run the scheduled task.
         assert!(!prompt.contains("\nDate:"));
         assert!(prompt.contains("Do the work described above now."));
         // Port / body go into system prompt, not user prompt
-        let sys = render_pipe_system_prompt("body text", 3031, None, None, None, false);
+        let sys = render_pipe_system_prompt("body text", 3031, None, None, None, false, None);
         assert!(sys.contains("http://localhost:3031"));
         assert!(!sys.contains("http://localhost:3030"));
         assert!(sys.contains("body text"));
@@ -12133,7 +12171,7 @@ Run the scheduled task.
             artifacts: vec![],
             trigger: None,
         };
-        let sys = render_pipe_system_prompt("hello", 3030, None, None, None, false);
+        let sys = render_pipe_system_prompt("hello", 3030, None, None, None, false, None);
         assert!(sys.contains("http://localhost:3030"));
     }
 
@@ -12171,6 +12209,7 @@ Run the scheduled task.
             None,
             None,
             false,
+            None,
         );
         assert!(sys.starts_with("You are a helpful assistant\n\n"));
         assert!(sys.contains("body text"));
@@ -12204,14 +12243,14 @@ Run the scheduled task.
             artifacts: vec![],
             trigger: None,
         };
-        let sys = render_pipe_system_prompt("body text", 3030, None, None, None, false);
+        let sys = render_pipe_system_prompt("body text", 3030, None, None, None, false, None);
         assert!(!sys.contains("System prompt:"));
         assert!(sys.contains("body text"));
     }
 
     #[test]
     fn test_system_prompt_contains_anti_recursion_warning() {
-        let sys = render_pipe_system_prompt("task body", 3030, None, None, None, false);
+        let sys = render_pipe_system_prompt("task body", 3030, None, None, None, false, None);
         assert!(sys.contains("NEVER run `screenpipe pipe run`"));
         assert!(sys.contains("You ARE this pipe"));
     }
@@ -12221,8 +12260,15 @@ Run the scheduled task.
         // Pass the key explicitly — the renderer must not depend on parent
         // process env (which is empty in tests and was the root cause of the
         // 403 reported by the security-requests-grc pipe in prod).
-        let sys =
-            render_pipe_system_prompt("task body", 3030, None, None, Some("sp-test-key"), false);
+        let sys = render_pipe_system_prompt(
+            "task body",
+            3030,
+            None,
+            None,
+            Some("sp-test-key"),
+            false,
+            None,
+        );
         assert!(
             sys.contains("API Authentication: REQUIRED"),
             "auth note must be emitted when local_api_key is Some"
@@ -12232,7 +12278,7 @@ Run the scheduled task.
 
     #[test]
     fn test_system_prompt_omits_auth_note_when_no_key() {
-        let sys = render_pipe_system_prompt("task body", 3030, None, None, None, false);
+        let sys = render_pipe_system_prompt("task body", 3030, None, None, None, false, None);
         assert!(
             !sys.contains("API Authentication: REQUIRED"),
             "auth note must not be emitted when local_api_key is None"
@@ -12241,12 +12287,84 @@ Run the scheduled task.
 
     #[test]
     fn test_system_prompt_explains_enabled_subagent_tool() {
-        let enabled = render_pipe_system_prompt("task body", 3030, None, None, None, true);
+        let enabled = render_pipe_system_prompt("task body", 3030, None, None, None, true, None);
         assert!(enabled.contains("the `subagent` tool is enabled"));
         assert!(enabled.contains("acceptance.level: \"none\""));
 
-        let disabled = render_pipe_system_prompt("task body", 3030, None, None, None, false);
+        let disabled = render_pipe_system_prompt("task body", 3030, None, None, None, false, None);
         assert!(!disabled.contains("the `subagent` tool is enabled"));
+    }
+
+    #[test]
+    fn test_system_prompt_names_the_users_output_language() {
+        // The bug: an hourly pipe posted an English notification into a
+        // Russian app because nothing in the prompt said which language the
+        // user reads.
+        let sys = render_pipe_system_prompt("task body", 3030, None, None, None, false, Some("ru"));
+        assert!(sys.contains("Output language: Russian (ru)."));
+        assert!(sys.contains("notification titles, bodies and action button labels"));
+        assert!(sys.contains("files you write to ./output/"));
+        // Code and names stay as they are — a translated file path is a broken
+        // file path.
+        assert!(sys.contains("app and product names"));
+        assert!(sys.contains("task body"));
+    }
+
+    #[test]
+    fn test_system_prompt_has_no_language_block_in_english() {
+        // English is what the rest of the prompt is written in, so the block
+        // would be noise — and the prompt must stay byte-identical to the one
+        // that shipped before the setting existed, or every cached prefix goes
+        // cold.
+        let baseline = render_pipe_system_prompt("task body", 3030, None, None, None, false, None);
+        let english =
+            render_pipe_system_prompt("task body", 3030, None, None, None, false, Some("en"));
+        assert_eq!(baseline, english);
+        assert!(!english.contains("Output language:"));
+    }
+
+    #[test]
+    fn test_output_language_block_follows_the_preset_prompt() {
+        // The preset sets the model's voice; the language instruction refines
+        // it. Order matters for the cache prefix too.
+        let sys = render_pipe_system_prompt(
+            "task body",
+            3030,
+            Some("You are a helpful assistant"),
+            None,
+            None,
+            false,
+            Some("ru"),
+        );
+        assert!(sys.starts_with("You are a helpful assistant\n\n"));
+        let preset_end = "You are a helpful assistant\n\n".len();
+        assert!(
+            sys[preset_end..].starts_with("Output language: Russian (ru)."),
+            "language block must sit directly after the preset prompt"
+        );
+        // ...and still before everything the runtime adds.
+        assert!(
+            sys.find("Output language:") < sys.find("CRITICAL: You ARE this pipe"),
+            "language block must precede the runtime instructions"
+        );
+    }
+
+    #[test]
+    fn test_resolve_output_language_reads_the_store_beside_pipes() {
+        let dir = tempfile::tempdir().unwrap();
+        let pipes_dir = dir.path().join("pipes");
+        std::fs::create_dir_all(&pipes_dir).unwrap();
+        // No store at all → the build's default, not a failure.
+        assert_eq!(
+            resolve_output_language(&pipes_dir),
+            output_language::DEFAULT_LANGUAGE
+        );
+        std::fs::write(
+            dir.path().join("store.bin"),
+            serde_json::to_vec(&serde_json::json!({"settings": {"uiLanguage": "en"}})).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(resolve_output_language(&pipes_dir), "en");
     }
 
     // -- PipeExecution / SchedulerState serde roundtrip ----------------------

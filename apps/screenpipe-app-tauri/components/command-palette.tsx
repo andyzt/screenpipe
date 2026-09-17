@@ -12,6 +12,7 @@ import {
   Keyboard,
   ListTree,
   MessageSquare,
+  NotebookPen,
   MonitorPlay,
   PanelLeft,
   Pause,
@@ -88,6 +89,7 @@ export interface PaletteEntry {
 }
 
 const SECTION_ACTION_IDS: Record<SidebarNavId, CommandPaletteActionId> = {
+  journal: "go_journal",
   home: "go_chat",
   brain: "go_brain",
   meetings: "go_meetings",
@@ -98,6 +100,7 @@ const SECTION_ACTION_IDS: Record<SidebarNavId, CommandPaletteActionId> = {
 };
 
 const SECTION_ICONS: Record<SidebarNavId, LucideIcon> = {
+  journal: NotebookPen,
   home: MessageSquare,
   brain: Brain,
   meetings: CalendarClock,

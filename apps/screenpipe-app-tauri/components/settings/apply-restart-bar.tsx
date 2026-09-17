@@ -6,6 +6,7 @@
 import React from "react";
 import { Loader2, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useT } from "@/lib/i18n";
 
 interface ApplyRestartBarProps {
   /** When false, nothing renders. */
@@ -16,7 +17,7 @@ interface ApplyRestartBarProps {
   isUpdating?: boolean;
   /** Extra disable condition (e.g. validation errors). */
   disabled?: boolean;
-  /** Left-hand message. Keep it lowercase + on-brand, no dashes. */
+  /** Left-hand message. Keep it lowercase + on-brand. Defaults to the shared translated line. */
   message?: string;
   /** Forwarded to the action button so e2e specs can target it. */
   testId?: string;
@@ -39,9 +40,10 @@ export function ApplyRestartBar({
   onApply,
   isUpdating = false,
   disabled = false,
-  message = "unsaved changes. restart to apply.",
+  message,
   testId,
 }: ApplyRestartBarProps) {
+  const t = useT();
   if (!visible) return null;
 
   return (
@@ -60,7 +62,7 @@ export function ApplyRestartBar({
             <span className="relative inline-flex h-2.5 w-2.5 bg-foreground" />
           </span>
           <span className="truncate text-sm font-medium text-foreground">
-            {message}
+            {message ?? t("settings.applyBar.message")}
           </span>
         </div>
 
@@ -81,7 +83,7 @@ export function ApplyRestartBar({
           ) : (
             <RefreshCw className="h-3.5 w-3.5" />
           )}
-          apply &amp; restart
+          {t("settings.applyBar.action")}
         </button>
       </div>
     </div>

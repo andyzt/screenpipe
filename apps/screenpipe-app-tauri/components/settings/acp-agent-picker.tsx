@@ -14,6 +14,7 @@ import { useSelectableAcpAdapters } from "@/lib/acp-rollout";
 import { AcpInstallGate } from "@/components/settings/acp-install-gate";
 import { AcpPresetDefaults } from "@/components/settings/acp-preset-defaults";
 import { AcpBoundaries } from "@/components/settings/acp-boundaries";
+import { useT } from "@/lib/i18n";
 
 const DEFAULT_AGENT_ID = "pi-acp";
 
@@ -82,6 +83,7 @@ export function AcpAgentPicker({
   /** The quick AI dialog puts these choices in its main grid. */
   showAgentChoices?: boolean;
 }) {
+  const t = useT();
   const [installBlocked, setInstallBlocked] = useState(false);
   // Advanced settings stay hidden until the agent is actually usable. Showing a
   // custom command box and an env editor next to "sign in to continue" implies
@@ -122,13 +124,12 @@ export function AcpAgentPicker({
       {showAgentChoices && (
         <>
           {compact ? (
-            <Label className="text-xs">agent</Label>
+            <Label className="text-xs">{t("settings.ai.acp.agent.labelCompact")}</Label>
           ) : (
             <div className="space-y-1">
-              <Label htmlFor="acpAgent">Agent</Label>
+              <Label htmlFor="acpAgent">{t("settings.ai.acp.agent.label")}</Label>
               <p className="text-xs text-muted-foreground">
-                Choose the coding agent Screenpipe should run. It runs as its own
-                program with its own account — see the split below.
+                {t("settings.ai.acp.agent.description")}
               </p>
             </div>
           )}
@@ -139,7 +140,11 @@ export function AcpAgentPicker({
           <div
             {...(compact ? {} : { id: "acpAgent" })}
             role="listbox"
-            aria-label={compact ? "agent" : "Agent"}
+            aria-label={
+              compact
+                ? t("settings.ai.acp.agent.labelCompact")
+                : t("settings.ai.acp.agent.label")
+            }
             className={cn("grid", compact ? "grid-cols-2 gap-1.5" : "grid-cols-2 gap-2 sm:grid-cols-3")}
           >
             {adapters.map((adapter) => {
@@ -192,16 +197,26 @@ export function AcpAgentPicker({
       {info.supportsCloudRouting && (
         <div className="space-y-1">
           <Label className={compact ? "text-xs" : undefined}>
-            {compact ? "model billing" : "Model calls"}
+            {compact
+              ? t("settings.ai.acp.modelCalls.labelCompact")
+              : t("settings.ai.acp.modelCalls.label")}
           </Label>
           <div
             role="radiogroup"
-            aria-label="Where the agent's model calls go"
+            aria-label={t("settings.ai.acp.modelCalls.aria")}
             className="grid grid-cols-2 gap-1.5"
           >
             {[
-              { cloud: true, label: "Screenpipe Cloud", hint: "included in your plan" },
-              { cloud: false, label: `Your ${info.name} account`, hint: "billed by them" },
+              {
+                cloud: true,
+                label: "Screenpipe Cloud",
+                hint: t("settings.ai.acp.modelCalls.cloudHint"),
+              },
+              {
+                cloud: false,
+                label: t("settings.ai.acp.modelCalls.ownAccount", { agent: info.name }),
+                hint: t("settings.ai.acp.modelCalls.ownHint"),
+              },
             ].map((choice) => {
               const selected = useCloud === choice.cloud;
               return (
@@ -234,8 +249,8 @@ export function AcpAgentPicker({
           </div>
           <p className={cn("text-muted-foreground", compact ? "text-[10px]" : "text-xs")}>
             {useCloud
-              ? `${info.name} still runs locally and signs in as itself. Only its model calls go through Screenpipe.`
-              : `${info.name} bills its own account for model use. You need to be signed in to it.`}
+              ? t("settings.ai.acp.modelCalls.cloudNote", { agent: info.name })
+              : t("settings.ai.acp.modelCalls.ownNote", { agent: info.name })}
           </p>
         </div>
       )}
@@ -275,20 +290,20 @@ export function AcpAgentPicker({
         (compact ? (
           <div className="space-y-1">
             <Label htmlFor="acpCommandQuick" className="text-xs">
-              agent command
+              {t("settings.ai.acp.command.labelCompact")}
             </Label>
             <Input
               id="acpCommandQuick"
               value={agent?.command || ""}
               onChange={(e) => merge({ command: e.target.value })}
-              placeholder="path or command that starts an ACP agent"
+              placeholder={t("settings.ai.acp.command.placeholderCompact")}
               className="h-8 font-mono text-xs"
               spellCheck={false}
               autoCorrect="off"
               autoCapitalize="off"
             />
             <Label htmlFor="acpArgsQuick" className="text-xs">
-              startup options
+              {t("settings.ai.acp.args.labelCompact")}
             </Label>
             <Input
               id="acpArgsQuick"
@@ -301,29 +316,30 @@ export function AcpAgentPicker({
               autoCapitalize="off"
             />
             <p className="text-[10px] text-muted-foreground">
-              environment variables and per-line options live in settings → ai presets
+              {t("settings.ai.acp.quickHint")}
             </p>
           </div>
         ) : (
           <div className="space-y-4 border-t pt-4">
             <div className="space-y-2">
               <Label htmlFor="acpCommand" className="flex items-center gap-1">
-                Agent command <span className="text-destructive">*</span>
+                {t("settings.ai.acp.command.label")}{" "}
+                <span className="text-destructive">*</span>
               </Label>
               <Input
                 id="acpCommand"
                 value={agent?.command || ""}
                 onChange={(e) => merge({ command: e.target.value })}
-                placeholder="Path or command used to start your agent"
+                placeholder={t("settings.ai.acp.command.placeholder")}
                 spellCheck={false}
                 autoCorrect="off"
               />
               <p className="text-xs text-muted-foreground">
-                This command must start an ACP-compatible agent on this computer.
+                {t("settings.ai.acp.command.hint")}
               </p>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="acpArgs">Startup options</Label>
+              <Label htmlFor="acpArgs">{t("settings.ai.acp.args.label")}</Label>
               <Textarea
                 id="acpArgs"
                 value={(agent?.args || []).join("\n")}
@@ -332,31 +348,29 @@ export function AcpAgentPicker({
                     args: e.target.value.split("\n").map((arg) => arg.trim()).filter(Boolean),
                   })
                 }
-                placeholder={"One option per line\n--acp"}
+                placeholder={t("settings.ai.acp.args.placeholder")}
                 className="min-h-[80px] font-mono text-xs"
                 spellCheck={false}
               />
-              <p className="text-xs text-muted-foreground">Add one command-line option per line.</p>
+              <p className="text-xs text-muted-foreground">
+                {t("settings.ai.acp.args.hint")}
+              </p>
             </div>
           </div>
         ))}
 
       {!compact && agentConnected && (
         <div className="space-y-2 border-t pt-4">
-          <Label htmlFor="acpEnv">Additional environment variables</Label>
+          <Label htmlFor="acpEnv">{t("settings.ai.acp.env.label")}</Label>
           <Textarea
             id="acpEnv"
             value={Object.keys(agent?.env || {}).join("\n")}
             onChange={(e) => merge({ env: inheritedEnvFromText(e.target.value) })}
-            placeholder={"Optional variable names, one per line\nOPENAI_API_KEY"}
+            placeholder={t("settings.ai.acp.env.placeholder")}
             className="min-h-[80px] font-mono text-xs"
             spellCheck={false}
           />
-          <p className="text-xs text-muted-foreground">
-            Only variable names are saved. Their values are inherited at launch and never stored
-            in this preset. ACP adapters run locally with your account permissions, so use agents
-            you trust.
-          </p>
+          <p className="text-xs text-muted-foreground">{t("settings.ai.acp.env.hint")}</p>
         </div>
       )}
     </div>

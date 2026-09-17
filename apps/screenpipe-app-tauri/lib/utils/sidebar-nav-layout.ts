@@ -18,6 +18,7 @@
 
 /** Canonical order — also the fallback for ids a stored layout never mentioned. */
 export const SIDEBAR_NAV_ORDER = [
+  "journal",
   "home",
   "meetings",
   "timeline",
@@ -29,25 +30,52 @@ export const SIDEBAR_NAV_ORDER = [
 
 export type SidebarNavId = (typeof SIDEBAR_NAV_ORDER)[number];
 
-const PREVIOUS_DEFAULT_SIDEBAR_NAV_ORDER = [
-  "home",
-  "brain",
-  "meetings",
-  "pipes",
-  "timeline",
-  "connections",
-] as const satisfies readonly SidebarNavId[];
+/**
+ * Orders this app has shipped as *its own* default, oldest first.
+ *
+ * An install still carrying one of these never expressed a preference, so it
+ * follows the product to the current default. Anything else is the user's own
+ * arrangement and is left alone.
+ */
+const SHIPPED_DEFAULT_SIDEBAR_NAV_ORDERS = [
+  ["home", "brain", "meetings", "pipes", "timeline", "connections"],
+  ["home", "meetings", "timeline", "activity", "brain", "pipes", "connections"],
+  [...SIDEBAR_NAV_ORDER],
+] as const satisfies readonly (readonly SidebarNavId[])[];
+
+/**
+ * Hidden sets this app has shipped as *its own* default, oldest first.
+ *
+ * Same rule as the orders above: an install still carrying one of these never
+ * expressed a preference about what belongs in the sidebar, so it follows the
+ * product to the current default. Any other set is the user's own and is kept.
+ */
+const SHIPPED_DEFAULT_SIDEBAR_NAV_HIDDEN = [
+  [],
+  ["home"],
+] as const satisfies readonly (readonly SidebarNavId[])[];
 
 export type SidebarNavLayout = {
   /** Ids in render order. May omit ids (they fall back to canonical position). */
   order: SidebarNavId[];
-  /** Ids kept out of the sidebar. Nothing is hidden by default. */
+  /** Ids kept out of the sidebar. Chat ships here; see the default below. */
   hidden: SidebarNavId[];
 };
 
+/**
+ * Journal, Timeline and Connections are the shipped sidebar.
+ *
+ * The product is the daily journal, distraction detection, and MCP for the
+ * user's own agent. Chat, Meetings, Library, Automations and Activity are not
+ * deleted or unmounted — the always-mounted chat layer in
+ * `app/(main)/home/page.tsx` is untouched, every `?section=` deep link still
+ * opens its view, and any of these rows can be restored from sidebar options
+ * in the top bar (or Appearance settings for Meetings). They are simply not on
+ * the default path any more.
+ */
 export const DEFAULT_SIDEBAR_NAV_LAYOUT: SidebarNavLayout = {
   order: [...SIDEBAR_NAV_ORDER],
-  hidden: [],
+  hidden: ["home", "meetings", "activity", "brain", "pipes"],
 };
 
 /** At least one row must stay in the sidebar — an empty nav is a dead end. */
@@ -89,18 +117,18 @@ export function normalizeSidebarNavLayout(
     return { order: [...SIDEBAR_NAV_ORDER], hidden };
   }
 
-  // Move installs that still have the previous shipped default to the new
+  // Move installs that still have a previously shipped default to the new
   // default. Any other stored order remains user-owned and untouched.
-  const hadPreviousDefaultOrder =
-    storedOrder.length === PREVIOUS_DEFAULT_SIDEBAR_NAV_ORDER.length &&
-    storedOrder.every(
-      (id, index) => id === PREVIOUS_DEFAULT_SIDEBAR_NAV_ORDER[index],
-    );
+  const hadShippedDefaultOrder = SHIPPED_DEFAULT_SIDEBAR_NAV_ORDERS.some(
+    (shipped) =>
+      storedOrder.length === shipped.length &&
+      storedOrder.every((id, index) => id === shipped[index]),
+  );
 
   // Splice missing ids back at their canonical position: walk the canonical
   // list and, for each id the user never ordered, insert it after the last
   // canonical predecessor that the stored order does contain.
-  const order = hadPreviousDefaultOrder
+  const order = hadShippedDefaultOrder
     ? [...SIDEBAR_NAV_ORDER]
     : [...storedOrder];
   for (const id of SIDEBAR_NAV_ORDER) {
@@ -114,7 +142,22 @@ export function normalizeSidebarNavLayout(
     }
     order.splice(insertAt, 0, id);
   }
-  return { order, hidden };
+  // An install on a shipped default order whose hidden set is also one this app
+  // shipped has no preference to preserve, so it inherits the new default
+  // hidden set. The moment the user hid or restored a row we did not ship
+  // hidden, their set is theirs and is kept verbatim.
+  const hadShippedDefaultHidden = SHIPPED_DEFAULT_SIDEBAR_NAV_HIDDEN.some(
+    (shipped) =>
+      hidden.length === shipped.length &&
+      hidden.every((id) => (shipped as readonly SidebarNavId[]).includes(id)),
+  );
+  const inheritsDefaultHidden = hadShippedDefaultOrder && hadShippedDefaultHidden;
+  return {
+    order,
+    hidden: inheritsDefaultHidden
+      ? [...DEFAULT_SIDEBAR_NAV_LAYOUT.hidden]
+      : hidden,
+  };
 }
 
 /**

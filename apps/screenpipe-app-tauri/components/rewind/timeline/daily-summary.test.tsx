@@ -194,7 +194,7 @@ describe("TimelineDailySummary", () => {
 		const trigger = screen.getByTestId("timeline-daily-summary-trigger");
 		expect(trigger).toHaveClass("h-10", "w-10");
 		expect(trigger).toHaveAccessibleName(
-			"Turn on Enhanced AI to generate a summary for this day",
+			"Generate a summary for this day",
 		);
 		expect(trigger).not.toHaveTextContent("daily summary");
 	});
@@ -288,37 +288,39 @@ describe("TimelineDailySummary", () => {
 		});
 	});
 
-	it("asks for explicit consent instead of starting Pi when Enhanced AI is off", () => {
-		render(<TimelineDailySummary currentDate={new Date(2026, 6, 25)} />);
-
-		fireEvent.click(screen.getByTestId("timeline-daily-summary-trigger"));
-
-		expect(screen.getByText("turn on enhanced ai?")).toBeInTheDocument();
-		expect(
-			screen.getByText(/never run on a timer or generate automatically/i),
-		).toBeInTheDocument();
-		expect(screen.getByText(/bounded, read-only access/i)).toBeInTheDocument();
-		expect(mocks.runDailySummaryWithPi).not.toHaveBeenCalled();
-	});
-
-	it("enables Enhanced AI and runs Pi over the exact selected day", async () => {
+	it("runs on the default preset without an account prompt", async () => {
+		// Accountless build: no sign-in dialog, no Enhanced AI consent step, and
+		// no model picker — one click generates on the default preset.
+		mocks.settings.user = null;
 		const selectedDate = new Date(2026, 6, 25);
 		render(<TimelineDailySummary currentDate={selectedDate} />);
+
 		fireEvent.click(screen.getByTestId("timeline-daily-summary-trigger"));
-		fireEvent.click(
-			screen.getByRole("button", { name: "Turn on and summarize" }),
-		);
 
 		await waitFor(() => {
 			expect(
 				screen.getByText(/focused implementation session/i),
 			).toBeInTheDocument();
 		});
-		expect(mocks.updateSettings).toHaveBeenCalledWith({ enhancedAI: true });
-		expect(mocks.setEnhancedAiSuggestions).toHaveBeenCalledWith(
-			true,
-			"test-token",
+		expect(screen.queryByText(/enhanced ai/i)).not.toBeInTheDocument();
+		expect(screen.queryByText(/sign in/i)).not.toBeInTheDocument();
+		expect(mocks.updateSettings).not.toHaveBeenCalled();
+		expect(mocks.showWindow).not.toHaveBeenCalled();
+		expect(mocks.runDailySummaryWithPi).toHaveBeenCalledWith(
+			expect.objectContaining({ preset: PIPE_PRESET, userToken: "" }),
 		);
+	});
+
+	it("runs Pi over the exact selected day", async () => {
+		const selectedDate = new Date(2026, 6, 25);
+		render(<TimelineDailySummary currentDate={selectedDate} />);
+		fireEvent.click(screen.getByTestId("timeline-daily-summary-trigger"));
+
+		await waitFor(() => {
+			expect(
+				screen.getByText(/focused implementation session/i),
+			).toBeInTheDocument();
+		});
 		expect(mocks.runDailySummaryWithPi).toHaveBeenCalledTimes(1);
 		expect(mocks.runDailySummaryWithPi).toHaveBeenCalledWith(
 			expect.objectContaining({

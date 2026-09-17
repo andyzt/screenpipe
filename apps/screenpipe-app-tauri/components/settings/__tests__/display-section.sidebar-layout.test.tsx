@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   toast: vi.fn(),
   setAppScreenCaptureProtection: vi.fn(),
   resetMainWindow: vi.fn(),
+  setTheme: vi.fn(),
 }));
 
 vi.mock("@/lib/hooks/use-settings", () => ({
@@ -20,7 +21,7 @@ vi.mock("@/lib/hooks/use-settings", () => ({
   }),
 }));
 vi.mock("@/components/theme-provider", () => ({
-  useTheme: () => ({ theme: "system", setTheme: vi.fn() }),
+  useTheme: () => ({ theme: "system", setTheme: mocks.setTheme }),
 }));
 vi.mock("@/components/ui/use-toast", () => ({ useToast: () => ({ toast: mocks.toast }) }));
 vi.mock("@/lib/hooks/use-platform", () => ({
@@ -39,6 +40,7 @@ vi.mock("@/components/enterprise-locked-setting", () => ({
 
 import { DisplaySection, searchIndex } from "../display-section";
 import { DEFAULT_SIDEBAR_NAV_LAYOUT } from "@/lib/utils/sidebar-nav-layout";
+import { JOURNAL_THEME } from "@/lib/journal-shell";
 
 describe("DisplaySection sidebar layout", () => {
   beforeEach(() => {
@@ -49,40 +51,46 @@ describe("DisplaySection sidebar layout", () => {
     mocks.setAppScreenCaptureProtection.mockResolvedValue({ status: "ok" });
     mocks.resetMainWindow.mockReset();
     mocks.resetMainWindow.mockResolvedValue(undefined);
+    mocks.setTheme.mockReset();
   });
 
   afterEach(() => cleanup());
 
-  it("shows meetings in the sidebar by default", () => {
-    render(<DisplaySection />);
-    expect(screen.getByTestId("meetings-in-sidebar")).toHaveAttribute(
-      "data-state",
-      "checked",
-    );
-    expect(screen.getByText("Labelled row in the sidebar")).toBeInTheDocument();
-  });
-
-  it("moves meetings out to the chrome strip", () => {
-    render(<DisplaySection />);
-    fireEvent.click(screen.getByTestId("meetings-in-sidebar"));
-    const patch = mocks.updateSettings.mock.calls[0][0];
-    expect(patch.sidebarNavLayout.hidden).toContain("meetings");
-  });
-
-  it("moves meetings back into the sidebar", () => {
-    mocks.settings = {
-      ...mocks.settings,
-      sidebarNavLayout: { ...DEFAULT_SIDEBAR_NAV_LAYOUT, hidden: ["meetings"] },
-    };
+  it("keeps meetings out of the sidebar by default", () => {
     render(<DisplaySection />);
     expect(screen.getByTestId("meetings-in-sidebar")).toHaveAttribute(
       "data-state",
       "unchecked",
     );
+    expect(screen.getByText("Not in the sidebar")).toBeInTheDocument();
+  });
+
+  it("brings meetings back into the sidebar for a user who wants it", () => {
+    render(<DisplaySection />);
+    fireEvent.click(screen.getByTestId("meetings-in-sidebar"));
+    const patch = mocks.updateSettings.mock.calls[0][0];
+    expect(patch.sidebarNavLayout.hidden).not.toContain("meetings");
+  });
+
+  it("moves meetings back out of the sidebar", () => {
+    mocks.settings = {
+      ...mocks.settings,
+      sidebarNavLayout: {
+        ...DEFAULT_SIDEBAR_NAV_LAYOUT,
+        hidden: DEFAULT_SIDEBAR_NAV_LAYOUT.hidden.filter(
+          (id) => id !== "meetings",
+        ),
+      },
+    };
+    render(<DisplaySection />);
+    expect(screen.getByTestId("meetings-in-sidebar")).toHaveAttribute(
+      "data-state",
+      "checked",
+    );
     fireEvent.click(screen.getByTestId("meetings-in-sidebar"));
     expect(
       mocks.updateSettings.mock.calls[0][0].sidebarNavLayout.hidden,
-    ).not.toContain("meetings");
+    ).toContain("meetings");
   });
 
   // The reset escape hatch only appears once the layout actually drifted, so a
@@ -130,5 +138,36 @@ describe("DisplaySection sidebar layout", () => {
       });
       expect(mocks.setAppScreenCaptureProtection).toHaveBeenCalledWith(true);
     });
+  });
+
+  // Under the journal theme "system" resolves to light rather than to the OS
+  // preference (components/theme-provider.tsx), so the option would promise
+  // something the app does not do.
+  it("offers only light and dark while the journal theme is on", () => {
+    expect(JOURNAL_THEME).toBeTruthy();
+    const { container } = render(<DisplaySection />);
+
+    const radios = Array.from(
+      container.querySelectorAll<HTMLInputElement>('input[name="theme"]'),
+    );
+    expect(radios.map((input) => input.value)).toEqual(["light", "dark"]);
+    // The mocked store still holds "system" — the value seeded before the
+    // option was hidden. The group must show the theme actually painted
+    // (light) rather than leaving every radio unchecked.
+    expect(radios.filter((input) => input.checked).map((i) => i.value)).toEqual([
+      "light",
+    ]);
+
+    // Showing light as selected is display only: picking Light still commits
+    // "light" exactly once, which is the only way the legacy "system" value
+    // ever leaves the store.
+    fireEvent.click(screen.getByText("Light"));
+    expect(mocks.setTheme.mock.calls).toEqual([["light"]]);
+
+    // And the other option commits once too — no double-fire from the click
+    // handler that rescues the Light case.
+    mocks.setTheme.mockReset();
+    fireEvent.click(screen.getByText("Dark"));
+    expect(mocks.setTheme.mock.calls).toEqual([["dark"]]);
   });
 });

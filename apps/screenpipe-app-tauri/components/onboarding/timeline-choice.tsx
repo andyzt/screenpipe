@@ -9,6 +9,7 @@ import { motion } from "framer-motion";
 import { Camera, Check, EyeOff, HardDrive, Loader } from "lucide-react";
 import posthog from "posthog-js";
 import { useSettings } from "@/lib/hooks/use-settings";
+import { useT } from "@/lib/i18n";
 
 interface TimelineChoiceProps {
   handleNextSlide: () => void;
@@ -127,11 +128,11 @@ function TimelinePreview() {
 const COSTS = [
   {
     icon: Camera,
-    text: "takes periodic screenshots as you work",
+    key: "onboarding.timeline.cost.screenshots",
   },
   {
     icon: HardDrive,
-    text: "uses memory, cpu and disk",
+    key: "onboarding.timeline.cost.resources",
   },
   // The bounds, stated where the user is actually deciding. Both controls
   // already ship in Settings → Privacy — `ignoreIncognitoWindows` defaults to
@@ -140,7 +141,7 @@ const COSTS = [
   // one moment the user is choosing whether to allow it.
   {
     icon: EyeOff,
-    text: "skips incognito windows. you can exclude any app in settings.",
+    key: "onboarding.timeline.cost.bounds",
     testId: "timeline-capture-bounds",
   },
 ];
@@ -154,6 +155,7 @@ export default function TimelineChoice({
   handleNextSlide,
 }: TimelineChoiceProps) {
   const { settings, updateSettings } = useSettings();
+  const t = useT();
   const mountTimeRef = useRef(Date.now());
   const hasAdvanced = useRef(false);
   const inFlight = useRef(false);
@@ -199,7 +201,7 @@ export default function TimelineChoice({
       posthog.capture("onboarding_timeline_choice_failed", {
         stage: "persist",
       });
-      setError("couldn't save that choice. check disk space and try again.");
+      setError(t("onboarding.timeline.error"));
       inFlight.current = false;
       setPending(null);
       return;
@@ -212,7 +214,7 @@ export default function TimelineChoice({
   const recommendedTag = (
     <span className="flex items-center gap-1 font-mono text-[9px] normal-case tracking-normal opacity-70">
       <Check className="w-2.5 h-2.5" strokeWidth={2.5} />
-      recommended
+      {t("onboarding.timeline.recommended")}
     </span>
   );
   const subtext = (text: string) => (
@@ -236,10 +238,10 @@ export default function TimelineChoice({
         transition={{ delay: 0.1 }}
       >
         <h2 className="font-mono text-base font-bold lowercase">
-          meet the timeline
+          {t("onboarding.timeline.title")}
         </h2>
         <p className="font-mono text-[10px] text-muted-foreground/60 mt-1 max-w-[320px]">
-          rewind what you&apos;ve seen on screen
+          {t("onboarding.timeline.subtitle")}
         </p>
       </motion.div>
 
@@ -260,14 +262,14 @@ export default function TimelineChoice({
         animate={{ opacity: 1 }}
         transition={{ delay: 0.25 }}
       >
-        {COSTS.map(({ icon: Icon, text, testId }, i) => (
+        {COSTS.map(({ icon: Icon, key, testId }, i) => (
           <div key={i} data-testid={testId} className="flex items-start gap-2">
             <Icon
               className="w-3 h-3 mt-0.5 shrink-0 text-muted-foreground/60"
               strokeWidth={1.5}
             />
             <p className="font-mono text-[10px] text-muted-foreground/70 leading-snug">
-              {text}
+              {t(key)}
             </p>
           </div>
         ))}
@@ -282,12 +284,10 @@ export default function TimelineChoice({
           transition={{ delay: 0.3 }}
         >
           <p className="font-mono text-[10px] text-amber-500/90 font-semibold lowercase">
-            timeline may slow down this device
+            {t("onboarding.timeline.lowTier.title")}
           </p>
           <p className="font-mono text-[10px] text-muted-foreground/70 mt-1 leading-snug">
-            keeping it off saves memory, cpu and disk. text exposed by your apps
-            stays searchable; screenshots and image-only text won&apos;t be
-            captured.
+            {t("onboarding.timeline.lowTier.body")}
           </p>
         </motion.div>
       )}
@@ -322,9 +322,11 @@ export default function TimelineChoice({
         >
           <span className="flex items-center gap-1.5">
             {pending === true && <Loader className="w-3 h-3 animate-spin" />}
-            timeline on
+            {t("onboarding.timeline.on")}
           </span>
-          {recommendEnabled ? recommendedTag : subtext("visual rewind")}
+          {recommendEnabled
+            ? recommendedTag
+            : subtext(t("onboarding.timeline.onHint"))}
         </button>
         <button
           onClick={() => choose(false)}
@@ -337,11 +339,11 @@ export default function TimelineChoice({
         >
           <span className="flex items-center gap-1.5">
             {pending === false && <Loader className="w-3 h-3 animate-spin" />}
-            keep it off
+            {t("onboarding.timeline.off")}
           </span>
           {!recommendEnabled
             ? recommendedTag
-            : subtext("saves ram, cpu & disk")}
+            : subtext(t("onboarding.timeline.offHint"))}
         </button>
       </motion.div>
 
@@ -351,7 +353,7 @@ export default function TimelineChoice({
         animate={{ opacity: 1 }}
         transition={{ delay: 0.45 }}
       >
-        not a forever choice — change it anytime in settings
+        {t("onboarding.timeline.footnote")}
       </motion.p>
     </motion.div>
   );

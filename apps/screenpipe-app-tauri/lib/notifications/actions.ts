@@ -10,6 +10,8 @@ import {
   artifactOpenRequestFromUrl,
   OPEN_BRAIN_ARTIFACT_EVENT,
 } from "@/lib/artifact-deeplink";
+import { overrideFocusState } from "@/lib/journal/api";
+import type { FocusOverrideRelation } from "@/lib/journal/types";
 
 const GENERIC_DEEPLINK_MOUNT_DELAY_MS = 150;
 const MEETING_DEEPLINK_RETRY_DELAYS_MS = [0, 250, 750, 1500] as const;
@@ -69,6 +71,57 @@ export function isActivityDeeplink(url: string) {
     url.startsWith("screenpipe://activity?");
 }
 
+/**
+ * A `screenpipe://` deep link pointing at exactly one route, or null.
+ *
+ * The route is the whole target, host included: `screenpipe://home` and
+ * `screenpipe:///home` are the same link, while `screenpipe://elsewhere/home`
+ * is a different host and therefore not this route at all. A notification is
+ * attacker-controllable, so matching on the path alone would let any host smuggle
+ * itself into a window this app opens.
+ */
+function screenpipeRoute(url: string, route: string): URL | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "screenpipe:") return null;
+  // `screenpipe://home/` and `screenpipe://home` are one link; so are
+  // `screenpipe://focus/override` and `screenpipe:///focus/override`.
+  const path = parsed.pathname.replace(/\/+$/, "").replace(/^\//, "");
+  const target = parsed.host ? (path ? `${parsed.host}/${path}` : parsed.host) : path;
+  return target === route ? parsed : null;
+}
+
+/**
+ * `screenpipe://journal` and `screenpipe://home?section=journal` both open
+ * the journal — the second is the general "open Home to a section" form used
+ * elsewhere (onboarding, the sidebar); the journal case gets its own check
+ * because the generic `/home` deep link handling only understands the
+ * settings-bound sections.
+ */
+export function isJournalDeeplink(url: string) {
+  if (screenpipeRoute(url, "journal")) return true;
+  const home = screenpipeRoute(url, "home");
+  return !!home && home.searchParams.get("section") === "journal";
+}
+
+/**
+ * The relation carried by a focus-divergence nudge action, or null for any
+ * other URL. `POST /focus/state/override` only accepts these two relations —
+ * see `docs/JOURNAL_API_CONTRACT.md`.
+ */
+export function focusOverrideRelationFromDeeplink(
+  url: string,
+): FocusOverrideRelation | null {
+  const parsed = screenpipeRoute(url, "focus/override");
+  if (!parsed) return null;
+  const relation = parsed.searchParams.get("relation");
+  return relation === "other_work" || relation === "break" ? relation : null;
+}
+
 export function parseMeetingDeeplink(url: string): {
   meetingId: number;
   transcript: boolean;
@@ -97,6 +150,7 @@ export function windowForDeeplink(url: string) {
   }
   if (isMeetingDeeplink(url)) return { Home: { page: "meetings" } };
   if (isActivityDeeplink(url)) return { Home: { page: "activity" } };
+  if (isJournalDeeplink(url)) return { Home: { page: "journal" } };
   return "Main";
 }
 
@@ -142,18 +196,52 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * The nudge action's two buttons ("this is fine" / "take a break"): apply the
+ * override via `POST /focus/state/override`, then land on the journal so the
+ * person can see the state they just set. Returns false — a no-op — for any
+ * URL that isn't this exact deep link, so `routeNotificationDeeplink` can try
+ * it first without swallowing everything else.
+ */
+export async function applyFocusOverrideDeeplink(
+  url: string,
+  deps: {
+    showWindowActivated?: typeof commands.showWindowActivated;
+    overrideFocusState?: typeof overrideFocusState;
+  } = {},
+): Promise<boolean> {
+  const relation = focusOverrideRelationFromDeeplink(url);
+  if (!relation) return false;
+  const showWindowActivated =
+    deps.showWindowActivated ?? commands.showWindowActivated;
+  const doOverride = deps.overrideFocusState ?? overrideFocusState;
+  await doOverride(relation);
+  await showWindowActivated({ Home: { page: "journal" } });
+  return true;
+}
+
 export async function routeNotificationDeeplink(
   url: string,
   deps: {
     showWindowActivated?: typeof commands.showWindowActivated;
     emitEvent?: typeof emit;
     sleepMs?: (ms: number) => Promise<void>;
+    overrideFocusState?: typeof overrideFocusState;
   } = {},
 ): Promise<void> {
   const showWindowActivated =
     deps.showWindowActivated ?? commands.showWindowActivated;
   const emitEvent = deps.emitEvent ?? emit;
   const sleepMs = deps.sleepMs ?? sleep;
+
+  if (
+    await applyFocusOverrideDeeplink(url, {
+      showWindowActivated,
+      overrideFocusState: deps.overrideFocusState,
+    })
+  ) {
+    return;
+  }
 
   const artifactRequest = artifactOpenRequestFromUrl(url, "notification");
   if (artifactRequest) {

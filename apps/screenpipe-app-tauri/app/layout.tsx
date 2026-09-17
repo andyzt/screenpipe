@@ -8,6 +8,9 @@ import { Inter } from "next/font/google";
 import "@/lib/dev/browser-runtime";
 import "@xyflow/react/dist/style.css";
 import "./globals.css";
+// Layered on top of globals.css: the journal fork's shadcn/ui palette and
+// type, scoped entirely to :root[data-theme="journal"]. See lib/journal-shell.ts.
+import "./journal-theme.css";
 import { Providers } from "./providers";
 import { Toaster } from "@/components/ui/toaster";
 import { Suspense, useEffect } from "react";
@@ -34,6 +37,7 @@ import {
   openChatConversationInCurrentChatSurface,
 } from "@/lib/chat-utils";
 import { useExperimentalFeaturesEnabled } from "@/lib/experimental-features";
+import { JOURNAL_THEME } from "@/lib/journal-shell";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -278,19 +282,31 @@ export default function RootLayout({
           dangerouslySetInnerHTML={{
             __html: `
               (function() {
-                // Apply theme to prevent flash and ensure sidebar/main content consistency.
-                // Priority: stored preference > system preference
+                // Apply theme to prevent flash and ensure sidebar/main content
+                // consistency. Priority: stored preference > system preference.
+                // The journal build also stamps data-theme before first paint.
+                // The value is interpolated from JOURNAL_THEME in
+                // lib/journal-shell.ts — the same constant ThemeProvider reads —
+                // so the two cannot drift either side of hydration.
+                var journalTheme = ${JSON.stringify(JOURNAL_THEME)};
                 try {
-                  var theme = localStorage.getItem('screenpipe-ui-theme');
-                  if (!theme || theme === 'system') {
-                    // No preference or 'system' mode: detect system preference for consistent startup
-                    theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+                  if (journalTheme) {
+                    document.documentElement.setAttribute('data-theme', journalTheme);
+                  }
+                  var theme = localStorage.getItem('screenpipe-ui-theme') || 'system';
+                  if (theme !== 'light' && theme !== 'dark') {
+                    // Under the journal theme "system" means light, matching
+                    // components/theme-provider.tsx; otherwise follow the OS.
+                    theme =
+                      !journalTheme &&
+                      window.matchMedia &&
+                      window.matchMedia('(prefers-color-scheme: dark)').matches
+                        ? 'dark'
+                        : 'light';
                   }
                   document.documentElement.classList.add(theme);
                 } catch (e) {
-                  // localStorage unavailable, detect system preference as fallback
-                  var systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-                  document.documentElement.classList.add(systemTheme);
+                  document.documentElement.classList.add('light');
                 }
 
                 try {

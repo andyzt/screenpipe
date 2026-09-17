@@ -21,8 +21,19 @@ function parseMode(value: string | undefined): BrowserDevMode | null {
   return value === "mock" || value === "live" ? value : null;
 }
 
+const BROWSER_DEV_SCENARIOS: readonly BrowserDevScenario[] = [
+  "ready",
+  "empty",
+  "backend-error",
+  "journal-generating",
+  "journal-no-preset",
+  "journal-recap-ready",
+];
+
 function parseScenario(value: string | undefined): BrowserDevScenario {
-  return value === "empty" || value === "backend-error" ? value : "ready";
+  return BROWSER_DEV_SCENARIOS.includes(value as BrowserDevScenario)
+    ? (value as BrowserDevScenario)
+    : "ready";
 }
 
 declare global {

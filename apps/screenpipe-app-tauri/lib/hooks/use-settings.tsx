@@ -20,7 +20,6 @@ import { captureSettingsChange } from "@/lib/analytics/settings-change";
 import { resolveTelemetryDisabledByEnv, shouldIdentifyInPostHog } from "@/lib/telemetry-env";
 import { User } from "../utils/tauri";
 import { SettingsStore } from "../utils/tauri";
-import { installAuthInterceptor } from "../auth-guard";
 import {
 	getLocalPlanPolicy,
 	hasAppEntitlement,
@@ -33,6 +32,7 @@ import type {
 	EnterpriseInstallMetadata,
 } from "@/lib/enterprise/app-update-policy";
 import { type FontSize, applyFontSize } from "@/lib/utils/font-size";
+import type { LocaleSetting } from "@/lib/i18n/dictionary";
 import {
 	applyManagedOverrides,
 	type ManagedSettingValue,
@@ -58,6 +58,8 @@ import {
 	DEFAULT_SIDEBAR_NAV_LAYOUT,
 	type SidebarNavLayout,
 } from "@/lib/utils/sidebar-nav-layout";
+import type { JournalWorkProfile } from "@/lib/journal/types";
+import type { RolePresetId } from "@/lib/journal/category-presets";
 export type VadSensitivity = "low" | "medium" | "high";
 
 export type AIProviderType =
@@ -66,6 +68,7 @@ export type AIProviderType =
 	| "openai-chatgpt"
 	| "anthropic"
 	| "custom"
+	| "deepseek"
 	| "embedded"
 	| "screenpipe-cloud"
 	| "acp"
@@ -130,6 +133,10 @@ export type AIPreset = {
 	  }
 	| {
 			provider: "custom";
+			apiKey: string;
+	  }
+	| {
+			provider: "deepseek";
 			apiKey: string;
 	  }
 	| {
@@ -310,6 +317,31 @@ export type Settings = SettingsStore & {
 	activitiesAiPresetId?: string;
 	/** Next native Activity generation run as an ISO timestamp. */
 	activitiesNextRunAt?: string;
+	/** Run the background daily-journal writer. Default true.
+	 *  Frontend-only today: these eight keys ride the Rust `extra` map
+	 *  (`SettingsStore.extra`) so a Rust save round-trips them untouched.
+	 *  Contract: `docs/JOURNAL_API_CONTRACT.md` § Settings. */
+	journalEnabled?: boolean;
+	/** AI preset the journal writer uses. Unset = the default preset. */
+	journalAiPresetId?: string;
+	/** Role, projects and free notes fed to the journal prompts. */
+	journalWorkProfile?: JournalWorkProfile;
+	/** Role picked during onboarding, used to seed the journal categories.
+	 *  Kept after it has been applied so Settings can say which preset the
+	 *  current list came from. */
+	journalRolePreset?: RolePresetId;
+	/** True once `journalRolePreset` has reached the engine through
+	 *  `PUT /journal/categories`. Unset means the choice is still pending and
+	 *  `lib/journal/use-role-preset.ts` retries it on the next journal mount. */
+	journalRolePresetApplied?: boolean;
+	/** Let the journal's app icons fall back to fetching favicons from the public
+	 *  internet; off by default because it would send every browsed hostname to a
+	 *  third party. */
+	journalRemoteFavicons?: boolean;
+	/** Notification layer for focus divergence. Default false. */
+	focusNudgesEnabled?: boolean;
+	/** How long a divergence must persist before it is classified. Default 10. */
+	focusGraceMinutes?: number;
 	/** Goal used to prioritize the Home cards. Persisted in store.bin. */
 	userGoalCategory?: UserGoalCategory;
 	/** Where the user says they found screenpipe, answered once during setup.
@@ -378,6 +410,10 @@ export type Settings = SettingsStore & {
 	connectionsSyncEnabled?: boolean;
 	/** Font size for the entire app UI */
 	fontSize?: FontSize;
+	/** Interface language. `system` follows `navigator.language`; anything
+	 *  starting with `ru` resolves to Russian. See `lib/i18n`. Rides the Rust
+	 *  `extra` map like the journal keys above. */
+	uiLanguage?: LocaleSetting;
 	/** OpenAI-compatible transcription endpoint URL */
 	openaiCompatibleEndpoint?: string;
 	/** OpenAI-compatible transcription API key */
@@ -619,53 +655,161 @@ const DEFAULT_IGNORED_WINDOWS_PER_OS: Record<string, string[]> = {
 	linux: ["Info center", "Discover", "Parted"],
 };
 
-// Default screenpipe-cloud presets on first install — every seed runs on
-// "auto": the ai-gateway routes to the best model the user's tier allows, so
-// nobody starts pinned to a specific (possibly tier-gated) Claude model.
-// - "Chat":  default preset, used by interactive chat.
-// - "Pipes": same routing, separate id so recurring pipe runs can be
-//           customized independently; users can override per-pipe.
-const CHAT_PRESET_ID = "chat";
-const PIPES_PRESET_ID = "pipes";
+// Default preset on first install: DeepSeek's multimodal model through the
+// team gateway (OpenAI-compatible, OpenRouter-style model ids; no screenpipe
+// account). The API key is read from the preset, then the DEEPSEEK_API_KEY
+// environment variable, then the credential baked into the binary at build
+// time (SCREENPIPE_DEEPSEEK_API_KEY) — so a preset without a key still works.
+export const DEEPSEEK_PRESET_ID = "deepseek";
+export const DEEPSEEK_API_URL = "https://api.vsellm.ru/v1";
+export const DEEPSEEK_DEFAULT_MODEL = "deepseek/deepseek-v4.1-flash";
+/** The seeded model before 2026-09-18; nothing in this build sends images. */
+export const DEEPSEEK_RETIRED_VISION_MODEL = "deepseek/deepseek-v4-flash-vision-exp";
 
-// Non-pro users get a single "screenpipe" preset on auto — auto handles
-// model routing without needing the user to know what to pick.
-const SCREENPIPE_PRESET_ID = "screenpipe";
-
-export function makeDefaultPresets(isPro: boolean): AIPreset[] {
-	if (isPro) {
-		return [
-			{
-				id: CHAT_PRESET_ID,
-				provider: "screenpipe-cloud",
-				url: "",
-				model: "auto",
-				maxContextChars: 200000,
-				defaultPreset: true,
-				prompt: "",
-			},
-			{
-				id: PIPES_PRESET_ID,
-				provider: "screenpipe-cloud",
-				url: "",
-				model: "auto",
-				maxContextChars: 200000,
-				defaultPreset: false,
-				prompt: "",
-			},
-		];
-	}
+export function makeDefaultPresets(_isPro: boolean): AIPreset[] {
 	return [
 		{
-			id: SCREENPIPE_PRESET_ID,
-			provider: "screenpipe-cloud",
-			url: "",
-			model: "auto",
+			id: DEEPSEEK_PRESET_ID,
+			provider: "deepseek",
+			apiKey: "",
+			url: DEEPSEEK_API_URL,
+			model: DEEPSEEK_DEFAULT_MODEL,
 			maxContextChars: 200000,
 			defaultPreset: true,
 			prompt: "",
 		},
 	];
+}
+
+const DEFAULT_DEEPSEEK_PRESET: AIPreset = makeDefaultPresets(false)[0];
+
+/** Host of the direct DeepSeek endpoint the first accountless build seeded. */
+const DIRECT_DEEPSEEK_HOST = "api.deepseek.com";
+/** The only two model ids that build ever wrote into the direct preset. */
+const DIRECT_DEEPSEEK_MODELS = new Set([
+	"deepseek-v4-flash-vision-exp",
+	"deepseek/deepseek-v4-flash-vision-exp",
+]);
+
+/**
+ * Drop the direct-endpoint DeepSeek preset the first accountless build seeded.
+ * That account is not funded by the team, so every call from it fails with
+ * `402 Insufficient Balance`, and while it stayed the default preset the
+ * journal could not write a single card.
+ *
+ * The match is deliberately narrow — exactly the shape that build wrote, never
+ * a preset the user made:
+ *   - `provider === "custom"`, and
+ *   - the URL parses and its hostname is exactly `api.deepseek.com` (parsed,
+ *     lowercased and compared whole, so neither `api.deepseek.com.evil.test`
+ *     nor a path prefix such as `https://evil.test/api.deepseek.com` matches),
+ *     and
+ *   - `model` is exactly `deepseek-v4-flash-vision-exp` or
+ *     `deepseek/deepseek-v4-flash-vision-exp`.
+ * A user's own `deepseek-chat` / `deepseek-reasoner` preset pointed at
+ * `https://api.deepseek.com/v1` with their own key therefore survives.
+ *
+ * The team gateway preset replaces the dropped one when nothing is left, or
+ * when the dropped preset was the default and nothing left is: an existing
+ * keyless gateway preset takes the default role, otherwise one is seeded. Both
+ * paths leave exactly one preset flagged as the default.
+ *
+ * Pure: the input presets are never mutated; copies are returned. Returns
+ * `null` when there is nothing to drop.
+ */
+export function dropDirectDeepSeekPreset(value: unknown): AIPreset[] | null {
+	const presets: any[] = Array.isArray(value) ? value : [];
+	const isDirect = (p: any) => {
+		if (!p || p.provider !== "custom") return false;
+		if (typeof p.url !== "string" || typeof p.model !== "string") return false;
+		if (!DIRECT_DEEPSEEK_MODELS.has(p.model)) return false;
+		try {
+			return new URL(p.url).hostname.toLowerCase() === DIRECT_DEEPSEEK_HOST;
+		} catch {
+			return false;
+		}
+	};
+	if (!presets.some(isDirect)) return null;
+	const wasDefault = presets.some((p) => isDirect(p) && p.defaultPreset === true);
+	const kept = presets
+		.filter((p) => !isDirect(p))
+		.map((p) => (p && typeof p === "object" ? { ...p } : p));
+	const hasDefault = kept.some((p) => p?.defaultPreset === true);
+	if (kept.length === 0 || (wasDefault && !hasDefault)) {
+		const gateway = kept.find((p) => p?.provider === "deepseek");
+		if (gateway) gateway.defaultPreset = true;
+		else kept.push({ ...DEFAULT_DEEPSEEK_PRESET, defaultPreset: true });
+	}
+	return kept as AIPreset[];
+}
+
+/**
+ * Move keyless DeepSeek presets off the retired vision model onto the current
+ * default. The vision model was the seed until 2026-09-18, but no feature in
+ * this build sends images, and its reasoning pass made every journal window
+ * slower. A preset the user gave an API key, or pointed at another model, is
+ * left alone. Returns `null` when nothing changes.
+ */
+export function retireDeepSeekVisionModel(value: unknown): AIPreset[] | null {
+	const presets: any[] = Array.isArray(value) ? value : [];
+	let changed = false;
+	const next = presets.map((p) => {
+		if (
+			p &&
+			p.provider === "deepseek" &&
+			p.model === DEEPSEEK_RETIRED_VISION_MODEL &&
+			!(p.apiKey && String(p.apiKey).trim())
+		) {
+			changed = true;
+			return { ...p, model: DEEPSEEK_DEFAULT_MODEL };
+		}
+		return p;
+	});
+	return changed ? (next as AIPreset[]) : null;
+}
+
+/**
+ * Collapse duplicate DeepSeek presets into one canonical keyless preset.
+ *
+ * Before the native store learned the "deepseek" provider it rewrote it to
+ * "custom" on every load, and the seeding step then added a fresh copy each
+ * time — stores accumulated ten or more identical rows. Keep one canonical
+ * keyless gateway preset in the position of the first duplicate; never touch a
+ * preset the user gave an API key, and never touch a non-DeepSeek preset.
+ *
+ * Returns `null` when there is nothing to collapse, so the caller can skip the
+ * write. Pure: it is the one part of the migration worth testing directly, and
+ * it must run before anything seeds a preset.
+ */
+export function collapseDuplicateDeepSeekPresets(
+	value: unknown,
+): AIPreset[] | null {
+	const presets: any[] = Array.isArray(value) ? value : [];
+	const isDeepSeekLike = (p: any) =>
+		p &&
+		(p.provider === "deepseek" ||
+			(p.provider === "custom" &&
+				typeof p.url === "string" &&
+				(p.url.startsWith(DEEPSEEK_API_URL) ||
+					p.url.startsWith("https://api.deepseek.com")) &&
+				typeof p.model === "string" &&
+				p.model.includes("deepseek")));
+	const keyless = presets.filter(
+		(p) => isDeepSeekLike(p) && !(p.apiKey && String(p.apiKey).trim()),
+	);
+	if (keyless.length <= 1 && keyless.every((p) => p.provider === "deepseek")) {
+		return null;
+	}
+	const wasDefault = keyless.some((p) => p.defaultPreset === true);
+	const canonical = {
+		...DEFAULT_DEEPSEEK_PRESET,
+		defaultPreset: wasDefault,
+		prompt: keyless.find((p) => p.prompt)?.prompt ?? "",
+	};
+	const rest = presets.filter((p) => !keyless.includes(p));
+	const firstIndex = presets.findIndex((p) => keyless.includes(p));
+	rest.splice(Math.max(0, Math.min(firstIndex, rest.length)), 0, canonical as any);
+	return rest as AIPreset[];
 }
 
 const DEFAULT_AUDIO_ENGINE = "whisper-large-v3-turbo-quantized";
@@ -828,6 +972,11 @@ let DEFAULT_SETTINGS: Settings = {
 			showShortcutOverlay: true,
 			shortcutOverlaySnoozedUntil: null,
 			sidebarNavLayout: { ...DEFAULT_SIDEBAR_NAV_LAYOUT },
+			journalEnabled: true,
+			journalWorkProfile: { role: "", projects: [], notes: "" },
+			journalRemoteFavicons: false,
+			focusNudgesEnabled: false,
+			focusGraceMinutes: 10,
 			ignoreIncognitoWindows: true,
 			enhancedIncognitoDetection: false,
 			pauseOnDrmContent: false,
@@ -853,6 +1002,7 @@ let DEFAULT_SETTINGS: Settings = {
 			headless: false,
 			headlessRecordOnly: false,
 			fontSize: "16px",
+			uiLanguage: "ru",
 		};
 
 export function createDefaultSettingsObject(): Settings {
@@ -1217,22 +1367,10 @@ function createSettingsStore() {
 		// installs default to "meetings-only" (via createDefaultSettingsObject, which
 		// get() returns directly when there are no stored settings).
 
-		// b2 seed: the first time we see a logged-in user, replace the anonymous
-		// "screenpipe" placeholder with the pro pair (chat + pipes) IF they're pro.
-		// Anonymous users keep the placeholder forever (which is correct — non-pro
-		// stays on the single "screenpipe" auto preset). Existing users with their
-		// own presets are untouched. Runs exactly once per install.
-		if (!(settings as any)._presetsSeededForUser && settings.user?.token) {
+		// Migration: Add default presets if user has none
+		if (!Array.isArray(settings.aiPresets) || settings.aiPresets.length === 0) {
 			const isPro = settings.user?.cloud_subscribed === true;
-			const presets = settings.aiPresets ?? [];
-			const isAnonymousPlaceholder =
-				presets.length === 1 &&
-				(presets[0] as any)?.id === SCREENPIPE_PRESET_ID &&
-				(presets[0] as any)?.provider === "screenpipe-cloud";
-			if (isPro && isAnonymousPlaceholder) {
-				settings.aiPresets = makeDefaultPresets(true) as any;
-			}
-			(settings as any)._presetsSeededForUser = true;
+			settings.aiPresets = makeDefaultPresets(isPro) as any;
 			needsUpdate = true;
 		}
 
@@ -1249,6 +1387,89 @@ function createSettingsStore() {
 			settings.aiPresets = settings.aiPresets.map((p: any) =>
 				p.id === "pi-agent" ? { ...p, id: "screenpipe-cloud" } : p
 			);
+			needsUpdate = true;
+		}
+
+		// Migration: presets seeded before the team-gateway switch point at
+		// api.deepseek.com with unprefixed model ids; move them to the gateway.
+		if (
+			settings.aiPresets?.some(
+				(p: any) => p.provider === "deepseek" && p.url === "https://api.deepseek.com"
+			)
+		) {
+			settings.aiPresets = settings.aiPresets.map((p: any) =>
+				p.provider === "deepseek" && p.url === "https://api.deepseek.com"
+					? {
+							...p,
+							url: DEEPSEEK_API_URL,
+							model:
+								p.model && !p.model.includes("/")
+									? `deepseek/${p.model}`
+									: p.model || DEEPSEEK_DEFAULT_MODEL,
+					  }
+					: p
+			);
+			needsUpdate = true;
+		}
+
+		// Migration (journal build): the Activities page is hidden from the default
+		// sidebar and its settings section is hidden too, but its headless generator
+		// still ran a Pi session every 15 minutes on stores that had it enabled.
+		// Turn it off once; a user who restores the page can re-enable it there.
+		if (
+			settings.activitiesEnabled === true &&
+			!(settings as any)._activitiesDisabledForJournalBuild
+		) {
+			settings.activitiesEnabled = false;
+			(settings as any)._activitiesDisabledForJournalBuild = true;
+			needsUpdate = true;
+		}
+
+		// Migration: collapse duplicate DeepSeek presets. Runs before the seeding
+		// step below — seeding a preset on top of the duplicates would defeat it.
+		{
+			const collapsed = collapseDuplicateDeepSeekPresets(settings.aiPresets);
+			if (collapsed) {
+				settings.aiPresets = collapsed as any;
+				needsUpdate = true;
+			}
+			const retired = retireDeepSeekVisionModel(settings.aiPresets);
+			if (retired) {
+				settings.aiPresets = retired as any;
+				needsUpdate = true;
+			}
+			const dropped = dropDirectDeepSeekPreset(settings.aiPresets);
+			if (dropped) {
+				settings.aiPresets = dropped as any;
+				needsUpdate = true;
+			}
+		}
+
+		// Migration: add the DeepSeek preset for existing installs (without
+		// touching their existing presets). It becomes the default so a store that
+		// only ever had screenpipe-cloud presets (which now need no account but
+		// still need a cloud token) lands on a provider that works out of the box.
+		// Runs exactly once per store: `_deepseekPresetSeeded` is written the first
+		// time this block is evaluated, whether or not it seeded anything, so a
+		// preset the user later deletes is never resurrected on the next load.
+		if (!(settings as any)._deepseekPresetSeeded) {
+			const hasDeepSeekPreset = settings.aiPresets?.some(
+				(p: any) => p.provider === "deepseek"
+			);
+			if (settings.aiPresets && settings.aiPresets.length > 0 && !hasDeepSeekPreset) {
+				const onlyCloudDefaults = settings.aiPresets.every(
+					(p: any) => !p.defaultPreset || p.provider === "screenpipe-cloud"
+				);
+				settings.aiPresets = [
+					{ ...DEFAULT_DEEPSEEK_PRESET, defaultPreset: onlyCloudDefaults } as any,
+					...settings.aiPresets.map((p: any) =>
+						onlyCloudDefaults ? { ...p, defaultPreset: false } : p
+					),
+				];
+			}
+			// The marker itself has to reach the store, so this write is needed even
+			// when no preset was seeded.
+			(settings as any)._deepseekPresetSeeded = true;
 			needsUpdate = true;
 		}
 
@@ -1617,44 +1838,8 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 	const authGenerationRef = useRef(0);
 
 	useEffect(() => {
-		installAuthInterceptor(
-			() => {
-				const user = settingsRef.current.user as
-					| (User & { __e2eSkipAccountRefresh?: boolean })
-					| null
-					| undefined;
-				// Synthetic E2E sessions intentionally use tokens the production web
-				// service cannot verify. A background cloud request may still return
-				// 401 while the native onboarding flow is under test; do not let that
-				// unrelated response erase the fixture from every app window.
-				if (
-					process.env.NEXT_PUBLIC_SCREENPIPE_E2E === "true" &&
-					(hasActiveE2EAccountFixture() ||
-						user?.__e2eSkipAccountRefresh === true)
-				) {
-					return undefined;
-				}
-				return user?.token ?? undefined;
-			},
-			async () => {
-				// Any webview can observe a 401 from an unrelated cloud request. An
-				// E2E fixture is intentionally synthetic, so consult the shared store
-				// before allowing that response to erase the account across windows.
-				if (await hasPersistedE2EAccountFixture()) return;
-				// A response from the website auth surface definitively rejected the
-				// credential. Clear the account so it cannot be confused with a
-				// transient secret-store hydration miss.
-				await updateSettings({ user: null as any });
-				// Mirror the sign-out into the sidecar so the pi-agent and
-				// cloud_proxy.rs stop sending the now-revoked token on the
-				// next pipe run.
-				try {
-					await commands.setCloudToken(null);
-				} catch (e) {
-					console.warn("failed to clear cloud token in sidecar:", e);
-				}
-			}
-		);
+		// Authorization was removed from this build: no screenpipe account, no
+		// session interceptor. The user's own provider keys live in AI presets.
 	}, []); // eslint-disable-line react-hooks/exhaustive-deps
 
 	// Cross-window sign-out: when any window broadcasts a sign-out (logout

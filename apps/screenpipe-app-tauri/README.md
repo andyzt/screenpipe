@@ -31,7 +31,38 @@ Useful mock states:
 ```bash
 SCREENPIPE_WEB_SCENARIO=empty bun run dev:web
 SCREENPIPE_WEB_SCENARIO=backend-error bun run dev:web
+SCREENPIPE_WEB_SCENARIO=journal-generating bun run dev:web
+SCREENPIPE_WEB_SCENARIO=journal-no-preset bun run dev:web
+SCREENPIPE_WEB_SCENARIO=journal-recap-ready bun run dev:web
 ```
+
+The journal landing view (<http://127.0.0.1:1420/home?section=journal>) and
+its settings section (`/settings?section=journal`) are fully mocked: the
+`ready` state seeds a day of cards with one idle card, one detour and an
+active intention; `journal-generating` shows pending windows; and
+`journal-no-preset` shows the state when no OpenAI-compatible preset is
+configured; `journal-recap-ready` opens a day whose recap is already written.
+Setting and ending an intention mutates the mock, so the focus strip follows
+it. Card feedback, review ratings and the recap are stateful too: a thumb, a
+Focused / Neutral / Distracted rating or a written recap survives the next
+poll for the rest of the browser session, and the ratings split each other
+exactly as the contract says.
+
+The journal is a time canvas with an inspector beside it. Adding
+`&select=<activity id>` (for example
+<http://127.0.0.1:1420/home?section=journal&select=4105>) opens with that card
+selected, so the card-detail state can be screenshotted headlessly without
+driving a click. The id must be one of the mock's cards (4101–4109).
+
+The UI ships English and Russian (`lib/i18n`). The locale follows
+Settings → Appearance → *Language / Язык*, which defaults to Russian; `system`
+follows `navigator.language` (Russian or English, anything else falls back to
+Russian). The engine writes journal cards and recaps in the same language. In browser-dev builds only, `?lang=ru` (or `?lang=en`)
+on any page forces it, so the Russian UI can be screenshotted headlessly
+without writing to the mock settings store first — for example
+<http://127.0.0.1:1420/home?section=journal&lang=ru> or
+<http://127.0.0.1:1420/onboarding?step=role&lang=ru>. The parameter is read
+once on mount and is ignored in a packaged app.
 
 The default `ready` state also seeds a stateful Live View and canvas document.
 Edits such as changing the time range or layout mode are preserved for the

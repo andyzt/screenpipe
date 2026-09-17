@@ -22,6 +22,7 @@ import {
   SlidersHorizontal,
   KeyRound,
   ListChecks,
+  NotebookPen,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import * as PopoverPrimitive from "@radix-ui/react-popover";
@@ -31,72 +32,91 @@ import { useRouter, useSearchParams } from "next/navigation";
 import {
   ALL_SETTINGS_SECTIONS,
   DEFAULT_SETTINGS_SECTION,
+  HIDDEN_SETTINGS_SECTIONS,
+  isHiddenSettingsSection,
   rememberSettingsSection,
   type SettingsSection,
 } from "@/lib/settings-sections";
 import { AccountSection, searchIndex as accountSearchIndex } from "@/components/settings/account-section";
-import ShortcutSection, { searchIndex as shortcutsSearchIndex } from "@/components/settings/shortcut-section";
-import { AIPresets, searchIndex as aiSearchIndex } from "@/components/settings/ai-presets";
-import { AISettings, searchIndex as aiSettingsSearchIndex } from "@/components/settings/ai-settings";
+import ShortcutSection, { searchIndexFor as shortcutsSearchIndexFor } from "@/components/settings/shortcut-section";
+import { AIPresets, searchIndexFor as aiSearchIndexFor } from "@/components/settings/ai-presets";
+import { AISettings, searchIndexFor as aiSettingsSearchIndexFor } from "@/components/settings/ai-settings";
 import {
   RecordingSettings,
   audioSearchIndex,
-  screenSearchIndex,
+  screenSearchIndexFor,
 } from "@/components/settings/recording-settings";
-import GeneralSettings, { searchIndex as generalSearchIndex } from "@/components/settings/general-settings";
+import GeneralSettings, { searchIndexFor as generalSearchIndexFor } from "@/components/settings/general-settings";
 import { TeamSection, searchIndex as teamSearchIndex } from "@/components/settings/team-section";
-import { DisplaySection, searchIndex as displaySearchIndex } from "@/components/settings/display-section";
-import { PrivacySection, searchIndex as privacySearchIndex } from "@/components/settings/privacy-section";
-import { PermissionsSection, searchIndex as permissionsSearchIndex } from "@/components/settings/permissions-section";
-import { StorageSection, searchIndex as storageSearchIndex } from "@/components/settings/storage-section";
-import { NotificationsSettings, searchIndex as notificationsSearchIndex } from "@/components/settings/notifications-settings";
+import { DisplaySection, searchIndexFor as displaySearchIndexFor } from "@/components/settings/display-section";
+import { PrivacySection, searchIndexFor as privacySearchIndexFor } from "@/components/settings/privacy-section";
+import { PermissionsSection, searchIndexFor as permissionsSearchIndexFor } from "@/components/settings/permissions-section";
+import { StorageSection, searchIndexFor as storageSearchIndexFor } from "@/components/settings/storage-section";
+import { NotificationsSettings, searchIndexFor as notificationsSearchIndexFor } from "@/components/settings/notifications-settings";
 import { UsageSection, searchIndex as usageSearchIndex } from "@/components/settings/usage-section";
 import { SpeakersSection, searchIndex as speakersSearchIndex } from "@/components/settings/speakers-section";
 import { ActivitiesSettings, searchIndex as activitiesSearchIndex } from "@/components/settings/activities-settings";
-import { searchIndex as powerSearchIndex } from "@/components/settings/battery-saver-section";
+import { JournalSettings, searchIndexFor as journalSearchIndexFor } from "@/components/settings/journal-settings";
+import { searchIndexFor as powerSearchIndexFor } from "@/components/settings/battery-saver-section";
 import { ReferralCard } from "@/components/settings/referral-card";
 import { SettingsSearchInput, SettingsSearchPopover, searchSettingsNav, scrollToSettingsField, type IndexedSettingsField, type SettingsField } from "@/components/settings/settings-search";
+import { translate, useT, type TranslateFn } from "@/lib/i18n";
 import { ExperimentalShortcutGuide } from "@/components/shortcut-guide";
 
 // Settings search index for the inline ReferralSection defined further down in
 // this file. Lives here because the section itself lives here; same co-location
-// principle as the standalone sections.
+// principle as the standalone sections. Referral is in
+// HIDDEN_SETTINGS_SECTIONS, so this never reaches search and stays English.
 const referralSearchIndex: SettingsField[] = [
   { label: "Invite link", keywords: ["invite", "refer", "promo"] },
   { label: "Free month", keywords: ["discount", "earn"] },
 ];
 
 /**
- * Aggregate every section's co-located `searchIndex` export into one flat list,
+ * Aggregate every section's co-located search index into one flat list,
  * stamping each entry with the section id used by the nav (`SettingsSection`).
  *
+ * Takes the active translator because a search index is *rendered* text:
+ * `scrollToSettingsField` finds a field by matching the index label against the
+ * heading on screen, so in a Russian UI the index has to be Russian too.
+ * Sections therefore export `searchIndexFor(t)` and resolve their labels here,
+ * once per locale. The English string survives as a hidden keyword (see
+ * `resolveSettingsFields`), so "language" and «язык» both find Appearance.
+ *
+ * Hidden sections keep their static English `searchIndex`: they are filtered
+ * out below and never reach the popover.
+ *
  * To add a new section:
- *   1. Export `searchIndex: SettingsField[]` from the section's file
+ *   1. Export `searchFields` + `searchIndexFor` from the section's file
  *      (any filename — see the imports above for examples).
  *   2. Add one line below mapping it to the section id.
- *
- * Cheap: runs once at module load. Index entries themselves are static.
  */
-const ALL_SETTINGS_FIELDS: IndexedSettingsField[] = [
-  ...displaySearchIndex.map((f) => ({ ...f, section: "display" })),
-  ...generalSearchIndex.map((f) => ({ ...f, section: "general" })),
-  ...aiSearchIndex.map((f) => ({ ...f, section: "ai" })),
-  ...aiSettingsSearchIndex.map((f) => ({ ...f, section: "ai-settings" })),
-  ...activitiesSearchIndex.map((f) => ({ ...f, section: "activities" })),
-  ...audioSearchIndex.map((f) => ({ ...f, section: "audio" })),
-  ...screenSearchIndex.map((f) => ({ ...f, section: "recording" })),
-  ...powerSearchIndex.map((f) => ({ ...f, section: "recording" })),
-  ...shortcutsSearchIndex.map((f) => ({ ...f, section: "shortcuts" })),
-  ...notificationsSearchIndex.map((f) => ({ ...f, section: "notifications" })),
-  ...usageSearchIndex.map((f) => ({ ...f, section: "usage" })),
-  ...privacySearchIndex.map((f) => ({ ...f, section: "privacy" })),
-  ...permissionsSearchIndex.map((f) => ({ ...f, section: "permissions" })),
-  ...storageSearchIndex.map((f) => ({ ...f, section: "storage" })),
-  ...speakersSearchIndex.map((f) => ({ ...f, section: "speakers" })),
-  ...teamSearchIndex.map((f) => ({ ...f, section: "team" })),
-  ...accountSearchIndex.map((f) => ({ ...f, section: "account" })),
-  ...referralSearchIndex.map((f) => ({ ...f, section: "referral" })),
-];
+function allSettingsFields(t: TranslateFn): IndexedSettingsField[] {
+  return [
+    ...displaySearchIndexFor(t).map((f) => ({ ...f, section: "display" })),
+    ...generalSearchIndexFor(t).map((f) => ({ ...f, section: "general" })),
+    ...aiSearchIndexFor(t).map((f) => ({ ...f, section: "ai" })),
+    ...aiSettingsSearchIndexFor(t).map((f) => ({ ...f, section: "ai-settings" })),
+    ...journalSearchIndexFor(t).map((f) => ({ ...f, section: "journal" })),
+    ...activitiesSearchIndex.map((f) => ({ ...f, section: "activities" })),
+    ...audioSearchIndex.map((f) => ({ ...f, section: "audio" })),
+    ...screenSearchIndexFor(t).map((f) => ({ ...f, section: "recording" })),
+    ...powerSearchIndexFor(t).map((f) => ({ ...f, section: "recording" })),
+    ...shortcutsSearchIndexFor(t).map((f) => ({ ...f, section: "shortcuts" })),
+    ...notificationsSearchIndexFor(t).map((f) => ({ ...f, section: "notifications" })),
+    ...usageSearchIndex.map((f) => ({ ...f, section: "usage" })),
+    ...privacySearchIndexFor(t).map((f) => ({ ...f, section: "privacy" })),
+    ...permissionsSearchIndexFor(t).map((f) => ({ ...f, section: "permissions" })),
+    ...storageSearchIndexFor(t).map((f) => ({ ...f, section: "storage" })),
+    ...speakersSearchIndex.map((f) => ({ ...f, section: "speakers" })),
+    ...teamSearchIndex.map((f) => ({ ...f, section: "team" })),
+    ...accountSearchIndex.map((f) => ({ ...f, section: "account" })),
+    ...referralSearchIndex.map((f) => ({ ...f, section: "referral" })),
+    // Sections that are not in the nav are not searchable either: a hit would
+    // navigate to a row the user cannot get back to. Restore by dropping the id
+    // from HIDDEN_SETTINGS_SECTIONS.
+  ].filter((f) => !isHiddenSettingsSection(f.section));
+}
 import { useManagedPolicy } from "@/lib/hooks/use-managed-policy";
 import { usePlatform } from "@/lib/hooks/use-platform";
 import posthog from "posthog-js";
@@ -109,13 +129,14 @@ import posthog from "posthog-js";
  * which layout produced a given view. Bump this whenever the grouping or
  * ordering changes so the split is unambiguous in analysis.
  */
-const NAV_LAYOUT_VERSION = "v2-demand-ordered";
+const NAV_LAYOUT_VERSION = "v3-journal-first";
 
 function ReferralSection() {
   return <ReferralCard />;
 }
 
 function SettingsContent() {
+  const t = useT();
   const router = useRouter();
   const searchParams = useSearchParams();
   const fromSection = searchParams.get("from");
@@ -185,62 +206,92 @@ function SettingsContent() {
   // every section reachable. Section ids are deliberately unchanged: deep
   // links, enterprise policy filters and `settings-nav-*` E2E selectors all key
   // off the id, not the label.
-  const navGroups = [
+  /**
+   * One nav row. Carries the English label as a hidden search alias so the
+   * vocabulary people learned in English — and every term in our docs — still
+   * finds the section in a Russian UI.
+   */
+  const navRow = <T extends SettingsSection>(
+    id: T,
+    key: string,
+    icon: React.ReactNode,
+  ) => ({ id, label: t(key), aliases: [translate("en", key)], icon });
+
+  const navGroupsWithHidden = [
     {
-      label: "Capture & data",
+      label: t("settings.nav.group.ai"),
       items: [
-        { id: "recording" as const, label: "Screen", icon: <Video className="h-4 w-4" /> },
-        { id: "audio" as const, label: "Audio & meetings", icon: <Mic className="h-4 w-4" /> },
+        // Journal first, then the one model surface the product still asks the
+        // user about. Everything else in this group is secondary.
+        navRow("journal", "settings.nav.journal", <NotebookPen className="h-4 w-4" />),
+        navRow("ai", "settings.nav.ai", <Brain className="h-4 w-4" />),
+        navRow("ai-settings", "settings.nav.aiSettings", <SlidersHorizontal className="h-4 w-4" />),
+        navRow("activities", "settings.nav.activities", <ListChecks className="h-4 w-4" />),
+        navRow("usage", "settings.nav.usage", <BarChart3 className="h-4 w-4" />),
+      ].filter((s) => !isSettingsSectionHidden(s.id)),
+    },
+    {
+      label: t("settings.nav.group.capture"),
+      items: [
+        navRow("recording", "settings.nav.recording", <Video className="h-4 w-4" />),
+        navRow("audio", "settings.nav.audio", <Mic className="h-4 w-4" />),
         // Speaker identification is meeting work; it does not deserve a group
         // of its own directly below the one it belongs to.
-        { id: "speakers" as const, label: "Speakers", icon: <Users className="h-4 w-4" /> },
-        { id: "storage" as const, label: "Disk & retention", icon: <HardDrive className="h-4 w-4" /> },
-        { id: "privacy" as const, label: "Privacy", icon: <Shield className="h-4 w-4" /> },
+        navRow("speakers", "settings.nav.speakers", <Users className="h-4 w-4" />),
+        navRow("storage", "settings.nav.storage", <HardDrive className="h-4 w-4" />),
+        navRow("privacy", "settings.nav.privacy", <Shield className="h-4 w-4" />),
         ...(showPermissions
-          ? [{ id: "permissions" as const, label: "Permissions", icon: <KeyRound className="h-4 w-4" /> }]
+          ? [navRow("permissions", "settings.nav.permissions", <KeyRound className="h-4 w-4" />)]
           : []),
       ].filter((s) => !isSettingsSectionHidden(s.id)),
     },
     {
-      label: "AI",
+      label: t("settings.nav.group.account"),
       items: [
-        { id: "activities" as const, label: "Activities", icon: <ListChecks className="h-4 w-4" /> },
-        { id: "ai-settings" as const, label: "AI features", icon: <SlidersHorizontal className="h-4 w-4" /> },
-        { id: "ai" as const, label: "Models & keys", icon: <Brain className="h-4 w-4" /> },
-        { id: "usage" as const, label: "AI credits", icon: <BarChart3 className="h-4 w-4" /> },
-      ].filter((s) => !isSettingsSectionHidden(s.id)),
-    },
-    {
-      label: "Account",
-      items: [
-        { id: "account" as const, label: "Account", icon: <User className="h-4 w-4" /> },
+        navRow("account", "settings.nav.account", <User className="h-4 w-4" />),
         // Hide "Team" on enterprise builds — those installs are already
         // org-managed; the desktop has nothing to manage. Admins use the
         // /enterprise dashboard on the web. On consumer builds we still
         // surface Team as a marketing entry point to /team.
         ...(isManagedDeployment
           ? []
-          : [{ id: "team" as const, label: "Team", icon: <Users className="h-4 w-4" /> }]),
-        { id: "referral" as const, label: "Get free month", icon: <Gift className="h-4 w-4" /> },
+          : [navRow("team", "settings.nav.team", <Users className="h-4 w-4" />)]),
+        navRow("referral", "settings.nav.referral", <Gift className="h-4 w-4" />),
       ].filter((s) => !isSectionHidden(s.id)),
     },
     {
-      label: "App",
+      label: t("settings.nav.group.app"),
       items: [
         // Keep the legacy `general` section id so existing deep links and
         // automated tests continue to work. The user-facing label is the
         // familiar Apple-style category name.
-        { id: "general" as const, label: "General", icon: <SettingsIcon className="h-4 w-4" /> },
-        { id: "display" as const, label: "Appearance", icon: <Layout className="h-4 w-4" /> },
-        { id: "notifications" as const, label: "Notifications", icon: <Bell className="h-4 w-4" /> },
-        { id: "shortcuts" as const, label: "Shortcuts", icon: <Keyboard className="h-4 w-4" /> },
+        navRow("general", "settings.nav.general", <SettingsIcon className="h-4 w-4" />),
+        navRow("display", "settings.nav.display", <Layout className="h-4 w-4" />),
+        navRow("notifications", "settings.nav.notifications", <Bell className="h-4 w-4" />),
+        navRow("shortcuts", "settings.nav.shortcuts", <Keyboard className="h-4 w-4" />),
       ].filter((s) => !isSectionHidden(s.id)),
     },
   ];
 
-  type NavItem = { id: string; label: string; icon: React.ReactNode };
-  const allItems: NavItem[] = navGroups.flatMap((g) => g.items as NavItem[]);
-  const currentLabel = allItems.find((s) => s.id === section)?.label ?? "Settings";
+  // Rows for features that are off the default path (Meetings/transcription,
+  // speakers, the Activity ledger) leave the nav here, not the codebase: the
+  // sections still render for a direct `?section=` deep link, and removing an
+  // id from HIDDEN_SETTINGS_SECTIONS restores its row.
+  const navGroups = navGroupsWithHidden.map((group) => ({
+    ...group,
+    items: group.items.filter(
+      (item) => !HIDDEN_SETTINGS_SECTIONS.includes(item.id),
+    ),
+  }));
+
+  type NavItem = { id: string; label: string; aliases: string[]; icon: React.ReactNode };
+  // Labels/icons still resolve for a deep-linked hidden section, so its header
+  // reads "Audio & meetings" rather than a bare "Settings".
+  const allItems: NavItem[] = navGroupsWithHidden.flatMap(
+    (g) => g.items as NavItem[],
+  );
+  const currentLabel =
+    allItems.find((s) => s.id === section)?.label ?? t("settings.page.title");
 
   // Search state. Overlay pattern (Claude-style): full nav stays rendered;
   // results float in a popover under the input. activeIndex tracks the
@@ -253,9 +304,12 @@ function SettingsContent() {
   const flatItems = navGroups.flatMap((g) =>
     g.items.map((it) => ({ ...it, group: g.label })),
   );
+  // Rebuilt when the locale changes, not on every keystroke: the labels are
+  // dictionary lookups, and the index is read on each render of the popover.
+  const allFields = React.useMemo(() => allSettingsFields(t), [t]);
   const searchableFields = showPermissions
-    ? ALL_SETTINGS_FIELDS
-    : ALL_SETTINGS_FIELDS.filter((f) => f.section !== "permissions");
+    ? allFields
+    : allFields.filter((f) => f.section !== "permissions");
   const results = searchSettingsNav(searchQuery, flatItems, searchableFields);
 
   useEffect(() => {
@@ -349,6 +403,7 @@ function SettingsContent() {
       case "display":       return <DisplaySection />;
       case "ai":            return <AIPresets />;
       case "ai-settings":   return <AISettings />;
+      case "journal":       return <JournalSettings />;
       case "activities":    return <ActivitiesSettings />;
       case "account":       return <AccountSection />;
       case "recording":     return <RecordingSettings section="screen" />;
@@ -408,7 +463,7 @@ function SettingsContent() {
             )}
           >
             <ChevronLeft className="h-3.5 w-3.5 flex-shrink-0" />
-            <span className="font-medium">Back to app</span>
+            <span className="font-medium">{t("settings.page.back")}</span>
           </button>
         </div>
 
@@ -517,12 +572,15 @@ function SettingsContent() {
 }
 
 export default function SettingsPage() {
+  const t = useT();
   return (
     <>
       <ExperimentalShortcutGuide />
       <Suspense fallback={
         <div className="flex-1 min-w-0 h-full bg-background flex items-center justify-center">
-          <div className="text-muted-foreground text-sm">Loading...</div>
+          <div className="text-muted-foreground text-sm">
+            {t("settings.page.loading")}
+          </div>
         </div>
       }>
         <SettingsContent />

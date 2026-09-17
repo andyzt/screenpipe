@@ -17,6 +17,7 @@ import {
   Plug,
   CalendarClock,
   ListTree,
+  NotebookPen,
   ArrowLeft,
 } from "lucide-react";
 import { emit } from "@tauri-apps/api/event";
@@ -115,6 +116,12 @@ import { PlanExpirationNotice } from "@/components/plan-expiration-notice";
 import type { AppUser } from "@/lib/app-entitlement";
 import { ONBOARDING_BRAIN_HANDOFF_EVENT } from "@/lib/live-views/onboarding-activation";
 import { ActivityLedger } from "@/components/activity-ledger";
+import { JournalView } from "@/components/journal/journal-view";
+import { journalDayToday } from "@/lib/journal/format";
+import { mondayOf } from "@/lib/journal/week-layout";
+import { JournalRail } from "@/components/journal-rail";
+import { useT } from "@/lib/i18n";
+import { JOURNAL_SHELL, type RailSectionId } from "@/lib/journal-shell";
 import { ShortcutKeycap } from "@/components/shortcut-keycap";
 import { ExperimentalShortcutGuide } from "@/components/shortcut-guide";
 import { commandPalette as commandPaletteAnalytics } from "@/lib/analytics/command-palette";
@@ -131,7 +138,7 @@ import {
 } from "@/components/first-run/learning-banner";
 import { blocksTrialActivationApp } from "@/lib/first-run/trial-activation";
 
-type MainSection = "home" | "timeline" | "activity" | "brain" | "pipes" | "connections" | "meetings" | "help";
+type MainSection = "journal" | "home" | "timeline" | "activity" | "brain" | "pipes" | "connections" | "meetings" | "help";
 const TRIAL_ACTIVATION_ALLOWED_SECTIONS = new Set<MainSection>([
   "home",
   "timeline",
@@ -146,7 +153,7 @@ type ConnectionFocusRequest = {
 
 // All valid URL sections for the home page
 const ALL_SECTIONS = [
-  "home", "timeline", "activity", "pipes", "help", "brain", "connections", "meetings", "history",
+  "journal", "home", "timeline", "activity", "pipes", "help", "brain", "connections", "meetings", "history",
   "feedback", // backwards compat → maps to "help"
   "memories", // backwards compat → maps to "brain"
   "artifacts", // backwards compat → maps to "brain"
@@ -157,7 +164,13 @@ const ALL_SECTIONS = [
 // that lived here had already lost `audio`, `ai-settings` and `permissions`,
 // so deep links to those three fell through to the home sidebar and did
 // nothing. `resolveSettingsSection` also follows the legacy storage aliases.
-const isSettingsRoute = (value: string) => resolveSettingsSection(value) !== null;
+//
+// `journal` is both a home section and a settings section. A home-section id
+// always wins for this page's `?section=`, otherwise `/home?section=journal`
+// would bounce straight into Settings and the landing view would be
+// unreachable. The settings deep link is `/settings?section=journal`.
+const isSettingsRoute = (value: string) =>
+  !ALL_SECTIONS.includes(value) && resolveSettingsSection(value) !== null;
 
 function HomeContent() {
   const router = useRouter();
@@ -176,8 +189,11 @@ function HomeContent() {
   // reservation that keeps the top-left action icons clear of them.
   const isFullscreen = useIsFullscreen();
   const reserveTrafficLights = isMac && !isFullscreen;
+  // The journal is the landing view: a URL with no `?section=` opens the day,
+  // not the chat. Chat is still mounted and one click (or `?section=home`)
+  // away — see the always-mounted chat layer below.
   const [activeSection, setActiveSection] = useQueryState("section", {
-    defaultValue: "home",
+    defaultValue: "journal",
     // Sidebar sections are navigation, not disposable filter state. Keeping
     // each user-visible section in browser history lets the native trackpad
     // gesture preview and restore the UI the user actually came from.
@@ -188,9 +204,38 @@ function HomeContent() {
       if (value === "artifacts") return "brain"; // backwards compat — artifacts merged into brain
       // Settings sections redirect to /settings page
       if (isSettingsRoute(value)) return value; // handled by redirect effect below
-      return ALL_SECTIONS.includes(value) ? value : "home";
+      // Unknown (or retired) ids land on the journal — the landing view —
+      // not on chat, which no longer ships as a sidebar row.
+      return ALL_SECTIONS.includes(value) ? value : "journal";
     },
     serialize: (value) => value,
+  });
+  // The tray's "Set intention…" item navigates to
+  // `/home?section=journal&intent=1`. It is a one-shot request, so the journal
+  // clears it once handled and a reload opens the plain journal.
+  const [intentionRequest, setIntentionRequest] = useQueryState("intent", {
+    history: "replace",
+  });
+  // Development/screenshot hook: `?select=<activity id>` opens the journal with
+  // that card already selected in the inspector, so the canvas' card state can
+  // be captured headlessly without driving a click.
+  const [journalSelectRequest] = useQueryState("select", {
+    history: "replace",
+  });
+  // The journal's two scales. `view` is navigation the reader chose, so it
+  // belongs in the URL rather than in component state: a week someone is
+  // looking at is then a link they can send, and a reload keeps it.
+  const [journalView, setJournalView] = useQueryState("view", {
+    defaultValue: "day",
+    history: "replace",
+    parse: (value) =>
+      value === "week" || value === "dashboard" ? value : "day",
+    serialize: (value) => value,
+  });
+  // The Monday of the shown week. Unset means "the week we are in", resolved
+  // by the journal rather than written into the URL on first paint.
+  const [journalWeek, setJournalWeek] = useQueryState("week", {
+    history: "replace",
   });
   const [activityReturnVisible, setActivityReturnVisible] = useState(false);
   const previousSectionRef = useRef(activeSection);
@@ -226,6 +271,7 @@ function HomeContent() {
   }, [activeSection, setActiveSection, trialActivationLocked]);
 
   const { settings, updateSettings, isSettingsLoaded } = useSettings();
+  const t = useT();
   const { toast } = useToast();
   const updateSettingsRef = useRef(updateSettings);
   updateSettingsRef.current = updateSettings;
@@ -343,9 +389,13 @@ function HomeContent() {
     void emit("chat-load-conversation", { conversationId: id });
   }, [setActiveSection]);
 
-  // Redirect settings sections to the standalone settings page
+  // Redirect settings sections to the standalone settings page. `isSettingsRoute`
+  // (not `resolveSettingsSection`) so an id that is both a home section and a
+  // settings section — `journal` — stays here instead of bouncing to Settings.
   useEffect(() => {
-    const settingsSection = resolveSettingsSection(activeSection);
+    const settingsSection = isSettingsRoute(activeSection)
+      ? resolveSettingsSection(activeSection)
+      : null;
     if (settingsSection) {
       router.push(`/settings?section=${settingsSection}`);
     }
@@ -1031,6 +1081,30 @@ function HomeContent() {
       );
     }
     switch (activeSection) {
+      case "journal":
+        return (
+          <JournalView
+            focusIntentionRequest={intentionRequest === "1"}
+            onIntentionFocusHandled={() => void setIntentionRequest(null)}
+            selectRequest={
+              journalSelectRequest && /^\d+$/.test(journalSelectRequest)
+                ? Number(journalSelectRequest)
+                : null
+            }
+            view={
+              journalView === "week" || journalView === "dashboard"
+                ? journalView
+                : "day"
+            }
+            onViewChange={(next) => void setJournalView(next)}
+            weekStart={
+              journalWeek && /^\d{4}-\d{2}-\d{2}$/.test(journalWeek)
+                ? mondayOf(journalWeek)
+                : mondayOf(journalDayToday())
+            }
+            onWeekStartChange={(next) => void setJournalWeek(next)}
+          />
+        );
       case "home":
         // Chat is rendered separately below — always-mounted so streaming
         // and Pi event listeners survive navigation. Returning null here
@@ -1116,18 +1190,26 @@ function HomeContent() {
   // Sidebar nav definitions. The user owns order and which rows are visible
   // (see lib/utils/sidebar-nav-layout); enterprise policy and the
   // timeline-disabled rule decide what is even eligible, and always win.
+  // The labels are the rail's own `rail.*` keys: these rows and the rail name
+  // the same destinations, and the command palette searches this label, so an
+  // English string here would be an untranslated hit in a Russian palette.
   const SIDEBAR_SECTION_DEFS: Record<SidebarNavId, { label: string; icon: React.ReactNode }> = {
+    journal: { label: t("rail.journal"), icon: <NotebookPen className="h-3.5 w-3.5" /> },
     // The Chat row doubles as "go to chat view + start a fresh conversation".
     // Each click allocates a new session id (empty rows are not reused — that
     // felt like opening an old recent).
-    home: { label: "Chat", icon: <Plus className="h-3.5 w-3.5" /> },
-    meetings: { label: "Meetings", icon: <CalendarClock className="h-3.5 w-3.5" /> },
-    timeline: { label: "Timeline", icon: <MonitorPlay className="h-3.5 w-3.5" /> },
-    activity: { label: "Activity", icon: <ListTree className="h-3.5 w-3.5" /> },
-    brain: { label: "Library", icon: <Brain className="h-3.5 w-3.5" /> },
-    pipes: { label: "Automations", icon: <TimerReset className="h-3.5 w-3.5" /> },
-    connections: { label: "Connections", icon: <Plug className="h-3.5 w-3.5" /> },
+    home: { label: t("rail.home"), icon: <Plus className="h-3.5 w-3.5" /> },
+    meetings: { label: t("rail.meetings"), icon: <CalendarClock className="h-3.5 w-3.5" /> },
+    timeline: { label: t("rail.timeline"), icon: <MonitorPlay className="h-3.5 w-3.5" /> },
+    activity: { label: t("rail.activity"), icon: <ListTree className="h-3.5 w-3.5" /> },
+    brain: { label: t("rail.brain"), icon: <Brain className="h-3.5 w-3.5" /> },
+    pipes: { label: t("rail.pipes"), icon: <TimerReset className="h-3.5 w-3.5" /> },
+    connections: { label: t("rail.connections"), icon: <Plug className="h-3.5 w-3.5" /> },
   };
+
+  // The journal fork's shell. Kept as a constant rather than a setting: it is
+  // a build decision, and the shipped sidebar has to stay compilable.
+  const railShell = JOURNAL_SHELL === "rail";
 
   const sidebarLayout = normalizeSidebarNavLayout(settings.sidebarNavLayout);
   const availableSidebarIds = (Object.keys(SIDEBAR_SECTION_DEFS) as SidebarNavId[])
@@ -1144,6 +1226,10 @@ function HomeContent() {
   // never both render, and neither survives policy hiding the section.
   const meetingsInSidebar = visibleSidebarIds.includes("meetings");
   const meetingsInToolbar = false;
+  // The embedded list under the nav is chat sessions + scheduled automations.
+  // It belongs to those two rows and comes back with either of them.
+  const chatSidebarVisible =
+    visibleSidebarIds.includes("home") || visibleSidebarIds.includes("pipes");
 
   const persistSidebarLayout = (next: ReturnType<typeof normalizeSidebarNavLayout>) => {
     void updateSettings({ sidebarNavLayout: next });
@@ -1208,7 +1294,11 @@ function HomeContent() {
     const url = new URL(event.payload.url, window.location.origin);
     const section = url.searchParams.get("section");
     if (!section) return;
-    const settingsSection = resolveSettingsSection(section);
+    // Same precedence as the `?section=` parser above: a home section id wins,
+    // so a `navigate` to /home?section=journal opens the journal, not Settings.
+    const settingsSection = isSettingsRoute(section)
+      ? resolveSettingsSection(section)
+      : null;
     if (settingsSection) {
       openSettings(settingsSection);
     } else {
@@ -1327,7 +1417,10 @@ function HomeContent() {
           toggleSidebar,
           openShortcutGuide: () => setShortcutGuideOpen(true),
           openSettings,
-          sections: availableSidebarIds.map((id) => ({
+          // Only rows the user can actually see. A section hidden from the
+          // sidebar is off the default path, so it is not offered here either;
+          // restoring the row (sidebar options) restores its palette action.
+          sections: visibleSidebarIds.map((id) => ({
             id,
             label: SIDEBAR_SECTION_DEFS[id].label,
           })),
@@ -1337,6 +1430,35 @@ function HomeContent() {
 
           {/* Sidebar */}
           <TooltipProvider delayDuration={400}>
+          {/* This build wears the icon rail (lib/journal-shell.ts). The rail
+              replaces both the labelled sidebar and the chrome strip that
+              carried its toggle — there is nothing to collapse, and recording
+              status moves to the rail's foot. */}
+          {railShell && (
+            <JournalRail
+              activeSection={activeSection}
+              visibleIds={visibleSidebarIds}
+              onSelect={(id: RailSectionId) => setActiveSection(id)}
+              onOpenSettings={() => openSettings()}
+              trailing={
+                <RecordingStatus
+                  devices={recordingDevices}
+                  onDevicesChange={setRecordingDevices}
+                  meetingActive={meetingState.active ?? false}
+                  onPauseRecording={pauseRecording}
+                  onResumeRecording={resumeRecording}
+                  isGloballyPaused={isCapturePaused}
+                  isTranslucent={isTranslucent}
+                  allCaptureDisabled={
+                    !!(settings.disableAudio && settings.disableVision)
+                  }
+                  onOpenRecordingSettings={() => openSettings("recording")}
+                />
+              }
+            />
+          )}
+          {!railShell && (
+          <>
           {/* Top-left chrome strip — pinned next to the macOS traffic
               lights: sidebar toggle, search, meetings and recording-status dot.
               No wordmark, no header row (Claude / Codex style). When
@@ -1549,28 +1671,35 @@ function HomeContent() {
 
               {/* Embedded chat list — sits below the nav, scrolls within
                   its own viewport so the team promo + bottom items stay
-                  pinned. */}
-              <div
-                className={cn(
-                  // pb-6 keeps a clear gap between the recents list
-                  // and the team / settings / help row — pb-3 was
-                  // too tight; the list ran almost flush against the
-                  // bottom nav.
-                  "flex-1 min-h-0 flex flex-col mt-2 -mx-2 border-t pt-2 pb-6",
-                  isTranslucent ? "vibrant-sidebar-border" : "border-border/50"
-                )}
-              >
-                <ChatSidebar
-                  allowedConversationId={
-                    trialActivationLocked ? firstRunLearning.chatId : undefined
-                  }
-                  onViewAll={
-                    trialActivationLocked
-                      ? undefined
-                      : () => setActiveSection("history")
-                  }
-                />
-              </div>
+                  pinned. It lists chat sessions and scheduled automations, so
+                  it follows those rows: when neither is in the sidebar the
+                  list would be a door to sections the user cannot see, and a
+                  plain spacer keeps the bottom items anchored instead. */}
+              {chatSidebarVisible ? (
+                <div
+                  className={cn(
+                    // pb-6 keeps a clear gap between the recents list
+                    // and the team / settings / help row — pb-3 was
+                    // too tight; the list ran almost flush against the
+                    // bottom nav.
+                    "flex-1 min-h-0 flex flex-col mt-2 -mx-2 border-t pt-2 pb-6",
+                    isTranslucent ? "vibrant-sidebar-border" : "border-border/50"
+                  )}
+                >
+                  <ChatSidebar
+                    allowedConversationId={
+                      trialActivationLocked ? firstRunLearning.chatId : undefined
+                    }
+                    onViewAll={
+                      trialActivationLocked
+                        ? undefined
+                        : () => setActiveSection("history")
+                    }
+                  />
+                </div>
+              ) : (
+                <div className="flex-1 min-h-0" />
+              )}
 
               <div
                 className={cn(trialActivationLocked && "pointer-events-none")}
@@ -1652,6 +1781,8 @@ function HomeContent() {
             </div>
           </AppSidebar>
           )}
+          </>
+          )}
           </TooltipProvider>
 
           {/* Content.
@@ -1660,7 +1791,13 @@ function HomeContent() {
               nowrap, so that's the FULL untruncated text width), and in a
               narrow window with the sidebar open the whole pane gets
               clipped at the right window edge instead of truncating. */}
-          <div className={cn("flex-1 min-w-0 flex flex-col h-full bg-background min-h-0 relative", isTranslucent ? "rounded-none" : "rounded-tr-lg")} data-testid="home-page">
+          <div
+            className={cn(
+              "flex-1 min-w-0 flex flex-col min-h-0 relative h-full bg-background",
+              !railShell && (isTranslucent ? "rounded-none" : "rounded-tr-lg"),
+            )}
+            data-testid="home-page"
+          >
             {/* ALWAYS-MOUNTED chat layer.
                 Hidden via CSS (display:none) when the user is on a non-chat
                 section, so the StandaloneChat component never unmounts. This
@@ -1702,8 +1839,17 @@ function HomeContent() {
                 <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0">
                   <div
                     className={cn(
-                      "mx-auto max-w-4xl px-6",
-                      activeSection === "pipes" ? "pb-6 pt-10" : "pb-12 pt-6",
+                      "mx-auto px-6",
+                      // The journal is a time canvas beside an inspector; it
+                      // needs the width the reading-column sections do not.
+                      activeSection === "journal" ? "max-w-[1440px]" : "max-w-4xl",
+                      activeSection === "pipes"
+                        ? "pb-6 pt-10"
+                        : // The journal sizes its canvas and inspector to the
+                          // viewport, so it keeps its own padding tight.
+                          activeSection === "journal"
+                          ? "pb-5 pt-8"
+                          : "pb-12 pt-6",
                     )}
                   >
                     {renderMainSection()}

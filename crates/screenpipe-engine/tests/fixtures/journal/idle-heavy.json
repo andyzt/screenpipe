@@ -1,0 +1,44 @@
+{
+  "window_start": "2026-09-16T17:00:00Z",
+  "window_end": "2026-09-16T17:15:00Z",
+  "context_start": "2026-09-16T16:15:00Z",
+  "active_minutes": 4.0,
+  "intervals": [
+    {
+      "interval_key": "ih-1",
+      "task_key": "task-release-notes",
+      "title": "Release notes — Notion",
+      "app": "Arc",
+      "window_title": "Release notes v0.45 — Notion",
+      "host": "notion.so",
+      "document": null,
+      "start_at": "2026-09-16T16:20:00Z",
+      "end_at": "2026-09-16T16:33:00Z",
+      "active_minutes": 2.0,
+      "click_count": 3,
+      "text_event_count": 0,
+      "audio_segments": 0,
+      "text_snippets": [
+        "Release notes v0.45 — draft"
+      ]
+    },
+    {
+      "interval_key": "ih-2",
+      "task_key": "task-release-notes",
+      "title": "Release notes — Notion",
+      "app": "Arc",
+      "window_title": "Release notes v0.45 — Notion",
+      "host": "notion.so",
+      "document": null,
+      "start_at": "2026-09-16T17:00:00Z",
+      "end_at": "2026-09-16T17:15:00Z",
+      "active_minutes": 2.0,
+      "click_count": 2,
+      "text_event_count": 1,
+      "audio_segments": 0,
+      "text_snippets": [
+        "Release notes v0.45 — draft"
+      ]
+    }
+  ]
+}

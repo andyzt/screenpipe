@@ -337,7 +337,11 @@ export function SidebarCustomizationMenu({
   onSetHidden,
   onReset,
 }: SidebarCustomizationMenuProps) {
-  if (!canReset) return null;
+  // The shipped sidebar hides five sections, so this menu is the only way back
+  // to them — it must render on a stock layout too, not just a drifted one.
+  // With nothing hidden and nothing to reset there is genuinely nothing to
+  // offer, and the button stays out of the chrome.
+  if (!canReset && hiddenItems.length === 0) return null;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -369,15 +373,19 @@ export function SidebarCustomizationMenu({
             Show {hidden.label}
           </DropdownMenuItem>
         ))}
-        {hiddenItems.length > 0 && <DropdownMenuSeparator />}
-        <DropdownMenuItem
-          className={ITEM_CLS}
-          data-testid="sidebar-options-reset"
-          onSelect={onReset}
-        >
-          <RotateCcw />
-          Reset sidebar
-        </DropdownMenuItem>
+        {canReset && (
+          <>
+            {hiddenItems.length > 0 && <DropdownMenuSeparator />}
+            <DropdownMenuItem
+              className={ITEM_CLS}
+              data-testid="sidebar-options-reset"
+              onSelect={onReset}
+            >
+              <RotateCcw />
+              Reset sidebar
+            </DropdownMenuItem>
+          </>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );

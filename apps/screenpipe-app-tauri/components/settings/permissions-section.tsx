@@ -21,31 +21,45 @@ import {
 } from "@/lib/utils/permission-flow";
 import { usePlatform } from "@/lib/hooks/use-platform";
 import { useInputMonitoringPermission } from "@/components/settings/hooks/use-input-monitoring-permission";
-import type { SettingsField } from "./settings-search";
+import {
+  settingsIndexFactory,
+  type LocalizedSettingsField,
+  type SettingsField,
+} from "./settings-search";
+import { translatorFor, useT } from "@/lib/i18n";
 
-/** Settings search index for this section. Co-located with the component. */
-export const searchIndex: SettingsField[] = [
+/**
+ * Settings search index for this section. Co-located with the component, and
+ * keyed on the dictionary entry each row's heading renders so the scroll-to
+ * lookup keeps working in either language.
+ */
+export const searchFields: LocalizedSettingsField[] = [
   {
-    label: "Screen Recording",
-    keywords: ["screen", "display", "capture", "tcc", "permission"],
+    key: "settings.permissions.screenRecording.title",
+    keywords: ["screen", "display", "capture", "tcc", "permission", "разрешение"],
   },
   {
-    label: "Microphone",
-    keywords: ["mic", "audio", "voice", "permission"],
+    key: "settings.permissions.microphone.title",
+    keywords: ["mic", "audio", "voice", "permission", "микрофон"],
   },
   {
-    label: "Accessibility",
-    keywords: ["ax", "ui", "context", "permission"],
+    key: "settings.permissions.accessibility.title",
+    keywords: ["ax", "ui", "context", "permission", "доступ"],
   },
   {
-    label: "Input Monitoring",
-    keywords: ["keyboard", "keystroke", "clicks", "permission"],
+    key: "settings.permissions.inputMonitoring.title",
+    keywords: ["keyboard", "keystroke", "clicks", "permission", "клавиатура"],
   },
   {
-    label: "Calendar",
-    keywords: ["apple calendar", "events", "permission"],
+    key: "settings.permissions.calendar.title",
+    keywords: ["apple calendar", "events", "permission", "календарь"],
   },
 ];
+
+export const searchIndexFor = settingsIndexFactory(searchFields);
+
+/** English index, kept for the dev drift guard and for tests. */
+export const searchIndex: SettingsField[] = searchIndexFor(translatorFor("en"));
 
 type RowStatus = "checking" | "granted" | "missing" | "restart-required";
 
@@ -72,6 +86,7 @@ function PermissionRow({
   onManage: () => void;
   secondaryAction?: React.ReactNode;
 }) {
+  const t = useT();
   const missing = status === "missing";
   const restartRequired = status === "restart-required";
   const granted = status === "granted";
@@ -119,7 +134,7 @@ function PermissionRow({
                   onClick={onManage}
                   data-testid={`permission-manage-${id}`}
                 >
-                  Manage
+                  {t("settings.permissions.manage")}
                 </Button>
               </>
             ) : restartRequired ? (
@@ -131,7 +146,7 @@ function PermissionRow({
                 data-testid={`permission-restart-${id}`}
               >
                 <RefreshCw className="h-3.5 w-3.5" />
-                Restart
+                {t("settings.permissions.restart")}
               </Button>
             ) : (
               <Button
@@ -141,7 +156,7 @@ function PermissionRow({
                 onClick={onEnable}
                 data-testid={`permission-enable-${id}`}
               >
-                Enable
+                {t("settings.permissions.enable")}
                 <ChevronRight className="h-3.5 w-3.5" />
               </Button>
             )}
@@ -153,6 +168,7 @@ function PermissionRow({
 }
 
 function RequiredPermissions() {
+  const t = useT();
   const [statuses, setStatuses] = useState<{
     screenRecording: OSPermissionStatus;
     microphone: OSPermissionStatus;
@@ -234,25 +250,22 @@ function RequiredPermissions() {
     {
       id: "screen-recording",
       permission: "screenRecording",
-      title: "Screen Recording",
-      description:
-        "Required to capture what's on your screen for timeline and AI context.",
+      title: t("settings.permissions.screenRecording.title"),
+      description: t("settings.permissions.screenRecording.description"),
       statusKey: "screenRecording",
     },
     {
       id: "microphone",
       permission: "microphone",
-      title: "Microphone",
-      description:
-        "Required to record your voice during meetings and conversations.",
+      title: t("settings.permissions.microphone.title"),
+      description: t("settings.permissions.microphone.description"),
       statusKey: "microphone",
     },
     {
       id: "accessibility",
       permission: "accessibility",
-      title: "Accessibility",
-      description:
-        "Required to read app and window context, meeting controls, and UI text.",
+      title: t("settings.permissions.accessibility.title"),
+      description: t("settings.permissions.accessibility.description"),
       statusKey: "accessibility",
     },
   ];
@@ -260,7 +273,7 @@ function RequiredPermissions() {
   return (
     <div className="space-y-2" data-testid="permissions-required">
       <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider px-1">
-        Required
+        {t("settings.permissions.required")}
       </h2>
       {rows.map((row) => {
         const status = rowStatus(statuses?.[row.statusKey]);
@@ -288,6 +301,7 @@ function RequiredPermissions() {
 }
 
 function InputMonitoringPermissionRow() {
+  const t = useT();
   const {
     status,
     granted,
@@ -306,8 +320,8 @@ function InputMonitoringPermissionRow() {
   return (
     <PermissionRow
       id="input-monitoring"
-      title="Input Monitoring"
-      description="Lets screenpipe capture keystrokes and clicks for full input replay."
+      title={t("settings.permissions.inputMonitoring.title")}
+      description={t("settings.permissions.inputMonitoring.description")}
       status={rowStatus}
       busy={requesting || resetting || managing}
       onEnable={() => void enable()}
@@ -330,7 +344,7 @@ function InputMonitoringPermissionRow() {
             {resetting ? (
               <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
             ) : null}
-            Reset & try again
+            {t("settings.permissions.resetRetry")}
           </Button>
         ) : null
       }
@@ -339,6 +353,7 @@ function InputMonitoringPermissionRow() {
 }
 
 function CalendarPermissionRow() {
+  const t = useT();
   const [status, setStatus] = useState<RowStatus>("checking");
   const [busy, setBusy] = useState(false);
 
@@ -379,8 +394,8 @@ function CalendarPermissionRow() {
   return (
     <PermissionRow
       id="calendar"
-      title="Calendar"
-      description="Sync Apple Calendar events for meeting context."
+      title={t("settings.permissions.calendar.title")}
+      description={t("settings.permissions.calendar.description")}
       status={status}
       busy={busy}
       onEnable={() => void run("request")}
@@ -391,6 +406,7 @@ function CalendarPermissionRow() {
 
 export function PermissionsSection() {
   const { isMac, isLoading } = usePlatform();
+  const t = useT();
 
   // Defensive: settings nav/search already hide this on non-mac. Render nothing
   // if something still mounts the section off-platform.
@@ -406,7 +422,7 @@ export function PermissionsSection() {
       >
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" />
-          Checking platform…
+          {t("settings.permissions.checking")}
         </div>
       </div>
     );
@@ -415,14 +431,14 @@ export function PermissionsSection() {
   return (
     <div className="space-y-5" data-testid="section-settings-permissions">
       <p className="text-sm text-muted-foreground">
-        Grant or manage the macOS permissions screenpipe needs.
+        {t("settings.permissions.intro")}
       </p>
 
       <RequiredPermissions />
 
       <div className="space-y-2" data-testid="permissions-optional">
         <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider px-1">
-          Optional
+          {t("settings.permissions.optional")}
         </h2>
         <InputMonitoringPermissionRow />
         <CalendarPermissionRow />

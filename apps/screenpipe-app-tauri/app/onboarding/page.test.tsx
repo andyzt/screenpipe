@@ -138,6 +138,14 @@ vi.mock("@/components/onboarding/permissions-step", () => ({
 vi.mock("@/components/onboarding/timeline-choice", () => ({
   default: () => <div>timeline choice</div>,
 }));
+vi.mock("@/components/onboarding/role-step", () => ({
+  default: ({ handleNextSlide }: { handleNextSlide: () => void }) => (
+    <div>
+      <span>role step</span>
+      <button onClick={handleNextSlide}>skip role</button>
+    </div>
+  ),
+}));
 vi.mock("@/components/onboarding/engine-startup", () => ({
   default: ({ handleNextSlide }: { handleNextSlide: () => void }) => (
     <div>
@@ -235,42 +243,6 @@ describe("enterprise onboarding authentication", () => {
     mocks.isSettingsLoaded = true;
   });
 
-  it("offers regular sign-in and Enterprise Key on the login step", () => {
-    render(<OnboardingPage />);
-
-    expect(screen.getByText("regular sign in")).toBeInTheDocument();
-    fireEvent.click(
-      screen.getByRole("button", { name: /use enterprise key/i }),
-    );
-    expect(mocks.selectAuthenticationMethod).toHaveBeenCalledWith(
-      "license_key",
-    );
-  });
-
-  it("renders Enterprise Key entry on the onboarding login step", () => {
-    mocks.enterprisePolicy.authenticationState = "license_key";
-    render(<OnboardingPage />);
-
-    expect(screen.getByText("enterprise key form")).toBeInTheDocument();
-    expect(screen.queryByText("regular sign in")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /sign in instead/i }));
-    expect(mocks.selectAuthenticationMethod).toHaveBeenCalledWith("account");
-  });
-
-  it("keeps non-enterprise onboarding on regular sign-in", () => {
-    mocks.enterprisePolicy.isManagedDeployment = false;
-    render(<OnboardingPage />);
-
-    expect(screen.getByText("regular sign in")).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: /use enterprise key/i }),
-    ).not.toBeInTheDocument();
-    expect(mocks.capture).toHaveBeenCalledWith("onboarding_funnel_step", {
-      funnel_version: "onboarding_ui_v2",
-      step: "started",
-    });
-  });
-
   it("restores the plan controller after hosted checkout returns", async () => {
     window.history.replaceState({}, "", "/onboarding?checkout=complete");
     mocks.enterprisePolicy.isManagedDeployment = false;
@@ -341,29 +313,6 @@ describe("enterprise onboarding authentication", () => {
     expect(mocks.setOnboardingStep).not.toHaveBeenCalledWith(
       "trial-activation-v1-unlocked",
     );
-  });
-
-  it("leaves login completion analytics to the login gate", async () => {
-    mocks.enterprisePolicy.isManagedDeployment = false;
-    render(<OnboardingPage />);
-
-    fireEvent.click(
-      screen.getByRole("button", { name: /complete regular sign in/i }),
-    );
-
-    await waitFor(() =>
-      expect(mocks.setOnboardingStep).toHaveBeenCalledWith("acquisition"),
-    );
-    expect(
-      mocks.capture.mock.calls.filter(
-        ([event]) => event === "onboarding_login_completed",
-      ),
-    ).toHaveLength(0);
-    expect(
-      mocks.capture.mock.calls.filter(
-        ([event]) => event === "onboarding_step_reached",
-      ),
-    ).toHaveLength(1);
   });
 
   it("does not start the standard funnel for managed onboarding", () => {
@@ -447,7 +396,7 @@ describe("enterprise onboarding authentication", () => {
     expect(screen.queryByText("connect apps")).not.toBeInTheDocument();
   });
 
-  it("shows recommended setup after plan selection for a fresh unentitled control account", async () => {
+  it("finishes after plan selection for a fresh unentitled control account", async () => {
     mocks.enterprisePolicy.isManagedDeployment = false;
     mocks.trialActivationVariant = "control";
     onboardingData.trialActivationFreshInstall = true;
@@ -467,17 +416,14 @@ describe("enterprise onboarding authentication", () => {
     expect(mocks.completeOnboarding).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: "continue free plan" }));
-    expect(await screen.findByText("recommended setup")).toBeInTheDocument();
-    expect(mocks.completeOnboarding).not.toHaveBeenCalled();
-
-    fireEvent.click(
-      screen.getByRole("button", { name: "finish recommended setup" }),
-    );
     await waitFor(() =>
       expect(mocks.completeOnboarding).toHaveBeenCalledWith({
         method: "setup_finished",
       }),
     );
+    // The pipe/meeting promotion step is out of the default flow; setup ends
+    // on plan selection instead (HIDDEN_ONBOARDING_SLIDES).
+    expect(screen.queryByText("recommended setup")).not.toBeInTheDocument();
   });
 
   it("does not expose the control checkout before the authenticated flag resolves", async () => {
@@ -533,7 +479,7 @@ describe("enterprise onboarding authentication", () => {
     act(() => mocks.featureFlagsCallback?.([], {}, {}));
 
     fireEvent.click(screen.getByRole("button", { name: "finish engine" }));
-    expect(await screen.findByText("recommended setup")).toBeInTheDocument();
+    await waitFor(() => expect(mocks.completeOnboarding).toHaveBeenCalled());
     expect(screen.queryByText("plan selection")).not.toBeInTheDocument();
   });
 
@@ -587,68 +533,6 @@ describe("enterprise onboarding authentication", () => {
       .toBe("control");
   });
 
-  it("records a fresh login once when assignment temporarily unmounts the real login gate", async () => {
-    HTMLCanvasElement.prototype.getContext = vi.fn(() => null) as any;
-    mocks.useRealLoginGate = true;
-    mocks.enterprisePolicy.isManagedDeployment = false;
-    mocks.featureFlagsReady = false;
-    mocks.posthogDistinctId = "clerk-1";
-    mocks.trialActivationVariant = "control";
-    onboardingData.trialActivationFreshInstall = true;
-    const { rerender } = render(<OnboardingPage />);
-    expect(await screen.findByTestId("login-cta")).toBeInTheDocument();
-
-    mocks.settings.user = {
-      has_payment_method: false,
-      entitlement_source: "none",
-      token: "fresh-token",
-      clerk_id: "clerk-1",
-      email: "fresh@example.com",
-    };
-    rerender(<OnboardingPage />);
-    expect(screen.getByTestId("trial-activation-assignment-pending"))
-      .toBeInTheDocument();
-    expect(mocks.capture.mock.calls.filter(([event]) => event === "onboarding_login_completed"))
-      .toHaveLength(1);
-
-    act(() => {
-      mocks.featureFlagsCallback?.([], {}, {});
-      mocks.featureFlagsCallback?.([], {}, {});
-      mocks.featureFlagsCallback?.([], {}, {});
-    });
-    await waitFor(() => expect(screen.queryByTestId("trial-activation-assignment-pending"))
-      .not.toBeInTheDocument());
-    rerender(<OnboardingPage />);
-    expect(mocks.capture.mock.calls.filter(([event]) => event === "onboarding_login_completed"))
-      .toHaveLength(1);
-  });
-
-  it("does not count an authenticated settings hydration as a fresh login", async () => {
-    mocks.enterprisePolicy.isManagedDeployment = false;
-    mocks.isSettingsLoaded = false;
-    const { rerender } = render(<OnboardingPage />);
-
-    mocks.isSettingsLoaded = true;
-    mocks.settings.user = { token: "persisted-token" };
-    rerender(<OnboardingPage />);
-    expect(await screen.findByText("regular sign in")).toBeInTheDocument();
-    expect(mocks.capture).not.toHaveBeenCalledWith("onboarding_login_completed");
-  });
-
-  it("records one fresh login without an experiment assignment as well", async () => {
-    HTMLCanvasElement.prototype.getContext = vi.fn(() => null) as any;
-    mocks.useRealLoginGate = true;
-    mocks.enterprisePolicy.isManagedDeployment = false;
-    const { rerender } = render(<OnboardingPage />);
-    expect(await screen.findByTestId("login-cta")).toBeInTheDocument();
-
-    mocks.settings.user = { token: "fresh-token" };
-    rerender(<OnboardingPage />);
-    rerender(<OnboardingPage />);
-    expect(mocks.capture.mock.calls.filter(([event]) => event === "onboarding_login_completed"))
-      .toHaveLength(1);
-  });
-
   it("restores the pinned route instead of reassigning after checkout navigation", async () => {
     mocks.enterprisePolicy.isManagedDeployment = false;
     mocks.trialActivationVariant = "summary_first";
@@ -690,12 +574,7 @@ describe("enterprise onboarding authentication", () => {
       await screen.findByRole("button", { name: "finish engine" }),
     );
 
-    expect(await screen.findByText("recommended setup")).toBeInTheDocument();
     expect(screen.queryByText("plan selection")).not.toBeInTheDocument();
-
-    fireEvent.click(
-      screen.getByRole("button", { name: "finish recommended setup" }),
-    );
     await waitFor(() =>
       expect(mocks.setOnboardingStep).toHaveBeenCalledWith(
         "trial-activation-v1-summary",
@@ -724,14 +603,15 @@ describe("enterprise onboarding authentication", () => {
     mocks.trialActivationVariant = "summary_first";
     onboardingData.trialActivationFreshInstall = true;
     mocks.settings.user = { token: "tok" };
-    onboardingData.currentStep = "recommended-setup";
+    // A saved step that left the flow resumes at the engine slide.
+    onboardingData.currentStep = "engine";
     mocks.setOnboardingStep
       .mockResolvedValueOnce({ status: "error", error: "store busy" } as never)
       .mockResolvedValueOnce({ status: "ok", data: null } as never);
 
     render(<OnboardingPage />);
     fireEvent.click(
-      await screen.findByRole("button", { name: "finish recommended setup" }),
+      await screen.findByRole("button", { name: "finish engine" }),
     );
 
     await waitFor(() =>
@@ -747,7 +627,8 @@ describe("enterprise onboarding authentication", () => {
     mocks.trialActivationVariant = "summary_first";
     onboardingData.trialActivationFreshInstall = true;
     mocks.settings.user = { token: "tok" };
-    onboardingData.currentStep = "recommended-setup";
+    // A saved step that left the flow resumes at the engine slide.
+    onboardingData.currentStep = "engine";
     mocks.setOnboardingStep
       .mockResolvedValueOnce({ status: "error", error: "store busy" } as never)
       .mockResolvedValueOnce({ status: "error", error: "store busy" } as never)
@@ -756,7 +637,7 @@ describe("enterprise onboarding authentication", () => {
 
     render(<OnboardingPage />);
     const finish = await screen.findByRole("button", {
-      name: "finish recommended setup",
+      name: "finish engine",
     });
     fireEvent.click(finish);
 
@@ -785,10 +666,6 @@ describe("enterprise onboarding authentication", () => {
     fireEvent.click(
       await screen.findByRole("button", { name: "finish engine" }),
     );
-    expect(await screen.findByText("recommended setup")).toBeInTheDocument();
-    fireEvent.click(
-      screen.getByRole("button", { name: "finish recommended setup" }),
-    );
 
     await waitFor(() => expect(mocks.completeOnboarding).toHaveBeenCalled());
     expect(mocks.setOnboardingStep).not.toHaveBeenCalledWith(
@@ -810,10 +687,6 @@ describe("enterprise onboarding authentication", () => {
     render(<OnboardingPage />);
     fireEvent.click(
       await screen.findByRole("button", { name: "finish engine" }),
-    );
-    expect(await screen.findByText("recommended setup")).toBeInTheDocument();
-    fireEvent.click(
-      screen.getByRole("button", { name: "finish recommended setup" }),
     );
 
     await waitFor(() =>
@@ -845,32 +718,12 @@ describe("enterprise onboarding authentication", () => {
       await screen.findByRole("button", { name: "finish engine" }),
     );
 
-    expect(await screen.findByText("recommended setup")).toBeInTheDocument();
-    expect(mocks.completeOnboarding).not.toHaveBeenCalled();
-    fireEvent.click(
-      screen.getByRole("button", { name: "finish recommended setup" }),
-    );
     await waitFor(() =>
       expect(mocks.completeOnboarding).toHaveBeenCalledWith({
         method: "setup_finished",
       }),
     );
     expect(screen.queryByText("plan selection")).not.toBeInTheDocument();
-  });
-
-  it("returns a signed-out consumer with a persisted engine step to login", async () => {
-    mocks.enterprisePolicy.isManagedDeployment = false;
-    mocks.settings.user = null;
-    onboardingData.currentStep = "engine";
-
-    render(
-      <StartupAuthenticationContext.Provider value="logged_out">
-        <OnboardingPage />
-      </StartupAuthenticationContext.Provider>,
-    );
-
-    expect(await screen.findByText("regular sign in")).toBeInTheDocument();
-    expect(screen.queryByText("engine")).not.toBeInTheDocument();
   });
 
   it("restores an authenticated consumer after a logged-out startup", async () => {
@@ -941,11 +794,6 @@ describe("enterprise onboarding authentication", () => {
       await screen.findByRole("button", { name: "finish engine" }),
     );
 
-    expect(await screen.findByText("recommended setup")).toBeInTheDocument();
-    expect(mocks.completeOnboarding).not.toHaveBeenCalled();
-    fireEvent.click(
-      screen.getByRole("button", { name: "finish recommended setup" }),
-    );
     await waitFor(() =>
       expect(mocks.completeOnboarding).toHaveBeenCalledWith({
         method: "setup_finished",
@@ -971,11 +819,6 @@ describe("enterprise onboarding authentication", () => {
         await screen.findByRole("button", { name: "finish engine" }),
       );
 
-      expect(await screen.findByText("recommended setup")).toBeInTheDocument();
-      expect(mocks.completeOnboarding).not.toHaveBeenCalled();
-      fireEvent.click(
-        screen.getByRole("button", { name: "finish recommended setup" }),
-      );
       await waitFor(() =>
         expect(mocks.completeOnboarding).toHaveBeenCalledWith({
           method: "setup_finished",
@@ -1001,11 +844,6 @@ describe("enterprise onboarding authentication", () => {
       await screen.findByRole("button", { name: "finish engine" }),
     );
 
-    expect(await screen.findByText("recommended setup")).toBeInTheDocument();
-    expect(mocks.completeOnboarding).not.toHaveBeenCalled();
-    fireEvent.click(
-      screen.getByRole("button", { name: "finish recommended setup" }),
-    );
     await waitFor(() =>
       expect(mocks.completeOnboarding).toHaveBeenCalledWith({
         method: "setup_finished",
@@ -1024,11 +862,6 @@ describe("enterprise onboarding authentication", () => {
       await screen.findByRole("button", { name: "finish engine" }),
     );
 
-    expect(await screen.findByText("recommended setup")).toBeInTheDocument();
-    expect(mocks.completeOnboarding).not.toHaveBeenCalled();
-    fireEvent.click(
-      screen.getByRole("button", { name: "finish recommended setup" }),
-    );
     await waitFor(() =>
       expect(mocks.completeOnboarding).toHaveBeenCalledWith({
         method: "setup_finished",
@@ -1075,11 +908,6 @@ describe("enterprise onboarding authentication", () => {
       await screen.findByRole("button", { name: "finish engine" }),
     );
 
-    expect(await screen.findByText("recommended setup")).toBeInTheDocument();
-    expect(mocks.completeOnboarding).not.toHaveBeenCalled();
-    fireEvent.click(
-      screen.getByRole("button", { name: "finish recommended setup" }),
-    );
     await waitFor(() =>
       expect(mocks.completeOnboarding).toHaveBeenCalledWith({
         method: "setup_finished",
@@ -1113,22 +941,6 @@ describe("enterprise onboarding authentication", () => {
     await waitFor(() =>
       expect(mocks.setOnboardingStep).toHaveBeenCalledWith("permissions"),
     );
-  });
-
-  it("keeps a rejected enterprise account on login with the key alternative", () => {
-    mocks.enterprisePolicy.authenticationState = "account";
-    mocks.enterprisePolicy.authenticationError =
-      "this account is not associated with the enterprise organization";
-
-    render(<OnboardingPage />);
-
-    expect(
-      screen.getByText(/not associated with the enterprise organization/i),
-    ).toBeInTheDocument();
-    expect(screen.getByText("regular sign in")).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: /use enterprise key/i }),
-    ).toBeInTheDocument();
   });
 
   it("completes onboarding after permissions when enterprise app UI is hidden", async () => {
@@ -1270,9 +1082,9 @@ describe("timeline slide sequencing", () => {
       );
 
       await waitFor(() =>
-        expect(mocks.setOnboardingStep).toHaveBeenCalledWith("engine"),
+        expect(mocks.setOnboardingStep).toHaveBeenCalledWith("role"),
       );
-      expect(await screen.findByText("engine")).toBeInTheDocument();
+      expect(await screen.findByText("role step")).toBeInTheDocument();
       expect(screen.queryByText("timeline choice")).not.toBeInTheDocument();
       expect(mocks.capture).toHaveBeenCalledWith(
         "onboarding_device_tier_evaluated",
@@ -1299,9 +1111,9 @@ describe("timeline slide sequencing", () => {
     );
 
     await waitFor(() =>
-      expect(mocks.setOnboardingStep).toHaveBeenCalledWith("engine"),
+      expect(mocks.setOnboardingStep).toHaveBeenCalledWith("role"),
     );
-    expect(await screen.findByText("engine")).toBeInTheDocument();
+    expect(await screen.findByText("role step")).toBeInTheDocument();
     expect(screen.queryByText("timeline choice")).not.toBeInTheDocument();
     expect(mocks.capture).toHaveBeenCalledWith(
       "onboarding_device_tier_evaluated",
@@ -1327,9 +1139,9 @@ describe("timeline slide sequencing", () => {
     );
 
     await waitFor(() =>
-      expect(mocks.setOnboardingStep).toHaveBeenCalledWith("engine"),
+      expect(mocks.setOnboardingStep).toHaveBeenCalledWith("role"),
     );
-    expect(await screen.findByText("engine")).toBeInTheDocument();
+    expect(await screen.findByText("role step")).toBeInTheDocument();
     expect(screen.queryByText("timeline choice")).not.toBeInTheDocument();
   });
 
@@ -1382,4 +1194,62 @@ describe("timeline slide sequencing", () => {
       expect(screen.queryByText("timeline choice")).not.toBeInTheDocument();
     },
   );
+});
+
+// The role question seeds the journal's categories. It sits after the capture
+// questions and before the engine, because it only writes settings — the
+// categories themselves are applied by lib/journal/use-role-preset.ts once the
+// engine this step precedes is listening.
+describe("role slide sequencing", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.enterprisePolicy = {
+      isManagedDeployment: false,
+      isManagedDeploymentResolved: true,
+      authenticationState: "choice",
+      authenticationError: null,
+      isManagedAuthenticated: false,
+    };
+    onboardingData.currentStep = "permissions";
+    onboardingData.isCompleted = false;
+    mocks.applyEnterpriseUiVisibility.mockResolvedValue(false);
+    mocks.isSettingLocked.mockImplementation(() => false);
+    mocks.settings.deviceTier = "high";
+    mocks.settings.user = null;
+    mocks.isSettingsLoaded = true;
+  });
+
+  it("asks the role between the capture questions and the engine", async () => {
+    render(<OnboardingPage />);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: /finish permissions/i }),
+    );
+    expect(await screen.findByText("role step")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "skip role" }));
+    await waitFor(() =>
+      expect(mocks.setOnboardingStep).toHaveBeenCalledWith("engine"),
+    );
+    expect(await screen.findByText("engine")).toBeInTheDocument();
+  });
+
+  it("resumes an install that stopped on the role question", async () => {
+    onboardingData.currentStep = "role";
+
+    render(<OnboardingPage />);
+
+    expect(await screen.findByText("role step")).toBeInTheDocument();
+  });
+
+  it("counts the role question in the setup progress", async () => {
+    onboardingData.currentStep = "role";
+
+    render(<OnboardingPage />);
+
+    await screen.findByText("role step");
+    // acquisition, permissions, role, engine — timeline is skipped on this
+    // device tier and the plan/final steps are out of the flow.
+    expect(screen.getByText("3 of 4")).toBeInTheDocument();
+  });
 });

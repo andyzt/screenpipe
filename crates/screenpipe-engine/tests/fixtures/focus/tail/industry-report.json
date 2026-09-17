@@ -1,0 +1,73 @@
+{
+  "expected_relation": "other_work",
+  "thin_evidence": false,
+  "notes": "Reading a market report in a browser. Real work for a product engineer, just not the repair pass.",
+  "now": "2026-09-16T15:40:00Z",
+  "tail_start": "2026-09-16T15:30:00Z",
+  "intention": {
+    "id": 7,
+    "title": "Finish the journal repair pass",
+    "project": "screenpipe",
+    "notes": "Card geometry repair in crates/screenpipe-engine/src/journal/repair.rs and its tests.",
+    "started_at": "2026-09-16T13:05:00Z",
+    "ended_at": null,
+    "source": "app"
+  },
+  "dominant": {
+    "task_key": "task-report",
+    "title": "State of developer tooling 2026",
+    "app": "Arc",
+    "parent_title": null,
+    "active_minutes": 9.0
+  },
+  "support_set": [
+    "code",
+    "repair.rs — screenpipe",
+    "github.com"
+  ],
+  "candidate": "possible_distraction",
+  "candidate_reason": "the dominant task 'State of developer tooling 2026' is not among the apps this intention has been worked on",
+  "divergence_minutes": 12.0,
+  "grace_minutes": 10,
+  "work_profile": {
+    "role": "Rust engineer on a desktop capture product",
+    "projects": [
+      {
+        "name": "screenpipe",
+        "keywords": [
+          "journal",
+          "repair.rs",
+          "activity ledger"
+        ]
+      }
+    ],
+    "notes": "Writes code in Code, reviews on github.com, plans in Notion."
+  },
+  "observations": {
+    "window_start": "2026-09-16T15:30:00Z",
+    "window_end": "2026-09-16T15:40:00Z",
+    "context_start": "2026-09-16T15:30:00Z",
+    "active_minutes": 9.0,
+    "intervals": [
+      {
+        "interval_key": "tf-1",
+        "task_key": "task-report",
+        "title": "State of developer tooling 2026",
+        "app": "Arc",
+        "window_title": "State of developer tooling 2026 — report",
+        "host": "stateofdevtools.com",
+        "document": null,
+        "start_at": "2026-09-16T15:30:00Z",
+        "end_at": "2026-09-16T15:40:00Z",
+        "active_minutes": 9.0,
+        "click_count": 11,
+        "text_event_count": 140,
+        "audio_segments": 0,
+        "text_snippets": [
+          "Section 3: how teams evaluate local-first tools — 41% cite data residency as the first question",
+          "Methodology: 2,400 respondents, self-selected, weighted by company size"
+        ]
+      }
+    ]
+  }
+}

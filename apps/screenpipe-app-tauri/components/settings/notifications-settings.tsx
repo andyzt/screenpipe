@@ -6,7 +6,12 @@
 import React from "react";
 import { useSettings, Settings } from "@/lib/hooks/use-settings";
 import { Switch } from "@/components/ui/switch";
-import type { SettingsField } from "./settings-search";
+import {
+  resolveSettingsFields,
+  type LocalizedSettingsField,
+  type SettingsField,
+} from "./settings-search";
+import { translatorFor, useT, type TranslateFn } from "@/lib/i18n";
 import { NotificationSamplePreview } from "./setting-previews";
 import { cn } from "@/lib/utils";
 import { Search, ChevronRight } from "lucide-react";
@@ -27,46 +32,72 @@ import {
 import { NotificationPipeControls } from "./notification-pipe-controls";
 import { NotificationPauseControl } from "./notification-pause-control";
 
-const PRESETS: { kind: CategoryPreset; label: string }[] = [
-  { kind: "recommended", label: "recommended" },
-  { kind: "all", label: "everything" },
-  { kind: "none", label: "nothing" },
+const PRESETS: { kind: CategoryPreset; labelKey: string }[] = [
+  { kind: "recommended", labelKey: "settings.notifications.preset.recommended" },
+  { kind: "all", labelKey: "settings.notifications.preset.all" },
+  { kind: "none", labelKey: "settings.notifications.preset.none" },
 ];
+
+/** The fields this section owns outside the registry-driven category list. */
+const STATIC_SEARCH_FIELDS: LocalizedSettingsField[] = [
+  {
+    key: "settings.notifications.pause.title",
+    keywords: ["mute all", "do not disturb", "dnd", "silence", "pause", "snooze", "пауза"],
+  },
+  {
+    key: "settings.notifications.quiet.title",
+    keywords: ["schedule", "night", "sleep", "focus", "dnd", "do not disturb", "тихие часы"],
+  },
+  {
+    key: "settings.notifications.preset.reset",
+    keywords: ["presets", "recommended", "everything", "nothing", "reset", "по умолчанию"],
+  },
+];
+
+const PER_PIPE_SEARCH_FIELD: LocalizedSettingsField = {
+  key: "settings.notifications.perPipe.customize",
+  keywords: ["pipe", "mute pipe", "per pipe", "individual pipe", "per-task notifications"],
+  conditional: true,
+};
 
 /**
  * Settings search index — derived from the registry so it can never drift from
  * the rendered toggles. Adding a notification category in `notification-registry.ts`
- * makes it searchable automatically.
+ * makes it searchable automatically. Written by hand rather than through
+ * `settingsIndexFactory` because half the list is data, not a literal.
  */
-export const searchIndex: SettingsField[] = [
-  {
-    label: "Notifications",
-    keywords: ["mute all", "do not disturb", "dnd", "silence", "pause", "snooze"],
-  },
-  {
-    label: "Quiet hours",
-    keywords: ["schedule", "night", "sleep", "focus", "dnd", "do not disturb"],
-  },
-  {
-    label: "Reset to defaults",
-    keywords: ["presets", "recommended", "everything", "nothing", "reset"],
-  },
-  ...NOTIFICATION_CATEGORIES.map((c) => ({
-    label: c.label,
-    keywords: c.keywords,
-  })),
-  {
-    label: "Per-task notifications",
-    keywords: ["pipe", "mute pipe", "per pipe", "individual pipe"],
-    conditional: true,
-  },
-];
+export const searchIndexFor = (t: TranslateFn): SettingsField[] =>
+  resolveSettingsFields(
+    [
+      ...STATIC_SEARCH_FIELDS,
+      ...NOTIFICATION_CATEGORIES.map((c) => ({
+        key: c.labelKey,
+        keywords: c.keywords,
+      })),
+      PER_PIPE_SEARCH_FIELD,
+    ],
+    t,
+  );
+
+/** English index, kept for the dev drift guard and for tests. */
+export const searchIndex: SettingsField[] = searchIndexFor(translatorFor("en"));
 
 type Prefs = Record<string, unknown> & { mutedPipes?: string[] };
 
-function matchesQuery(category: NotificationCategory, q: string): boolean {
+/**
+ * The in-section filter matches what the user can read on screen plus the
+ * English source text, so a term typed from our docs still finds the row in a
+ * Russian UI.
+ */
+function matchesQuery(
+  category: NotificationCategory,
+  q: string,
+  t: TranslateFn,
+): boolean {
   if (!q) return true;
   const haystack = [
+    t(category.labelKey),
+    t(category.descriptionKey),
     category.label,
     category.description,
     ...(category.keywords ?? []),
@@ -80,6 +111,7 @@ export function NotificationsSettings() {
   const { settings, updateSettings } = useSettings();
   const [query, setQuery] = React.useState("");
   const [pipesExpanded, setPipesExpanded] = React.useState(false);
+  const t = useT();
 
   if (!settings) return null;
 
@@ -135,15 +167,14 @@ export function NotificationsSettings() {
   // Groups that still have at least one matching category under the active filter.
   const visibleGroups = NOTIFICATION_GROUPS.map((group) => ({
     group,
-    categories: categoriesForGroup(group.id).filter((c) => matchesQuery(c, q)),
+    categories: categoriesForGroup(group.id).filter((c) => matchesQuery(c, q, t)),
   })).filter((g) => g.categories.length > 0);
 
   return (
     <div className="space-y-6">
       <div>
         <p className="text-sm text-muted-foreground">
-          Control which notifications screenpipe sends you. Pause on a whim,
-          set quiet hours, turn whole groups off, or fine-tune a single scheduled task.
+          {t("settings.notifications.intro")}
         </p>
       </div>
 
@@ -168,7 +199,9 @@ export function NotificationsSettings() {
 
       {/* Quick presets + reset, then the in-section filter */}
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-[11px] text-muted-foreground">quick set:</span>
+        <span className="text-[11px] text-muted-foreground">
+          {t("settings.notifications.preset.quickSet")}
+        </span>
         {PRESETS.map((p) => (
           <button
             key={p.kind}
@@ -177,7 +210,7 @@ export function NotificationsSettings() {
             onClick={() => applyPreset(p.kind)}
             className="border border-border px-2.5 py-1 text-[11px] transition-colors hover:border-foreground hover:bg-foreground hover:text-background"
           >
-            {p.label}
+            {t(p.labelKey)}
           </button>
         ))}
         <button
@@ -186,7 +219,7 @@ export function NotificationsSettings() {
           onClick={resetToDefaults}
           className="ml-auto text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
         >
-          reset to defaults
+          {t("settings.notifications.preset.reset")}
         </button>
       </div>
 
@@ -196,8 +229,8 @@ export function NotificationsSettings() {
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="search notifications"
-          aria-label="search notifications"
+          placeholder={t("settings.notifications.search.placeholder")}
+          aria-label={t("settings.notifications.search.placeholder")}
           data-testid="notification-search"
           className="w-full border border-border bg-transparent py-2 pl-8 pr-3 text-sm outline-none transition-colors placeholder:text-muted-foreground/60 focus:border-foreground/30"
         />
@@ -212,13 +245,15 @@ export function NotificationsSettings() {
           <div key={group.id} className="space-y-1">
             <div className="mb-1 flex items-center justify-between gap-3">
               <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-                {group.label}
+                {t(group.labelKey)}
               </p>
               {/* Bulk toggle only makes sense for the full (unfiltered) group */}
               {!q && (
                 <Switch
                   data-testid={`notification-group-${group.id}`}
-                  aria-label={`toggle all ${group.label}`}
+                  aria-label={t("settings.notifications.group.aria", {
+                    group: t(group.labelKey),
+                  })}
                   checked={gstate === "all"}
                   onCheckedChange={(v) =>
                     writeCategoryPatch(
@@ -263,10 +298,12 @@ export function NotificationsSettings() {
                           pipesExpanded && "rotate-90"
                         )}
                       />
-                      customize per task
+                      {t("settings.notifications.perPipe.customize")}
                       {mutedPipes.length > 0 && (
                         <span className="ml-1 text-muted-foreground/70">
-                          ({mutedPipes.length} muted)
+                          {t("settings.notifications.perPipe.mutedCount", {
+                            count: mutedPipes.length,
+                          })}
                         </span>
                       )}
                     </button>
@@ -293,7 +330,7 @@ export function NotificationsSettings() {
 
         {visibleGroups.length === 0 && (
           <p className="py-6 text-center text-xs text-muted-foreground">
-            no notifications match &quot;{query}&quot;
+            {t("settings.notifications.empty", { query })}
           </p>
         )}
       </div>
@@ -320,19 +357,22 @@ function CategoryRow({
   onToggle,
   children,
 }: CategoryRowProps) {
+  const t = useT();
   return (
     <div className="border-b border-border py-3 last:border-b-0">
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
           <p className="text-sm font-medium">
-            {category.label}
+            {t(category.labelKey)}
             {category.experimental && (
               <span className="ml-1.5 text-[10px] font-normal text-muted-foreground/70">
-                experimental
+                {t("settings.notifications.experimental")}
               </span>
             )}
           </p>
-          <p className="text-xs text-muted-foreground">{category.description}</p>
+          <p className="text-xs text-muted-foreground">
+            {t(category.descriptionKey)}
+          </p>
         </div>
 
         <div className="flex shrink-0 items-center gap-3">

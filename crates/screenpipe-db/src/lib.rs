@@ -43,16 +43,25 @@ pub use cancellable_query::{
     is_sqlite_interrupt, CancellableReadConnection, SqliteInterruptReason, SEARCH_QUERY_TIMEOUT,
     SQLITE_PROGRESS_CHECK_OPS,
 };
+pub use db::JournalReviewSpan;
 pub use db::{
-    find_matching_a11y_positions, parse_all_text_positions, ActivityActionDraft,
-    ActivityActionRecord, ActivityEvidenceDraft, ActivityEvidenceRecord, ActivityIntervalDraft,
-    ActivityIntervalRecord, ActivityLedgerObservation, ActivityTaskDraft, DatabaseManager,
-    DeleteTimeRangeResult, ImmediateTx, NewMeetingTranscriptSegment, SemanticActor,
-    SemanticActorAlias, SemanticActorReference, SemanticAttachResult, SemanticCleanupResult,
-    SemanticContextQuery, SemanticFrameContext, SemanticProjectionWriteResult,
+    evenly_spaced_indices, find_matching_a11y_positions, parse_all_text_positions,
+    review_label_for_span, ActivityActionDraft, ActivityActionRecord, ActivityEvidenceDraft,
+    ActivityEvidenceRecord, ActivityIntervalDraft, ActivityIntervalRecord,
+    ActivityLedgerObservation, ActivityTaskDraft, DatabaseManager, DeleteTimeRangeResult,
+    FocusIntention, FocusStateDraft, FocusStateRecord, ImmediateTx, JournalActivity,
+    JournalActivityDraft, JournalActivityFeedback, JournalActivitySpan, JournalCardFeedback,
+    JournalCategory, JournalCategoryDraft, JournalDistraction, JournalDistractionDraft,
+    JournalEvidence, JournalEvidenceDraft, JournalFrameSample, JournalLedgerInterval,
+    JournalReviewRating, JournalRun, JournalRunDraft, JournalWindow, JournalWindowCounts,
+    NewFocusIntention, NewMeetingTranscriptSegment, SemanticActor, SemanticActorAlias,
+    SemanticActorReference, SemanticAttachResult, SemanticCleanupResult, SemanticContextQuery,
+    SemanticFrameContext, SemanticProjectionWriteResult, FEEDBACK_RATINGS, FEEDBACK_RECENT_LIMIT,
+    JOURNAL_STATE_PRODUCER, MAX_FEEDBACK_NOTE_CHARS, MAX_REVIEW_SPAN_HOURS,
     MEETING_END_REASON_AUTO_END, MEETING_END_REASON_EXPLICIT_STOP, MEETING_END_REASON_ROOM_CHANGED,
-    MEETING_END_REASON_SHUTDOWN,
+    MEETING_END_REASON_SHUTDOWN, REVIEW_MIXED, REVIEW_RATINGS, REVIEW_SOURCES,
 };
+pub use db::{JournalActivityWriteMark, JournalRecap, JournalRecapDraft};
 pub use recovery::{
     probe_quarantined_generation_health, rebuild_recovered_fts5_indexes,
     verify_fresh_sqlite_recovery_candidate, QuarantineHealthProbe, RecoveryVerification,

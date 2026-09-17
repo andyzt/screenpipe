@@ -365,6 +365,57 @@ async copyTextToClipboard(text: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * What the frontend needs to decide whether DeepSeek calls can be made.
+ *
+ * `async` on purpose: a synchronous Tauri command runs on the main thread,
+ * and resolving the config reads (and, on a legacy store, sanitizes and
+ * rewrites) `store.bin` — a decrypt plus a disk write on the thread that
+ * draws the UI. As an async command Tauri runs it on the async runtime
+ * instead. The body stays blocking, but it no longer blocks the window.
+ */
+async deepseekConfig() : Promise<DeepSeekConfig> {
+    return await TAURI_INVOKE("deepseek_config");
+},
+/**
+ * `DELETE /files/{id}`. Best-effort cleanup after a one-shot use.
+ */
+async deepseekDeleteFile(fileId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("deepseek_delete_file", { fileId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Upload one image (base64, optionally a `data:` URL) to the DeepSeek Files
+ * API with `purpose=user_data`. Only works against api.deepseek.com — the
+ * team gateway has no Files API.
+ */
+async deepseekUploadFile(dataBase64: string, filename: string, mimeType: string | null, expiresAfterSeconds: number | null) : Promise<Result<DeepSeekFile, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("deepseek_upload_file", { dataBase64, filename, mimeType, expiresAfterSeconds }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Non-streaming vision chat completion. `images_base64` are data URLs (or
+ * bare base64, assumed JPEG). Against api.deepseek.com the images go through
+ * the Files API (upload, reference by file_id, delete after); against the
+ * team gateway they are inlined as base64 `image_url` parts, since it has no
+ * Files API. Images are only accepted in `user` messages.
+ */
+async deepseekVisionCompletion(imagesBase64: string[], prompt: string, model: string | null, maxTokens: number | null) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("deepseek_vision_completion", { imagesBase64, prompt, model, maxTokens }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async deleteBrainView(id: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("delete_brain_view", { id }) };
@@ -3026,7 +3077,7 @@ async writeBrowserLogs(entries: BrowserLogEntry[]) : Promise<void> {
 /** user-defined types **/
 
 export type AIPreset = { id: string; prompt: string; provider: AIProviderType; acpAgent?: AcpAgentPresetConfig | null; url?: string; model?: string; defaultPreset: boolean; apiKey: string | null; maxContextChars: number; maxTokens?: number }
-export type AIProviderType = "openai" | "openai-chatgpt" | "native-ollama" | "custom" | "screenpipe-cloud" | "acp" | "pi" | "anthropic"
+export type AIProviderType = "openai" | "openai-chatgpt" | "native-ollama" | "custom" | "deepseek" | "screenpipe-cloud" | "acp" | "pi" | "anthropic"
 export type AcpAgentConfig = {
 /**
  * Registry id (for example `codex-acp`) or `custom`.
@@ -3217,6 +3268,20 @@ error: string | null }
 export type CodingWorkspace = { version: number; conversationId: string; repoRoot: string; gitCommonDir: string; worktreePath: string; branch: string; baseCommit: string; sourceDirty: boolean; createdAt: string }
 export type CodingWorkspacePreparation = { status: string; workspace: CodingWorkspace | null; candidates: string[]; reason: string | null; routeSessionId: string | null }
 export type Credits = { amount: number }
+export type DeepSeekConfig = {
+/**
+ * Base URL of the DeepSeek API (preset `url` or the default).
+ */
+baseUrl: string;
+/**
+ * Model of the default DeepSeek preset, or the vision model.
+ */
+model: string;
+/**
+ * True when a key is available from the preset or the environment.
+ */
+hasApiKey: boolean }
+export type DeepSeekFile = { id: string; filename: string; bytes: number; purpose: string; expires_at?: number | null }
 /**
  * A skill folder discovered somewhere on the user's device.
  */
@@ -3650,10 +3715,10 @@ useSystemDefaultAudio: boolean;
  */
 experimentalCoreaudioSystemAudio?: boolean;
 /**
- * Beta ("Smart recording" in the app): during detected meetings, capture
+ * Automatic meeting capture: during detected meetings, capture
  * the meeting app's own audio via a per-process tap plus the microphone
  * that app actually has open (instead of the global mix + assumed-default
- * mic). Default `false`. Takes precedence over everything: it engages in
+ * mic). Default `true`. Takes precedence over everything: it engages in
  * ANY `audio_capture_mode` (continuous or meetings-only) and displaces
  * the configured devices for the meeting's duration. Requires macOS 14.4+
  * or Windows, plus the meeting detector (with `disable_meeting_detector`
@@ -3668,10 +3733,10 @@ experimentalMeetingPiggyback?: boolean;
  * link out of A2DP into SCO, degrading the user's headphone/speaker
  * output quality (48kHz stereo -> 24kHz stereo or mono HFP, depending on
  * hardware) — a macOS/OS-level tradeoff with no external workaround
- * (issue #3750). Default `false`: Bluetooth input devices are only
- * actually opened while a meeting is detected; outside a meeting they
- * stay enabled-but-gated (selected in settings, not streaming) so the
- * Bluetooth link stays in A2DP. Set `true` to always record Bluetooth
+ * (issue #3750). Default `false`: automatically selected Bluetooth inputs
+ * are opened only during meetings, keeping A2DP outside meetings. A
+ * manually selected device or explicit device-start request is exempt.
+ * Set `true` to always record automatically selected Bluetooth
  * mics regardless of meeting state (prior behavior). Has no effect on
  * wired/built-in/unrecognized mics, on Bluetooth output devices, or on a
  * dedicated Bluetooth microphone with no output side of its own (macOS:
@@ -4269,7 +4334,12 @@ headless?: boolean;
  * and the local server continue in the background.
  */
 headlessRecordOnly?: boolean }
-export type ShowRewindWindow = "Main" | { Home: { page: string | null } } | { Search: { query: string | null } } | "Onboarding" | "Chat" | "PermissionRecovery"
+export type ShowRewindWindow = "Main" |
+/**
+ * `page` is the query tail after `/home?section=`, built with
+ * [`home_page_query`] whenever it carries more than a bare section name.
+ */
+{ Home: { page: string | null } } | { Search: { query: string | null } } | "Onboarding" | "Chat" | "PermissionRecovery"
 export type StartExportRecordingResponse = { jobId: string }
 export type Suggestion = { text: string;
 /**

@@ -1,0 +1,64 @@
+{
+  "expected_relation": "unknown",
+  "thin_evidence": true,
+  "notes": "Thirty seconds of capture in ten minutes and no title. Missing evidence is never distraction.",
+  "now": "2026-09-16T15:40:00Z",
+  "tail_start": "2026-09-16T15:30:00Z",
+  "intention": {
+    "id": 7,
+    "title": "Finish the journal repair pass",
+    "project": "screenpipe",
+    "notes": "Card geometry repair in crates/screenpipe-engine/src/journal/repair.rs and its tests.",
+    "started_at": "2026-09-16T13:05:00Z",
+    "ended_at": null,
+    "source": "app"
+  },
+  "dominant": null,
+  "support_set": [
+    "code",
+    "repair.rs — screenpipe",
+    "github.com"
+  ],
+  "candidate": "possible_distraction",
+  "candidate_reason": "no task could be identified in the last ten minutes",
+  "divergence_minutes": 12.0,
+  "grace_minutes": 10,
+  "work_profile": {
+    "role": "Rust engineer on a desktop capture product",
+    "projects": [
+      {
+        "name": "screenpipe",
+        "keywords": [
+          "journal",
+          "repair.rs",
+          "activity ledger"
+        ]
+      }
+    ],
+    "notes": "Writes code in Code, reviews on github.com, plans in Notion."
+  },
+  "observations": {
+    "window_start": "2026-09-16T15:30:00Z",
+    "window_end": "2026-09-16T15:40:00Z",
+    "context_start": "2026-09-16T15:30:00Z",
+    "active_minutes": 0.4,
+    "intervals": [
+      {
+        "interval_key": "tf-1",
+        "task_key": "task-unknown",
+        "title": "Unknown app",
+        "app": null,
+        "window_title": "Unknown app",
+        "host": null,
+        "document": null,
+        "start_at": "2026-09-16T15:38:30Z",
+        "end_at": "2026-09-16T15:39:00Z",
+        "active_minutes": 0.4,
+        "click_count": 1,
+        "text_event_count": 0,
+        "audio_segments": 0,
+        "text_snippets": []
+      }
+    ]
+  }
+}

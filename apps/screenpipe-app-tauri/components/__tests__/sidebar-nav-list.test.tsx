@@ -182,9 +182,26 @@ describe("SidebarNavList", () => {
     expect(handlers.onSetHidden).toHaveBeenCalledWith("meetings", false);
   });
 
-  it("adds no sidebar-options chrome before the layout changes", () => {
+  it("adds no sidebar-options chrome with nothing hidden and nothing to reset", () => {
     renderCustomizationMenu({ hiddenItems: [], canReset: false });
     expect(screen.queryByTestId("sidebar-options")).toBeNull();
+  });
+
+  it("still offers the shipped-hidden rows on a stock layout", () => {
+    // The shipped sidebar hides chat, meetings, library, automations and
+    // activity, so this menu is the only way back to them — it cannot wait for
+    // the layout to drift first.
+    const handlers = renderCustomizationMenu({
+      canReset: false,
+      hiddenItems: [
+        { id: "home" as SidebarNavId, label: "Chat" },
+        { id: "pipes" as SidebarNavId, label: "Automations" },
+      ],
+    });
+    openDropdown("sidebar-options");
+    expect(screen.queryByTestId("sidebar-options-reset")).toBeNull();
+    fireEvent.click(screen.getByText("Show Automations"));
+    expect(handlers.onSetHidden).toHaveBeenCalledWith("pipes", false);
   });
 
   it("resets a customized layout from sidebar options", () => {

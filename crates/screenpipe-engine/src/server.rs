@@ -38,6 +38,10 @@ use crate::{
             storage_preview_handler,
         },
         elements::{get_frame_elements, search_elements},
+        focus::{
+            create_focus_intention, end_focus_intention, get_focus_status, list_focus_intentions,
+            override_focus_state,
+        },
         frames::{
             get_frame_context, get_frame_data, get_frame_metadata, get_frame_preview_media,
             get_frame_preview_samples, get_frame_text_data, get_frame_thumbnail,
@@ -46,6 +50,16 @@ use crate::{
         health::{
             api_list_monitors, api_vision_status, audio_metrics_handler, health_check,
             vision_metrics_handler,
+        },
+        journal::{
+            get_journal_activity, get_journal_categories, get_journal_day, get_journal_status,
+            get_journal_week, put_journal_categories, regenerate_journal_day,
+        },
+        journal_dashboard::get_journal_week_dashboard,
+        journal_recap::{generate_journal_recap, get_journal_recap},
+        journal_review::{
+            get_journal_feedback, get_journal_reviews, put_journal_activity_feedback,
+            put_journal_reviews,
         },
         meetings::{
             bulk_delete_meetings_handler, delete_meeting_handler, export_handler,
@@ -626,6 +640,32 @@ impl SCServer {
         // this path; the finalizer itself is once-per-process.
         crate::meeting_summary::spawn_meeting_summary_finalizer(self.db.clone());
 
+        // Engine-owned journal worker: cuts capture into windows, compiles
+        // them and writes activity cards. Spawned here for the same reason as
+        // the finalizer above — both entrypoints build their router through
+        // this path — and guarded internally so it starts once per process.
+        // The cancellation token is a seam: this path has no shutdown signal
+        // to pass yet, and the worker must still select on one at every sleep
+        // so wiring one up later is a one-line change.
+        crate::journal::spawn_journal_worker(
+            self.db.clone(),
+            self.screenpipe_dir.clone(),
+            self.power_manager.clone(),
+            tokio_util::sync::CancellationToken::new(),
+        );
+
+        // Engine-owned tail detector: rewrites the single `focus_state` row
+        // every 60 s from the intention the user stated and the last ten
+        // minutes of the ledger. Spawned here for the same reason as the
+        // journal worker above, guarded internally so it starts once per
+        // process, and sharing that worker's cancellation seam.
+        crate::focus::spawn_focus_detector(
+            self.db.clone(),
+            self.screenpipe_dir.clone(),
+            self.power_manager.clone(),
+            tokio_util::sync::CancellationToken::new(),
+        );
+
         if analytics_enabled {
             // Spawn periodic API usage reporter (every 5 minutes)
             let counter_clone = api_request_count.clone();
@@ -985,6 +1025,28 @@ impl SCServer {
             .get("/frames/:frame_id/elements", get_frame_elements)
             .get("/activity-summary", get_activity_summary)
             .get("/activity-ledger", get_activity_ledger)
+            .get("/journal/day", get_journal_day)
+            .get("/journal/week", get_journal_week)
+            .get("/journal/week/dashboard", get_journal_week_dashboard)
+            .get("/journal/activities/:id", get_journal_activity)
+            .get("/journal/status", get_journal_status)
+            .post("/journal/regenerate", regenerate_journal_day)
+            .get("/journal/categories", get_journal_categories)
+            .put("/journal/categories", put_journal_categories)
+            .get("/journal/recap", get_journal_recap)
+            .post("/journal/recap/generate", generate_journal_recap)
+            .put(
+                "/journal/activities/:id/feedback",
+                put_journal_activity_feedback,
+            )
+            .get("/journal/feedback", get_journal_feedback)
+            .get("/journal/reviews", get_journal_reviews)
+            .put("/journal/reviews", put_journal_reviews)
+            .get("/focus/status", get_focus_status)
+            .get("/focus/intentions", list_focus_intentions)
+            .post("/focus/intentions", create_focus_intention)
+            .post("/focus/intentions/:id/end", end_focus_intention)
+            .post("/focus/state/override", override_focus_state)
             .get(
                 "/cloud-agents/status",
                 crate::routes::cloud_agents::cloud_agent_status,

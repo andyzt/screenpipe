@@ -74,7 +74,9 @@ export function useLearningWindow(
     let cancelled = false;
     const sync = async () => {
       const result = await commands.getOnboardingStatus();
-      if (cancelled || result.status !== "ok" || !result.data.isCompleted) return;
+      // `data` is null when no onboarding record exists yet (fresh dev
+      // profiles, the browser mock); treat that like an incomplete onboarding.
+      if (cancelled || result.status !== "ok" || !result.data?.isCompleted) return;
       const native = result.data;
       setActivationState(trialActivationState(native.currentStep));
       const startedAt = native.firstRunSummaryStartedAt ?? native.completedAt;

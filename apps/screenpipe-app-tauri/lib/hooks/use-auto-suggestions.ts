@@ -5,6 +5,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useInterval } from "@/lib/hooks/use-interval";
 import { commands } from "@/lib/utils/tauri";
+import { useT } from "@/lib/i18n";
 
 const POLL_INTERVAL_MS = 30 * 1000; // 30 seconds (lightweight IPC read)
 
@@ -27,6 +28,7 @@ export type ActivityMode =
 // ─── Hook ──────────────────────────────────────────────────────────────────────
 
 export function useAutoSuggestions() {
+  const t = useT();
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [mode, setMode] = useState<ActivityMode>("idle");
   const [tags, setTags] = useState<string[]>([]);
@@ -63,19 +65,19 @@ export function useAutoSuggestions() {
     } catch {
       // Fallback if Tauri command not available yet
       setSuggestions([
-        { text: "what did I work on in the last hour?", priority: 1 },
-        { text: "summarize my day so far" },
-        { text: "which apps did I use most today" },
-        { text: "show my recent screen activity" },
-        { text: "what was I working on" },
-        { text: "how much time did I spend on each app" },
+        { text: t("chat.suggestions.lastHour"), priority: 1 },
+        { text: t("chat.suggestions.summarizeDay") },
+        { text: t("chat.suggestions.topApps") },
+        { text: t("chat.suggestions.recentActivity") },
+        { text: t("chat.suggestions.whatWasIDoing") },
+        { text: t("chat.suggestions.timePerApp") },
       ]);
       setMode("idle");
       setTags([]);
     } finally {
       setLoading(false);
     }
-  }, [applySuggestions]);
+  }, [applySuggestions, t]);
 
   // Force regenerate (calls AI, bypasses scheduler guards)
   const forceRefresh = useCallback(async () => {

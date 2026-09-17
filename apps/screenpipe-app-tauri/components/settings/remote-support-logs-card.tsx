@@ -10,6 +10,7 @@ import { Switch } from "@/components/ui/switch";
 import { useManagedPolicy } from "@/lib/hooks/use-managed-policy";
 import { useSettings } from "@/lib/hooks/use-settings";
 import { useTauriEvent } from "@/lib/hooks/use-tauri-event";
+import { useT, type TranslateFn } from "@/lib/i18n";
 
 type RemoteSupportStatus =
   | "checking"
@@ -26,48 +27,52 @@ type StatusMessage = {
   className: string;
 };
 
-function describeConsumerStatus(status: RemoteSupportStatus): StatusMessage {
+function describeConsumerStatus(
+  status: RemoteSupportStatus,
+  t: TranslateFn,
+): StatusMessage {
   switch (status) {
     case "ready":
       return {
-        text: "Consent synced. Support can request one upload while this device is online.",
+        text: t("settings.privacy.remoteLogs.status.ready"),
         className: "text-emerald-700",
       };
     case "uploading":
       return {
-        text: "Uploading the requested filtered diagnostics...",
+        text: t("settings.privacy.remoteLogs.status.uploading"),
         className: "text-blue-700",
       };
     case "sync_error":
     case "request_error":
       return {
-        text: "Could not reach support. No request will run until the connection recovers; retrying automatically.",
+        text: t("settings.privacy.remoteLogs.status.error"),
         className: "text-red-700",
       };
     case "signed_out":
       return {
-        text: "The signed-in session is not ready, so no remote request can run.",
+        text: t("settings.privacy.remoteLogs.status.signedOut"),
         className: "text-red-700",
       };
     case "checking":
       return {
-        text: "Remote consent is enabled locally; checking the support connection.",
+        text: t("settings.privacy.remoteLogs.status.checking"),
         className: "text-muted-foreground",
       };
     case "syncing":
       return {
-        text: "Confirming consent with support...",
+        text: t("settings.privacy.remoteLogs.status.syncing"),
         className: "text-muted-foreground",
       };
     case "disabled":
       return {
-        text: "Remote support log collection is disabled.",
+        text: t("settings.privacy.remoteLogs.status.disabled"),
         className: "text-muted-foreground",
       };
   }
 }
 
 export function RemoteSupportLogsCard() {
+  const t = useT();
   const { settings, updateSettings } = useSettings();
   const [remoteStatus, setRemoteStatus] =
     useState<RemoteSupportStatus>("checking");
@@ -116,13 +121,13 @@ export function RemoteSupportLogsCard() {
 
   const consumerStatus =
     !isManagedDeployment && hasAccountConsent
-      ? describeConsumerStatus(remoteStatus)
+      ? describeConsumerStatus(remoteStatus, t)
       : null;
 
   return (
     <div className="space-y-2">
       <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider px-1">
-        Support access
+        {t("settings.privacy.remoteLogs.group")}
       </h2>
       <Card className="border-border bg-card">
         <CardContent className="px-3 py-2.5">
@@ -132,22 +137,22 @@ export function RemoteSupportLogsCard() {
               <div>
                 <div className="flex flex-wrap items-center gap-2">
                   <h3 className="text-sm font-medium text-foreground">
-                    Remote support logs
+                    {t("settings.privacy.remoteLogs.title")}
                   </h3>
                   {isManagedDeployment && (
                     <span className="border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                      Managed by your organization
+                      {t("settings.privacy.remoteLogs.managed")}
                     </span>
                   )}
                 </div>
                 <p className="text-xs text-muted-foreground mt-0.5 max-w-2xl">
                   {!isManagedDeploymentResolved
                     ? managedDeploymentResolutionError
-                      ? "Could not verify whether this device is managed. Remote log controls stay locked and will retry automatically."
-                      : "Checking whether remote log collection is managed by your organization..."
+                      ? t("settings.privacy.remoteLogs.unresolved.error")
+                      : t("settings.privacy.remoteLogs.unresolved.checking")
                     : isManagedDeployment
-                      ? "Your organization can request diagnostic logs from this managed device. Nothing is uploaded unless an administrator sends a request. Logs are filtered locally for common secrets and personal data, but automated filtering can miss secrets and logs can still contain names, file paths, URLs, and error messages. They go to your organization's configured support service, which controls retention. Screenshots, recordings, audio files, chat history, settings, and the timeline database are never included."
-                      : `Allow screenpipe support to request recent diagnostic logs from this device. Before upload, logs are filtered locally on this device for common secrets and personal data, but automated filtering can miss secrets and logs can still contain names, file paths, URLs, and error messages. Screenshots, recordings, audio files, chat history, settings, and the timeline database are never included. Nothing is uploaded unless support sends a short-lived request. You can turn this off at any time; previously shared diagnostics are deleted after 30 days.${requiresSignIn ? " Sign in to enable this." : ""}`}
+                      ? t("settings.privacy.remoteLogs.managed.description")
+                      : `${t("settings.privacy.remoteLogs.consumer.description")}${requiresSignIn ? ` ${t("settings.privacy.remoteLogs.signIn")}` : ""}`}
                 </p>
                 {consumerStatus && (
                   <p className={`text-[11px] mt-1 ${consumerStatus.className}`}>
@@ -158,7 +163,7 @@ export function RemoteSupportLogsCard() {
             </div>
             <Switch
               id="remote-log-collection-toggle"
-              aria-label="Allow remote support logs"
+              aria-label={t("settings.privacy.remoteLogs.aria")}
               data-testid="remote-log-collection-toggle"
               checked={enabled}
               disabled={

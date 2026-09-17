@@ -45,10 +45,27 @@ fn classify_authentication(
     }
 }
 
+/// This build ships without a screenpipe account: no sign-in, no cloud
+/// entitlement. Authentication resolves to `NotRequired`, which the native
+/// access gates in `recording.rs` treat as "start the engine and record".
+/// The user's own AI provider keys live in AI presets (DeepSeek by default).
+///
+/// Enterprise is the one build this must never apply to: `NotRequired` also
+/// short-circuits the entitlement gates below and in `recording.rs`, so a
+/// plain `true` here would hand every `--features enterprise-build` binary a
+/// recording engine without seat enrollment or policy. The feature flag is
+/// therefore part of the constant, not a check each call site remembers.
+pub(crate) const ACCOUNTLESS_BUILD: bool = !cfg!(feature = "enterprise-build");
+
+/// The gate above, proven at compile time: an enterprise binary that also
+/// declared itself accountless would not build.
+const _: () = assert!(!(ACCOUNTLESS_BUILD && cfg!(feature = "enterprise-build")));
+
 /// Shared Consumer/Enterprise bootstrap resolver. Signup-free builds take the
 /// immediate branch; otherwise only the build-specific credential check varies.
 fn resolve(app: &tauri::AppHandle, settings: &SettingsStore) -> AuthenticationStatus {
-    let status = classify_authentication(!crate::should_skip_onboarding(), || {
+    let signup_required = !ACCOUNTLESS_BUILD && !crate::should_skip_onboarding();
+    let status = classify_authentication(signup_required, || {
         if cfg!(feature = "enterprise-build") {
             crate::enterprise_sync::authorize_startup(app)
         } else {
@@ -86,8 +103,24 @@ pub(crate) fn bootstrap(app: &tauri::AppHandle, settings: &SettingsStore) -> Aut
 
 #[cfg(test)]
 mod tests {
-    use super::{classify_authentication, resolve_then_initialize, AuthenticationStatus};
+    use super::{
+        classify_authentication, resolve_then_initialize, AuthenticationStatus, ACCOUNTLESS_BUILD,
+    };
     use std::cell::Cell;
+
+    /// `NotRequired` is not merely "no sign-in prompt": it is a bypass of both
+    /// the startup entitlement check here and the recording/server gates in
+    /// `recording.rs`. Enterprise builds must therefore never be accountless,
+    /// and consumer builds always are.
+    #[test]
+    fn only_non_enterprise_builds_are_accountless() {
+        assert_eq!(ACCOUNTLESS_BUILD, !cfg!(feature = "enterprise-build"));
+        if cfg!(feature = "enterprise-build") {
+            assert!(!ACCOUNTLESS_BUILD, "enterprise must keep its auth gate");
+        } else {
+            assert!(ACCOUNTLESS_BUILD, "this build ships without accounts");
+        }
+    }
 
     #[test]
     fn signup_free_build_resolves_immediately() {

@@ -16,6 +16,7 @@ import {
   type AcpSetupPhase,
 } from "@/components/settings/acp-setup-progress";
 import { cn } from "@/lib/utils";
+import { useT, type TranslateFn } from "@/lib/i18n";
 
 export interface AcpPresetDefaultsChange {
   config?: Record<string, string>;
@@ -46,8 +47,10 @@ interface AcpPresetSetupProgressPayload {
 }
 
 /** The no-override choice, named after what the agent will actually use. */
-const defaultChoiceLabel = (name?: string) =>
-  name ? `default (${name})` : "agent default";
+const defaultChoiceLabel = (t: TranslateFn, name?: string) =>
+  name
+    ? t("settings.ai.acp.defaults.choiceNamed", { name })
+    : t("settings.ai.acp.defaults.choice");
 
 /** Model/mode default pickers for an ACP preset. Choices come from the
  *  adapter's advertised selectors: cached from earlier sessions, otherwise
@@ -76,6 +79,7 @@ export function AcpPresetDefaults({
    *  completed first step while the shared probe starts and connects it. */
   installedInEditor?: boolean;
 }) {
+  const t = useT();
   const agentId = agent.id;
   const advertised = useAcpSessionConfig((state) => state.byAgent[agentId]);
   const cacheAdvertisement = useAcpSessionConfig((state) => state.cacheAdvertisement);
@@ -298,8 +302,8 @@ export function AcpPresetDefaults({
       return (
         <p className={hintClass}>
           {compact
-            ? "enter the agent command to load its model and mode choices"
-            : "Enter the agent command to load its model and mode choices."}
+            ? t("settings.ai.acp.defaults.enterCommandCompact")
+            : t("settings.ai.acp.defaults.enterCommand")}
         </p>
       );
     }
@@ -328,11 +332,10 @@ export function AcpPresetDefaults({
           data-testid="acp-preset-install"
         >
           <p className={cn("font-medium", compact ? "text-xs" : "text-sm")}>
-            {name} isn&apos;t installed yet
+            {t("settings.ai.acp.install.title", { agent: name })}
           </p>
           <p className={cn("text-muted-foreground", compact ? "text-[11px]" : "text-xs")}>
-            Screenpipe can download it for you. It runs on this computer as its
-            own program, and signs in with its own account.
+            {t("settings.ai.acp.install.body")}
           </p>
           <Button
             type="button"
@@ -343,7 +346,8 @@ export function AcpPresetDefaults({
               setInstallApproved(true);
             }}
           >
-            <Download className="mr-1.5 h-3.5 w-3.5" /> Install {name}
+            <Download className="mr-1.5 h-3.5 w-3.5" />{" "}
+            {t("settings.ai.acp.install.button", { agent: name })}
           </Button>
         </div>
       );
@@ -381,11 +385,13 @@ export function AcpPresetDefaults({
           data-testid="acp-preset-signin"
         >
           <div className="space-y-1">
-            <p className={cn("font-medium", compact ? "text-xs" : "text-sm")}>Sign in to {info.name}</p>
+            <p className={cn("font-medium", compact ? "text-xs" : "text-sm")}>
+              {t("settings.ai.acp.signIn.title", { agent: info.name })}
+            </p>
             <p className={cn("text-muted-foreground", compact ? "text-[11px]" : "text-xs")}>
               {signInCommand
-                ? `${info.name} opens its secure login in your browser and keeps the credential.`
-                : `${info.name} signs in when you open a chat with this preset: it runs its own login and stores the credential itself. Screenpipe never sees or stores an API key for it.`}
+                ? t("settings.ai.acp.signIn.browser", { agent: info.name })
+                : t("settings.ai.acp.signIn.inChat", { agent: info.name })}
             </p>
           </div>
           {/* A retry that still failed: say so plainly, kept visible, like the
@@ -400,16 +406,19 @@ export function AcpPresetDefaults({
               )}
             >
               {signInError
-                ? `Couldn't open ${info.name}'s login: ${signInError}`
+                ? t("settings.ai.acp.signIn.error", {
+                    agent: info.name,
+                    error: signInError,
+                  })
                 : signInCommand
-                ? `Still not signed in to ${info.name}. Try signing in again.`
-                : `Still not signed in. ${info.name} signs in from a chat, not from here.`}
+                ? t("settings.ai.acp.signIn.retryFailed", { agent: info.name })
+                : t("settings.ai.acp.signIn.retryFailedChat", { agent: info.name })}
             </div>
           )}
           {signInCommand && signInError && (
             <div>
               <p className={cn("mb-1 text-muted-foreground", compact ? "text-[10px]" : "text-xs")}>
-                You can still run this manually:
+                {t("settings.ai.acp.signIn.manual")}
               </p>
               <pre className={cn("overflow-x-auto rounded-md bg-muted px-3 py-2 font-mono text-foreground", compact ? "text-[11px]" : "text-xs")}>
                 <code>{signInCommand}</code>
@@ -422,22 +431,36 @@ export function AcpPresetDefaults({
           {signInCommand ? (
             <Button type="button" size="sm" disabled={busy} onClick={() => void beginExternalLogin()}>
               {signInPending || retryPending || probing ? (
-                <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> {signInPending ? "Signing in…" : "Connecting…"}</>
+                <>
+                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />{" "}
+                  {signInPending
+                    ? t("settings.ai.acp.signIn.pending")
+                    : t("settings.ai.acp.signIn.connecting")}
+                </>
               ) : (
-                <><LogIn className="mr-1.5 h-3.5 w-3.5" /> Sign in with {info.name}</>
+                <>
+                  <LogIn className="mr-1.5 h-3.5 w-3.5" />{" "}
+                  {t("settings.ai.acp.signIn.button", { agent: info.name })}
+                </>
               )}
             </Button>
           ) : (
             <div className="flex items-center gap-2">
               <Button type="button" size="sm" variant="outline" disabled={busy} onClick={beginRetry}>
                 {busy ? (
-                  <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> Checking…</>
+                  <>
+                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />{" "}
+                    {t("settings.ai.acp.signIn.checking")}
+                  </>
                 ) : (
-                  <><RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Check again</>
+                  <>
+                    <RefreshCw className="mr-1.5 h-3.5 w-3.5" />{" "}
+                    {t("settings.ai.acp.signIn.checkAgain")}
+                  </>
                 )}
               </Button>
               <span className={cn("text-muted-foreground", compact ? "text-[10px]" : "text-xs")}>
-                Save this preset and open a chat to sign in.
+                {t("settings.ai.acp.signIn.openChat")}
               </span>
             </div>
           )}
@@ -448,10 +471,10 @@ export function AcpPresetDefaults({
       <div className={cn(hintClass, "flex items-center gap-2")}>
         <span>
           {probeError
-            ? `could not load choices: ${probeError}`
+            ? t("settings.ai.acp.defaults.loadError", { error: probeError })
             : compact
-              ? "model and mode choices unavailable"
-              : "Model and mode choices are unavailable for this agent."}
+              ? t("settings.ai.acp.defaults.unavailableCompact")
+              : t("settings.ai.acp.defaults.unavailable")}
         </span>
         <button
           type="button"
@@ -460,7 +483,9 @@ export function AcpPresetDefaults({
           className="inline-flex items-center gap-1 underline underline-offset-2 hover:text-foreground disabled:opacity-60"
         >
           {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
-          {busy ? "checking…" : "retry"}
+          {busy
+            ? t("settings.ai.acp.defaults.checkingLower")
+            : t("settings.ai.acp.defaults.retry")}
         </button>
       </div>
     );
@@ -488,6 +513,7 @@ export function AcpPresetDefaults({
           >
             <option value="">
               {defaultChoiceLabel(
+                t,
                 option.values.find(
                   (value) => value.value === String(option.currentValue ?? ""),
                 )?.name,
@@ -520,17 +546,32 @@ export function AcpPresetDefaults({
             className={selectClass}
           >
             <option value="">
-              {defaultChoiceLabel(option.currentValue === true ? "on" : "off")}
+              {defaultChoiceLabel(
+                t,
+                option.currentValue === true
+                  ? t("settings.ai.acp.defaults.onLower")
+                  : t("settings.ai.acp.defaults.offLower"),
+              )}
             </option>
-            <option value="true">{compact ? "on" : "On"}</option>
-            <option value="false">{compact ? "off" : "Off"}</option>
+            <option value="true">
+              {compact
+                ? t("settings.ai.acp.defaults.onLower")
+                : t("settings.ai.acp.defaults.on")}
+            </option>
+            <option value="false">
+              {compact
+                ? t("settings.ai.acp.defaults.offLower")
+                : t("settings.ai.acp.defaults.off")}
+            </option>
           </select>
         </div>
       ))}
       {modes && (
         <div className="space-y-1">
           <Label htmlFor="acpDefaultMode" className={labelClass}>
-            {compact ? "mode" : "Mode"}
+            {compact
+              ? t("settings.ai.acp.defaults.modeLower")
+              : t("settings.ai.acp.defaults.mode")}
           </Label>
           <select
             id="acpDefaultMode"
@@ -543,6 +584,7 @@ export function AcpPresetDefaults({
           >
             <option value="">
               {defaultChoiceLabel(
+                t,
                 modes.availableModes.find(
                   (mode) => mode.value === modes.currentModeId,
                 )?.name,
@@ -558,8 +600,8 @@ export function AcpPresetDefaults({
       )}
       <p className={hintClass}>
         {compact
-          ? "applied when the agent starts"
-          : "Applied whenever this agent starts. The composer can still change them mid-conversation."}
+          ? t("settings.ai.acp.defaults.appliedCompact")
+          : t("settings.ai.acp.defaults.applied")}
       </p>
     </div>
   );

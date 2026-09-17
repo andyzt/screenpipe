@@ -1,0 +1,72 @@
+{
+  "expected_relation": "other_work",
+  "thin_evidence": false,
+  "notes": "A scheduled meeting on another topic. Real work the person did not choose to interrupt themselves with.",
+  "now": "2026-09-16T15:40:00Z",
+  "tail_start": "2026-09-16T15:30:00Z",
+  "intention": {
+    "id": 7,
+    "title": "Finish the journal repair pass",
+    "project": "screenpipe",
+    "notes": "Card geometry repair in crates/screenpipe-engine/src/journal/repair.rs and its tests.",
+    "started_at": "2026-09-16T13:05:00Z",
+    "ended_at": null,
+    "source": "app"
+  },
+  "dominant": {
+    "task_key": "task-hiring",
+    "title": "Hiring sync",
+    "app": "zoom.us",
+    "parent_title": null,
+    "active_minutes": 9.5
+  },
+  "support_set": [
+    "code",
+    "repair.rs — screenpipe",
+    "github.com"
+  ],
+  "candidate": "possible_distraction",
+  "candidate_reason": "the dominant task 'Hiring sync' is not among the apps this intention has been worked on",
+  "divergence_minutes": 12.0,
+  "grace_minutes": 10,
+  "work_profile": {
+    "role": "Rust engineer on a desktop capture product",
+    "projects": [
+      {
+        "name": "screenpipe",
+        "keywords": [
+          "journal",
+          "repair.rs",
+          "activity ledger"
+        ]
+      }
+    ],
+    "notes": "Writes code in Code, reviews on github.com, plans in Notion."
+  },
+  "observations": {
+    "window_start": "2026-09-16T15:30:00Z",
+    "window_end": "2026-09-16T15:40:00Z",
+    "context_start": "2026-09-16T15:30:00Z",
+    "active_minutes": 9.5,
+    "intervals": [
+      {
+        "interval_key": "tf-1",
+        "task_key": "task-hiring",
+        "title": "Hiring sync",
+        "app": "zoom.us",
+        "window_title": "Zoom Meeting — Hiring sync",
+        "host": null,
+        "document": null,
+        "start_at": "2026-09-16T15:30:00Z",
+        "end_at": "2026-09-16T15:40:00Z",
+        "active_minutes": 9.5,
+        "click_count": 4,
+        "text_event_count": 22,
+        "audio_segments": 11,
+        "text_snippets": [
+          "Hiring sync — 5 participants — screen share: interview loop draft"
+        ]
+      }
+    ]
+  }
+}

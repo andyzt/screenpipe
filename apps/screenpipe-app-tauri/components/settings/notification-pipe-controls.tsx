@@ -8,6 +8,7 @@ import { Switch } from "@/components/ui/switch";
 import { usePipes } from "@/lib/hooks/use-pipes";
 import { cn } from "@/lib/utils";
 import { Search, Star } from "lucide-react";
+import { useT } from "@/lib/i18n";
 
 /**
  * Per-pipe notification controls. Renders one row per installed pipe with a
@@ -45,6 +46,7 @@ export function NotificationPipeControls({
 }: NotificationPipeControlsProps) {
   const { pipes, loading } = usePipes();
   const [query, setQuery] = React.useState("");
+  const t = useT();
 
   // Stable, de-duped, alphabetised list of installed pipe names. A pipe with no
   // resolvable name can't be muted (we key on name), so it's excluded.
@@ -112,15 +114,16 @@ export function NotificationPipeControls({
 
   if (loading && pipeRows.length === 0) {
     return (
-      <p className="px-3 py-3 text-xs text-muted-foreground">loading scheduled tasks…</p>
+      <p className="px-3 py-3 text-xs text-muted-foreground">
+        {t("settings.notifications.pipes.loading")}
+      </p>
     );
   }
 
   if (pipeRows.length === 0) {
     return (
       <div className="px-3 py-4 text-xs text-muted-foreground">
-        no scheduled tasks installed yet. install one from the Store and it&apos;ll
-        show up here.
+        {t("settings.notifications.pipes.empty")}
       </div>
     );
   }
@@ -130,12 +133,17 @@ export function NotificationPipeControls({
       <div className="flex items-center justify-between gap-2">
         <p className="text-[11px] text-muted-foreground">
           {mutedCount > 0
-            ? `${mutedCount} of ${pipeRows.length} muted`
-            : `${pipeRows.length} scheduled task${pipeRows.length === 1 ? "" : "s"} can notify you`}
+            ? t("settings.notifications.pipes.mutedOf", {
+                count: mutedCount,
+                total: pipeRows.length,
+              })
+            : t("settings.notifications.pipes.canNotify", {
+                count: pipeRows.length,
+              })}
           {vipCount > 0 && (
             <span className="text-muted-foreground/80">
               {" · "}
-              {vipCount} always notifies
+              {t("settings.notifications.pipes.vipCount", { count: vipCount })}
             </span>
           )}
         </p>
@@ -146,13 +154,13 @@ export function NotificationPipeControls({
             className="text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:pointer-events-none"
             onClick={() => onChange([])}
           >
-            unmute all
+            {t("settings.notifications.pipes.unmuteAll")}
           </button>
         )}
       </div>
       {canVip && (
         <p className="text-[10px] text-muted-foreground/70">
-          ★ = always notify, even while snoozed or in quiet hours
+          {t("settings.notifications.pipes.vipHint")}
         </p>
       )}
 
@@ -162,8 +170,8 @@ export function NotificationPipeControls({
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="filter scheduled tasks"
-            aria-label="filter scheduled tasks"
+            placeholder={t("settings.notifications.pipes.filterPlaceholder")}
+            aria-label={t("settings.notifications.pipes.filterPlaceholder")}
             disabled={disabled}
             className="w-full border border-border bg-transparent py-1.5 pl-8 pr-2.5 text-xs outline-none transition-colors placeholder:text-muted-foreground/60 focus:border-foreground/30"
           />
@@ -173,7 +181,7 @@ export function NotificationPipeControls({
       <div className="divide-y divide-border border border-border">
         {filtered.length === 0 ? (
           <p className="px-3 py-3 text-center text-xs text-muted-foreground">
-            no scheduled tasks match &quot;{query}&quot;
+            {t("settings.notifications.pipes.noMatch", { query })}
           </p>
         ) : (
           filtered.map((row) => {
@@ -199,11 +207,15 @@ export function NotificationPipeControls({
                       disabled={disabled}
                       aria-label={
                         isVip
-                          ? `stop always-notifying ${row.title}`
-                          : `always notify for ${row.title}`
+                          ? t("settings.notifications.pipes.vipOffAria", {
+                              name: row.title,
+                            })
+                          : t("settings.notifications.pipes.vipOnAria", {
+                              name: row.title,
+                            })
                       }
                       aria-pressed={isVip}
-                      title="always notify, even while paused"
+                      title={t("settings.notifications.pipes.vipTitle")}
                       data-testid={`notification-pipe-vip-${row.name}`}
                       onClick={() => setVip(row.name, !isVip)}
                       className={cn(

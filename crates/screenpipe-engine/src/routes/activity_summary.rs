@@ -35,8 +35,10 @@ use screenpipe_db::{DatabaseManager, Order, SemanticContextQuery};
 /// Frames more than this many seconds apart are treated as idle (screen
 /// untouched), so the gap between them does not count as active time. Shared
 /// by the per-app / per-window `minutes` SQL and the whole-range
-/// `total_active_minutes` so the three definitions never drift apart.
-const IDLE_CAP_SECS: i64 = 300;
+/// `total_active_minutes` so the three definitions never drift apart — and,
+/// through `journal::time`, with the activity ledger's segment splitter and
+/// the journal's card minutes as well.
+use crate::journal::time::IDLE_CAP_SECS;
 const MAX_TOP_TRANSCRIPTIONS: u32 = 20;
 
 // ---------- query ----------
@@ -956,7 +958,10 @@ async fn collect_summary_core(
 
 // ---------- recording health ----------
 
-async fn load_recording_status(
+/// `pub(crate)` so the focus detector can ask the same question
+/// `/activity-summary` asks — "is capture actually alive right now?" — instead
+/// of growing a second, slightly different definition of a stall.
+pub(crate) async fn load_recording_status(
     db: &DatabaseManager,
     start: &str,
     end: &str,

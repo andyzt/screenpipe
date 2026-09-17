@@ -493,9 +493,13 @@ describe("Windows user journey", function () {
     const screenScreenshot = await saveScreenshot("windows-user-journey-screen-settings");
     expect(existsSync(screenScreenshot)).toBe(true);
 
-    const audioNav = await $('[data-testid="settings-nav-audio"]');
-    await audioNav.waitForDisplayed({ timeout: t(15_000) });
-    await audioNav.click();
+    // Audio & meetings is hidden from the settings nav in this accountless
+    // build (lib/settings-sections.ts HIDDEN_SETTINGS_SECTIONS), so there is
+    // no `settings-nav-audio` row to click. The section id still resolves
+    // via a direct route.
+    await browser.execute(() => {
+      window.location.href = "/settings?section=audio";
+    });
     await expectCurrentSettingsSection("audio", t(20_000));
 
     const audioSection = await $('[data-testid="section-settings-audio"]');

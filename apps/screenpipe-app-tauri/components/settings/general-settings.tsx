@@ -25,7 +25,12 @@ import { getVersion } from "@tauri-apps/api/app";
 import { commands } from "@/lib/utils/tauri";
 import { useOnboarding } from "@/lib/hooks/use-onboarding";
 import { UpdateBanner } from "@/components/update-banner";
-import type { SettingsField } from "./settings-search";
+import {
+  settingsIndexFactory,
+  type LocalizedSettingsField,
+  type SettingsField,
+} from "./settings-search";
+import { translatorFor, useT } from "@/lib/i18n";
 import { ONBOARDING_GOALS } from "@/lib/live-views/onboarding-goals";
 import {
   DEFAULT_USER_GOAL_CATEGORY,
@@ -34,15 +39,26 @@ import {
 } from "@/lib/live-views/onboarding-activation";
 import posthog from "posthog-js";
 
-/** Settings search index for this section. Co-located with the component so adding a field here means updating one file. See `SettingsField` in `./settings-search` for the schema. */
-export const searchIndex: SettingsField[] = [
-  { label: "Auto-start", keywords: ["autostart", "launch", "startup"] },
-  { label: "Auto-update", keywords: ["updates"] },
-  { label: "Check for updates", keywords: ["version"] },
-  { label: "Auto-update scheduled tasks", keywords: ["pipes", "store", "tasks"] },
-  { label: "Reset Onboarding", keywords: ["setup"] },
-  { label: "Your goal", keywords: ["onboarding", "purpose", "personalization"] },
+/**
+ * Settings search index for this section. Co-located with the component so
+ * adding a field here means updating one file. Each entry names the dictionary
+ * key of the heading the section renders — `scrollToSettingsField` matches the
+ * resolved label against the heading text, so the two must not drift.
+ */
+export const searchFields: LocalizedSettingsField[] = [
+  { key: "settings.general.autostart.title", keywords: ["autostart", "launch", "startup", "автозапуск"] },
+  { key: "settings.general.autoupdate.title", keywords: ["updates", "обновления"], conditional: true },
+  { key: "settings.general.channel.title", keywords: ["beta", "pre-release", "channel", "канал"], conditional: true },
+  { key: "settings.general.updates.title", keywords: ["version", "версия", "обновление"], conditional: true },
+  { key: "settings.general.autoUpdatePipes.title", keywords: ["pipes", "store", "tasks", "задачи"] },
+  { key: "settings.general.onboarding.title", keywords: ["setup", "настройка", "онбординг"] },
+  { key: "settings.general.goal.title", keywords: ["onboarding", "purpose", "personalization", "цель"] },
 ];
+
+export const searchIndexFor = settingsIndexFactory(searchFields);
+
+/** English index, kept for the dev drift guard and for tests. */
+export const searchIndex: SettingsField[] = searchIndexFor(translatorFor("en"));
 import { useManagedPolicy } from "@/lib/hooks/use-managed-policy";
 import { screenpipeWebUrl } from "@/lib/web-url";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
@@ -62,6 +78,7 @@ export default function GeneralSettings() {
   const { settings, updateSettings } = useSettings();
   const resetOnboarding = useOnboarding((state) => state.resetOnboarding);
   const { toast } = useToast();
+  const t = useT();
   const [currentVersion, setCurrentVersion] = useState<string | null>(null);
   const [isCheckingForUpdate, setIsCheckingForUpdate] = useState(false);
   const [isResettingOnboarding, setIsResettingOnboarding] = useState(false);
@@ -84,8 +101,8 @@ export default function GeneralSettings() {
     } catch (error) {
       console.error("failed to save user goal:", error);
       toast({
-        title: "couldn't save your goal",
-        description: "please try again",
+        title: t("settings.general.goal.toast.error"),
+        description: t("settings.general.goal.toast.errorBody"),
         variant: "destructive",
       });
     }
@@ -100,9 +117,13 @@ export default function GeneralSettings() {
     } catch (error) {
       console.error("failed to reset onboarding:", error);
       toast({
-        title: "couldn't reset onboarding",
+        title: t("settings.general.onboarding.toast.error"),
+        // A backend failure arrives as an English message from Rust; it is
+        // shown as delivered rather than guessed at.
         description:
-          error instanceof Error ? error.message : "please try again",
+          error instanceof Error
+            ? error.message
+            : t("settings.general.onboarding.toast.errorBody"),
         variant: "destructive",
       });
     } finally {
@@ -118,23 +139,29 @@ export default function GeneralSettings() {
         const pending = pendingRes.data;
         if (pending.auth_required) {
           toast({
-            title: "update available",
-            description: `v${pending.version} is available — sign in to download it`,
+            title: t("settings.general.updates.toast.available"),
+            description: t("settings.general.updates.toast.availableBody", {
+              version: pending.version,
+            }),
           });
           return;
         }
 
         if (pending.downloaded) {
           toast({
-            title: "update ready",
-            description: `v${pending.version} is ready — restart to update`,
+            title: t("settings.general.updates.toast.ready"),
+            description: t("settings.general.updates.toast.readyBody", {
+              version: pending.version,
+            }),
           });
           return;
         }
 
         toast({
-          title: "update found",
-          description: `v${pending.version} is still downloading in the background`,
+          title: t("settings.general.updates.toast.found"),
+          description: t("settings.general.updates.toast.stillDownloadingBody", {
+            version: pending.version,
+          }),
         });
         return;
       }
@@ -143,15 +170,23 @@ export default function GeneralSettings() {
       if (res.status === "error") throw new Error(res.error);
       const updateFound = res.data;
       toast({
-        title: updateFound ? "update found" : "you're up to date",
+        title: updateFound
+          ? t("settings.general.updates.toast.found")
+          : t("settings.general.updates.toast.upToDate"),
         description: updateFound
-          ? "downloading in the background — banner will appear when ready"
-          : `running latest version${currentVersion ? ` (v${currentVersion})` : ""}`,
+          ? t("settings.general.updates.toast.downloadingBody")
+          : currentVersion
+            ? t("settings.general.updates.toast.upToDateBodyVersion", {
+                version: currentVersion,
+              })
+            : t("settings.general.updates.toast.upToDateBody"),
       });
     } catch (e: any) {
       toast({
-        title: "update check failed",
-        description: e?.toString() || "please try again later",
+        title: t("settings.general.updates.toast.failed"),
+        // The raw error body is the updater's own English text — passed
+        // through untouched so a bug report can be matched to a log line.
+        description: e?.toString() || t("settings.general.updates.toast.failedBody"),
         variant: "destructive",
       });
     } finally {
@@ -174,16 +209,19 @@ export default function GeneralSettings() {
     try {
       await commands.setAutostart(checked);
       toast({
-        title: checked ? "auto-start enabled" : "auto-start disabled",
+        title: checked
+          ? t("settings.general.autostart.toast.on")
+          : t("settings.general.autostart.toast.off"),
         description: checked
-          ? "screenpipe will start in the background when you log in"
-          : "screenpipe won't launch at startup",
+          ? t("settings.general.autostart.toast.onBody")
+          : t("settings.general.autostart.toast.offBody"),
       });
     } catch (e: any) {
       handleSettingsChange({ autoStartEnabled: !checked });
       toast({
-        title: "failed to update auto-start",
-        description: e?.toString() || "check system permissions and try again",
+        title: t("settings.general.autostart.toast.error"),
+        description:
+          e?.toString() || t("settings.general.autostart.toast.errorBody"),
         variant: "destructive",
       });
     }
@@ -221,8 +259,9 @@ export default function GeneralSettings() {
     } catch (e: any) {
       window.open(url, "_blank");
       toast({
-        title: "opened in browser",
-        description: e?.toString() || "check your browser for version downloads",
+        title: t("settings.general.version.toast.browser"),
+        description:
+          e?.toString() || t("settings.general.version.toast.browserBody"),
         variant: "destructive",
       });
     }
@@ -231,7 +270,7 @@ export default function GeneralSettings() {
   return (
     <div className="space-y-5" data-testid="section-settings-general">
       <p className="text-muted-foreground text-sm mb-4">
-        Startup, updates, and notifications
+        {t("settings.general.intro")}
       </p>
 
       <div className="flex items-center justify-end">
@@ -246,8 +285,12 @@ export default function GeneralSettings() {
               <div className="flex items-center space-x-2.5">
                 <Rocket className="h-4 w-4 text-muted-foreground shrink-0" />
                 <div>
-                  <h3 className="text-sm font-medium text-foreground">Auto-start</h3>
-                  <p className="text-xs text-muted-foreground">Start in the background when you log in</p>
+                  <h3 className="text-sm font-medium text-foreground">
+                    {t("settings.general.autostart.title")}
+                  </h3>
+                  <p className="text-xs text-muted-foreground">
+                    {t("settings.general.autostart.description")}
+                  </p>
                 </div>
               </div>
               <ManagedSwitch
@@ -269,11 +312,13 @@ export default function GeneralSettings() {
                 <div className="flex items-center space-x-2.5">
                   <RefreshCw className="h-4 w-4 text-muted-foreground shrink-0" />
                   <div>
-                    <h3 className="text-sm font-medium text-foreground">Auto-update</h3>
+                    <h3 className="text-sm font-medium text-foreground">
+                      {t("settings.general.autoupdate.title")}
+                    </h3>
                     <p className="text-xs text-muted-foreground">
                       {autoUpdateForcedByRemote
-                        ? "Required temporarily so this installation receives reliability fixes."
-                        : "Restart automatically when an update is downloaded. Off: a \"restart to update\" banner appears instead."}
+                        ? t("settings.general.autoupdate.forcedDescription")
+                        : t("settings.general.autoupdate.description")}
                     </p>
                   </div>
                 </div>
@@ -298,9 +343,11 @@ export default function GeneralSettings() {
                 <div className="flex items-center space-x-2.5">
                   <FlaskConical className="h-4 w-4 text-muted-foreground shrink-0" />
                   <div>
-                    <h3 className="text-sm font-medium text-foreground">Release channel</h3>
+                    <h3 className="text-sm font-medium text-foreground">
+                      {t("settings.general.channel.title")}
+                    </h3>
                     <p className="text-xs text-muted-foreground">
-                      Pre-release receives new public builds before Standard.
+                      {t("settings.general.channel.description")}
                     </p>
                   </div>
                 </div>
@@ -314,8 +361,12 @@ export default function GeneralSettings() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="stable">Standard</SelectItem>
-                    <SelectItem value="pre-release">Pre-release</SelectItem>
+                    <SelectItem value="stable">
+                      {t("settings.general.channel.option.stable")}
+                    </SelectItem>
+                    <SelectItem value="pre-release">
+                      {t("settings.general.channel.option.preRelease")}
+                    </SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -330,9 +381,13 @@ export default function GeneralSettings() {
                 <div className="flex items-center space-x-2.5">
                   <RefreshCw className="h-4 w-4 text-muted-foreground shrink-0" />
                   <div>
-                    <h3 className="text-sm font-medium text-foreground">Check for updates</h3>
+                    <h3 className="text-sm font-medium text-foreground">
+                      {t("settings.general.updates.title")}
+                    </h3>
                     <p className="text-xs text-muted-foreground">
-                      {currentVersion ? `Running v${currentVersion}` : "Look for a new version now"}
+                      {currentVersion
+                        ? t("settings.general.updates.running", { version: currentVersion })
+                        : t("settings.general.updates.description")}
                     </p>
                   </div>
                 </div>
@@ -343,7 +398,9 @@ export default function GeneralSettings() {
                   disabled={isCheckingForUpdate}
                   className="ml-4 h-8"
                 >
-                  {isCheckingForUpdate ? "checking..." : "check now"}
+                  {isCheckingForUpdate
+                    ? t("settings.general.updates.checking")
+                    : t("settings.general.updates.check")}
                 </Button>
               </div>
             </CardContent>
@@ -357,10 +414,16 @@ export default function GeneralSettings() {
                 <div className="flex items-center space-x-2.5">
                   <RefreshCw className="h-4 w-4 text-muted-foreground shrink-0" />
                   <div>
-                    <h3 className="text-sm font-medium text-foreground">App updates</h3>
+                    <h3 className="text-sm font-medium text-foreground">
+                      {t("settings.general.enterpriseUpdates.title")}
+                    </h3>
                     <p className="text-xs text-muted-foreground">
+                      {/* The policy sentence itself is produced by the
+                          enterprise policy helper and is not localized here. */}
                       {describeEnterpriseUpdateMode(enterpriseAppUpdatePolicy)}
-                      {enterpriseInstallMetadata?.managed ? " · managed device detected" : ""}
+                      {enterpriseInstallMetadata?.managed
+                        ? t("settings.general.enterpriseUpdates.managedSuffix")
+                        : ""}
                     </p>
                   </div>
                 </div>
@@ -384,8 +447,12 @@ export default function GeneralSettings() {
               <div className="flex items-center space-x-2.5">
                 <RefreshCw className="h-4 w-4 text-muted-foreground shrink-0" />
                 <div>
-                  <h3 className="text-sm font-medium text-foreground">Auto-update scheduled tasks</h3>
-                  <p className="text-xs text-muted-foreground">Keep tasks you installed from the Store up to date, unless you&apos;ve edited them</p>
+                  <h3 className="text-sm font-medium text-foreground">
+                    {t("settings.general.autoUpdatePipes.title")}
+                  </h3>
+                  <p className="text-xs text-muted-foreground">
+                    {t("settings.general.autoUpdatePipes.description")}
+                  </p>
                 </div>
               </div>
               <Switch
@@ -407,12 +474,14 @@ export default function GeneralSettings() {
                 <ExternalLink className="h-4 w-4 text-muted-foreground shrink-0" />
                 <div>
                   <h3 className="text-sm font-medium text-foreground">
-                    Version{currentVersion ? ` ${currentVersion}` : ""}
+                    {currentVersion
+                      ? t("settings.general.version.titleWithValue", { version: currentVersion })
+                      : t("settings.general.version.title")}
                   </h3>
                   <p className="text-xs text-muted-foreground">
                     {isManagedDeployment
-                      ? "Open builds managed by your organization"
-                      : "Open recent stable versions on screenpipe.com"}
+                      ? t("settings.general.version.descriptionManaged")
+                      : t("settings.general.version.description")}
                   </p>
                 </div>
               </div>
@@ -422,7 +491,7 @@ export default function GeneralSettings() {
                 onClick={handleOpenVersions}
                 className="ml-4 h-7 text-xs gap-1.5"
               >
-                open
+                {t("settings.general.version.open")}
                 <ExternalLink className="h-3 w-3" />
               </Button>
             </div>
@@ -439,9 +508,11 @@ export default function GeneralSettings() {
             <div className="flex items-center space-x-2.5">
               <Layers className="h-4 w-4 shrink-0 text-muted-foreground" />
               <div>
-                <h3 className="text-sm font-medium text-foreground">Your goal</h3>
+                <h3 className="text-sm font-medium text-foreground">
+                  {t("settings.general.goal.title")}
+                </h3>
                 <p className="text-xs text-muted-foreground">
-                  What you want screenpipe to help you accomplish
+                  {t("settings.general.goal.description")}
                 </p>
               </div>
             </div>
@@ -455,12 +526,22 @@ export default function GeneralSettings() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="default">No specific goal</SelectItem>
-                {ONBOARDING_GOALS.map((goal) => (
-                  <SelectItem key={goal.category} value={goal.category}>
-                    {goal.title}
-                  </SelectItem>
-                ))}
+                <SelectItem value="default">
+                  {t("settings.general.goal.none")}
+                </SelectItem>
+                {/* The goal catalogue lives in `lib/live-views` and its titles
+                    are also sent to the dashboard builder, so nothing here
+                    rewrites the stored value — only what the picker paints. A
+                    goal nobody has translated falls through to its own title. */}
+                {ONBOARDING_GOALS.map((goal) => {
+                  const key = `settings.general.goal.option.${goal.category}`;
+                  const label = t(key);
+                  return (
+                    <SelectItem key={goal.category} value={goal.category}>
+                      {label === key ? goal.title : label}
+                    </SelectItem>
+                  );
+                })}
               </SelectContent>
             </Select>
           </div>
@@ -473,8 +554,12 @@ export default function GeneralSettings() {
             <div className="flex items-center space-x-2.5">
               <RefreshCw className="h-4 w-4 text-muted-foreground shrink-0" />
               <div>
-                <h3 className="text-sm font-medium text-foreground">Reset Onboarding</h3>
-                <p className="text-xs text-muted-foreground">Run the setup wizard again</p>
+                <h3 className="text-sm font-medium text-foreground">
+                  {t("settings.general.onboarding.title")}
+                </h3>
+                <p className="text-xs text-muted-foreground">
+                  {t("settings.general.onboarding.description")}
+                </p>
               </div>
             </div>
             <Button
@@ -484,7 +569,9 @@ export default function GeneralSettings() {
               disabled={isResettingOnboarding}
               onClick={() => void handleResetOnboarding()}
             >
-              {isResettingOnboarding ? "resetting..." : "reset"}
+              {isResettingOnboarding
+                ? t("settings.general.onboarding.resetting")
+                : t("settings.general.onboarding.button")}
             </Button>
           </div>
         </CardContent>

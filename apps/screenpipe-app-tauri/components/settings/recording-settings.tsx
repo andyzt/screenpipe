@@ -9,12 +9,17 @@ const DEFAULT_OPENAI_COMPATIBLE_ENDPOINT = "http://127.0.0.1:8080";
 import React, { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import { useEventListener } from "@/lib/hooks/use-event-listener";
 import { useInterval } from "@/lib/hooks/use-interval";
-import { useSettingsIndexDriftCheck, type SettingsField } from "./settings-search";
-import { CaptureFrequencyPreview, AudioCaptureModePreview } from "./setting-previews";
 import {
-  SEMANTIC_CONTEXT_MODE_COPY,
-  type SemanticContextMode,
-} from "@/lib/semantic-context-mode";
+  settingsIndexFactory,
+  useSettingsIndexDriftCheck,
+  type LocalizedSettingsField,
+  type SettingsField,
+} from "./settings-search";
+import { translatorFor, useT, type TranslateFn } from "@/lib/i18n";
+import { CaptureFrequencyPreview, AudioCaptureModePreview } from "./setting-previews";
+// The labels and descriptions live in the dictionary now (the module's own
+// copy is English-only); only the union type is still read from here.
+import { type SemanticContextMode } from "@/lib/semantic-context-mode";
 import {
   getAecModeSettings,
   getRemoteAecModePolicy,
@@ -46,27 +51,47 @@ export const audioSearchIndex: SettingsField[] = [
   { label: "Your name", keywords: ["speaker", "voice training"], conditional: true },
 ];
 
-/** Search fields for the Screen destination. */
-export const screenSearchIndex: SettingsField[] = [
-  { label: "Screen context capture", keywords: ["screen", "video", "accessibility"] },
-  { label: "Structured app context", keywords: ["semantic", "ai", "messages", "email", "tasks", "code"], conditional: true },
-  { label: "Use it for", keywords: ["memory", "computer use", "automation", "agent", "skills"], conditional: true },
-  { label: "Screen recording", keywords: ["screenshot", "pixels", "ocr", "jpeg", "capture"] },
-  { label: "Use all monitors", keywords: ["monitor", "display"], conditional: true },
+/**
+ * Search fields for the Screen destination.
+ *
+ * Each `key` is the dictionary key of the heading this file actually renders:
+ * `scrollToSettingsField` matches the index label against the on-screen text,
+ * so a paraphrase would navigate to the section and then scroll nowhere.
+ * Russian keywords sit next to the English ones because the fast path is a
+ * substring match, and the English label is appended automatically by
+ * `resolveSettingsFields`.
+ */
+export const screenSearchFields: LocalizedSettingsField[] = [
+  { key: "settings.recording.screenContext.title", keywords: ["screen", "video", "accessibility", "экран", "контекст"] },
+  { key: "settings.recording.semantic.title", keywords: ["semantic", "ai", "messages", "email", "tasks", "code", "контекст", "ии"], conditional: true },
+  { key: "settings.recording.semantic.mode.label", keywords: ["memory", "computer use", "automation", "agent", "skills", "память", "автоматизация"], conditional: true },
+  { key: "settings.recording.screenshots.title", keywords: ["screenshot", "pixels", "ocr", "jpeg", "capture", "запись", "скриншот"] },
+  { key: "settings.recording.allMonitors.title", keywords: ["monitor", "display", "монитор", "экран"], conditional: true },
   // conditional: monitor picker only renders when "Use all monitors" is off — paired right under that toggle.
-  { label: "Monitors", conditional: true },
-  { label: "Recording quality", keywords: ["fps", "quality"], conditional: true },
+  { key: "settings.recording.monitors.title", keywords: ["монитор"], conditional: true },
+  { key: "settings.recording.quality.title", keywords: ["fps", "quality", "качество"], conditional: true },
   // conditional: hidden when screen recording is off (same gate as Recording quality).
-  { label: "Capture frequency", keywords: ["screenshot", "interval", "idle", "cadence", "every", "minimum"], conditional: true },
-  { label: "HD recording for meetings", keywords: ["hd", "meeting"] },
-  { label: "Chinese mirror", keywords: ["china", "mirror"] },
+  { key: "settings.recording.frequency.title", keywords: ["screenshot", "interval", "idle", "cadence", "every", "minimum", "частота", "интервал"], conditional: true },
+  { key: "settings.recording.hd.title", keywords: ["hd", "meeting", "встреча", "созвон"] },
+  { key: "settings.recording.chineseMirror.title", keywords: ["china", "mirror", "китай", "зеркало"] },
 ];
 
-/** Backward-compatible aggregate for callers that still treat capture as one area. */
-export const searchIndex: SettingsField[] = [
+export const screenSearchIndexFor = settingsIndexFactory(screenSearchFields);
+
+/** English index, kept for the dev drift guard and for tests. */
+export const screenSearchIndex: SettingsField[] =
+  screenSearchIndexFor(translatorFor("en"));
+
+/**
+ * Backward-compatible aggregate for callers that still treat capture as one
+ * area. Audio is a hidden section, so its half stays English by construction.
+ */
+export const searchIndexFor = (t: TranslateFn): SettingsField[] => [
   ...audioSearchIndex,
-  ...screenSearchIndex,
+  ...screenSearchIndexFor(t),
 ];
+
+export const searchIndex: SettingsField[] = searchIndexFor(translatorFor("en"));
 import { LockedSetting, ManagedSwitch } from "@/components/enterprise-locked-setting";
 import {
   Select,
@@ -1526,14 +1551,21 @@ type PushOutcome =
   | { kind: "engine-down" }
   | { kind: "engine-rejected"; status: number };
 
-function fmtRemaining(secs: number): string {
+function fmtRemaining(secs: number, t: TranslateFn): string {
   if (secs >= 3600) {
-    const h = Math.floor(secs / 3600);
-    const m = Math.floor((secs % 3600) / 60);
-    return m === 0 ? `${h}h` : `${h}h ${m}m`;
+    const hours = Math.floor(secs / 3600);
+    const minutes = Math.floor((secs % 3600) / 60);
+    return minutes === 0
+      ? t("settings.recording.hd.left.hours", { hours })
+      : t("settings.recording.hd.left.hoursMinutes", { hours, minutes });
   }
-  if (secs >= 60) return `${Math.ceil(secs / 60)}m`;
-  return `${Math.max(secs, 1)}s`;
+  if (secs >= 60)
+    return t("settings.recording.hd.left.minutes", {
+      minutes: Math.ceil(secs / 60),
+    });
+  return t("settings.recording.hd.left.seconds", {
+    seconds: Math.max(secs, 1),
+  });
 }
 
 function HighFpsCard({
@@ -1543,6 +1575,7 @@ function HighFpsCard({
   settings: any;
   onSettingsChange: (patch: Record<string, any>) => void;
 }) {
+  const t = useT();
   const [live, setLive] = React.useState<HdState | null>(null);
   const [busy, setBusy] = React.useState(false);
   const [lastError, setLastError] = React.useState<string | null>(null);
@@ -1613,16 +1646,17 @@ function HighFpsCard({
       onSettingsChange(patch);
       const outcome = await pushSettings(runtimePatch);
       if (outcome.kind === "engine-down") {
-        setLastError(
-          `${label} saved — but the engine isn't reachable, so it'll only take effect on next start.`,
-        );
+        setLastError(t("settings.recording.hd.error.engineDown", { label }));
       } else if (outcome.kind === "engine-rejected") {
         setLastError(
-          `${label} saved — but the engine rejected the live update (HTTP ${outcome.status}). Restart to apply.`,
+          t("settings.recording.hd.error.rejected", {
+            label,
+            status: outcome.status,
+          }),
         );
       }
     },
-    [onSettingsChange, pushSettings],
+    [onSettingsChange, pushSettings, t],
   );
 
   // Guard against intervalMs ever leaking through as 0 (engine clamps to
@@ -1640,9 +1674,12 @@ function HighFpsCard({
 
   const statusBadge = active
     ? sessionKind === "meeting"
-      ? `Recording at ~${fps} fps — stops when call ends`
-      : `Recording at ~${fps} fps — ${fmtRemaining(remaining)} left`
-    : "Idle";
+      ? t("settings.recording.hd.status.meeting", { fps })
+      : t("settings.recording.hd.status.timer", {
+          fps,
+          remaining: fmtRemaining(remaining, t),
+        })
+    : t("settings.recording.hd.status.idle");
 
   return (
     <Card className="border-border bg-card">
@@ -1651,15 +1688,16 @@ function HighFpsCard({
           <div className="flex items-center space-x-2.5 min-w-0">
             <Monitor className="h-4 w-4 text-muted-foreground shrink-0" />
             <div className="min-w-0">
-              <h3 className="text-sm font-medium text-foreground">HD recording for meetings</h3>
+              <h3 className="text-sm font-medium text-foreground">
+                {t("settings.recording.hd.title")}
+              </h3>
               <p className="text-xs text-muted-foreground">
-                Capture screen at higher rate during calls so you can rewatch
-                slides, demos, and shared docs. {statusBadge}.
+                {t("settings.recording.hd.description", { status: statusBadge })}
               </p>
               <p className="text-[11px] text-muted-foreground mt-1">
-                Start from the meeting-start notification, the tray menu, or{" "}
-                <code>POST /capture/hd/start</code>. Every session has a
-                natural end — no indefinite mode.
+                {t("settings.recording.hd.hintBefore")}
+                <code>POST /capture/hd/start</code>
+                {t("settings.recording.hd.hintAfter")}
               </p>
             </div>
           </div>
@@ -1670,7 +1708,7 @@ function HighFpsCard({
               disabled={busy}
               onClick={stopSession}
             >
-              Stop now
+              {t("settings.recording.hd.stop")}
             </Button>
           )}
         </div>
@@ -1684,16 +1722,16 @@ function HighFpsCard({
         <div className="pt-3 border-t border-border space-y-2.5">
           <div>
             <h4 className="text-xs font-medium text-foreground mb-1.5">
-              When a meeting starts
+              {t("settings.recording.hd.when")}
             </h4>
             <div className="flex flex-col gap-1">
               {(
                 [
-                  { v: "ask" as const, label: "Ask me", hint: "Adds an “open note + HD” action to the meeting-start notification — one click opens the note and starts HD (recommended)" },
-                  { v: "always" as const, label: "Always record at HD", hint: "Auto-start every detected meeting — more disk + CPU per call" },
-                  { v: "never" as const, label: "Never", hint: "No prompt; only the tray timer can start a session" },
-                ] satisfies Array<{ v: HdDefaultMode; label: string; hint: string }>
-              ).map(({ v, label, hint }) => (
+                  { v: "ask" as const, key: "settings.recording.hd.mode.ask" },
+                  { v: "always" as const, key: "settings.recording.hd.mode.always" },
+                  { v: "never" as const, key: "settings.recording.hd.mode.never" },
+                ] satisfies Array<{ v: HdDefaultMode; key: string }>
+              ).map(({ v, key }) => (
                 <label key={v} className="flex items-start gap-2 cursor-pointer">
                   <input
                     type="radio"
@@ -1704,13 +1742,17 @@ function HighFpsCard({
                       persistAndPush(
                         { hdRecordingDefault: v },
                         { defaultMode: v },
-                        "Meeting default",
+                        t("settings.recording.hd.label.meetingDefault"),
                       )
                     }
                   />
                   <span>
-                    <span className="text-xs text-foreground">{label}</span>
-                    <span className="block text-[11px] text-muted-foreground">{hint}</span>
+                    <span className="text-xs text-foreground">
+                      {t(`${key}.label`)}
+                    </span>
+                    <span className="block text-[11px] text-muted-foreground">
+                      {t(`${key}.hint`)}
+                    </span>
                   </span>
                 </label>
               ))}
@@ -1719,9 +1761,11 @@ function HighFpsCard({
 
           <div className="flex items-center justify-between gap-3 pt-2 border-t border-border">
             <div className="min-w-0">
-              <h4 className="text-xs font-medium text-foreground">Quality</h4>
+              <h4 className="text-xs font-medium text-foreground">
+                {t("settings.recording.hd.quality.title")}
+              </h4>
               <p className="text-[11px] text-muted-foreground">
-                Lower interval = smoother replay + more disk. ≥ 33 ms (30 fps).
+                {t("settings.recording.hd.quality.description")}
               </p>
             </div>
             <Select
@@ -1731,18 +1775,18 @@ function HighFpsCard({
                 persistAndPush(
                   { hdRecordingIntervalMs: ms },
                   { intervalMs: ms },
-                  "Capture interval",
+                  t("settings.recording.hd.label.interval"),
                 );
               }}
             >
-              <SelectTrigger className="w-[200px] h-8 text-xs">
+              <SelectTrigger className="w-[220px] h-8 text-xs">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="200">200 ms — 5 fps (light)</SelectItem>
-                <SelectItem value="100">100 ms — 10 fps (default)</SelectItem>
-                <SelectItem value="67">67 ms — 15 fps</SelectItem>
-                <SelectItem value="33">33 ms — 30 fps (max)</SelectItem>
+                <SelectItem value="200">{t("settings.recording.hd.quality.option.200")}</SelectItem>
+                <SelectItem value="100">{t("settings.recording.hd.quality.option.100")}</SelectItem>
+                <SelectItem value="67">{t("settings.recording.hd.quality.option.67")}</SelectItem>
+                <SelectItem value="33">{t("settings.recording.hd.quality.option.33")}</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -1756,14 +1800,20 @@ type RecordingSettingsSection = "audio" | "screen";
 
 export function RecordingSettings({ section }: { section: RecordingSettingsSection }) {
   const { settings, updateSettings, getDataDir, loadUser } = useSettings();
+  const t = useT();
   const [openLanguages, setOpenLanguages] = React.useState(false);
   // Dev-only: warn if searchIndex drifts from rendered headings. State-gated
   // fields are marked `conditional: true` in the index above, so no false
   // positives while they're hidden — no hardcoded allowlist here.
   const sectionRootRef = React.useRef<HTMLDivElement | null>(null);
-  const activeSearchIndex = section === "audio" ? audioSearchIndex : screenSearchIndex;
+  // Resolved in the active locale: the guard compares index labels against the
+  // headings actually painted, which are translated.
+  const activeSearchIndex = React.useMemo(
+    () => (section === "audio" ? audioSearchIndex : screenSearchIndexFor(t)),
+    [section, t],
+  );
   useSettingsIndexDriftCheck(
-    section === "audio" ? "Audio & meetings" : "Screen",
+    section === "audio" ? "Audio & meetings" : t("settings.recording.screen.group"),
     activeSearchIndex,
     sectionRootRef,
   );
@@ -2324,8 +2374,8 @@ export function RecordingSettings({ section }: { section: RecordingSettingsSecti
     // Check for validation errors
     if (Object.keys(validationErrors).length > 0) {
       toast({
-        title: "Validation errors",
-        description: "Please fix all validation errors before applying changes",
+        title: t("settings.recording.toast.validation.title"),
+        description: t("settings.recording.toast.validation.body"),
         variant: "destructive",
       });
       return;
@@ -2335,8 +2385,8 @@ export function RecordingSettings({ section }: { section: RecordingSettingsSecti
     setHasUnsavedChanges(false);
     
     toast({
-      title: "Updating recording settings",
-      description: "This may take a few moments...",
+      title: t("settings.recording.toast.updating.title"),
+      description: t("settings.recording.toast.updating.body"),
     });
 
     try {
@@ -2385,16 +2435,16 @@ export function RecordingSettings({ section }: { section: RecordingSettingsSecti
       setPendingChanges({});
 
       toast({
-        title: "Settings updated successfully",
+        title: t("settings.recording.toast.updated.title"),
         description: needsServerRestart
-          ? "Screenpipe server restarted with new settings"
-          : "Recording restarted with new settings",
+          ? t("settings.recording.toast.updated.server")
+          : t("settings.recording.toast.updated.capture"),
       });
     } catch (error) {
       console.error("Failed to update settings:", error);
       toast({
-        title: "Error updating settings",
-        description: "Please try again or check the logs for more information",
+        title: t("settings.recording.toast.error.title"),
+        description: t("settings.recording.toast.error.body"),
         variant: "destructive",
       });
       setHasUnsavedChanges(true);
@@ -2704,7 +2754,7 @@ Your screen is a pipe. Everything you see, hear, and type flows through it. Scre
       <p className="text-muted-foreground text-sm mb-4">
         {section === "audio"
           ? "Audio capture, transcription, and meeting notes"
-          : "Screen capture quality, monitors, and power"}
+          : t("settings.recording.intro")}
       </p>
 
       <div className="flex items-center justify-end">
@@ -2721,7 +2771,7 @@ Your screen is a pipe. Everything you see, hear, and type flows through it. Scre
               ) : (
                 <RefreshCw className="h-3 w-3" />
               )}
-              Apply & Restart
+              {t("settings.recording.applyRestart")}
             </Button>
           )}
       </div>
@@ -3711,7 +3761,9 @@ Your screen is a pipe. Everything you see, hear, and type flows through it. Scre
       {/* Screen */}
       <LockedSetting settingKey="screen_recording">
       <div className="space-y-2 pt-2">
-        <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider px-1">Screen</h2>
+        <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider px-1">
+          {t("settings.recording.screen.group")}
+        </h2>
 
         {/* Screen context capture toggle */}
         <Card className="border-border bg-card">
@@ -3720,8 +3772,12 @@ Your screen is a pipe. Everything you see, hear, and type flows through it. Scre
               <div className="flex items-center space-x-2.5">
                 <Monitor className="h-4 w-4 text-muted-foreground shrink-0" />
                 <div>
-                  <h3 className="text-sm font-medium text-foreground">Screen context capture</h3>
-                  <p className="text-xs text-muted-foreground">Capture app/window context, accessibility text, screenshot images, and OCR fallback</p>
+                  <h3 className="text-sm font-medium text-foreground">
+                    {t("settings.recording.screenContext.title")}
+                  </h3>
+                  <p className="text-xs text-muted-foreground">
+                    {t("settings.recording.screenContext.description")}
+                  </p>
                 </div>
               </div>
               <ManagedSwitch settingKey="disableVision" id="disableVision" checked={!settings.disableVision} onCheckedChange={(checked) => handleSettingsChange({ disableVision: !checked }, true)} />
@@ -3738,13 +3794,17 @@ Your screen is a pipe. Everything you see, hear, and type flows through it. Scre
                     <AppWindowMac className="h-4 w-4 text-muted-foreground shrink-0" />
                     <div className="min-w-0">
                       <h3 className="text-sm font-medium text-foreground flex items-center gap-1.5">
-                        Structured app context
-                        <Badge variant="secondary" aria-label="Experimental" className="px-1.5 py-0 text-[10px] font-medium">
-                          Experimental
+                        {t("settings.recording.semantic.title")}
+                        <Badge
+                          variant="secondary"
+                          aria-label={t("settings.recording.semantic.badge")}
+                          className="px-1.5 py-0 text-[10px] font-medium"
+                        >
+                          {t("settings.recording.semantic.badge")}
                         </Badge>
                       </h3>
                       <p className="text-xs text-muted-foreground">
-                        Turn what Screenpipe already captures into a clearer view for AI. Nothing is recorded twice.
+                        {t("settings.recording.semantic.description")}
                       </p>
                     </div>
                   </div>
@@ -3776,8 +3836,7 @@ Your screen is a pipe. Everything you see, hear, and type flows through it. Scre
 
                 {semanticContextRemotePolicy.forceDisabled && (
                   <p className="border-t border-border pt-3 text-xs text-muted-foreground">
-                    Temporarily disabled by the remote safety control. Your
-                    preference is preserved.
+                    {t("settings.recording.semantic.remoteDisabled")}
                   </p>
                 )}
 
@@ -3787,14 +3846,14 @@ Your screen is a pipe. Everything you see, hear, and type flows through it. Scre
                     <div className="flex flex-col gap-3 border-t border-border pt-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
                       <div className="min-w-0">
                         <label htmlFor="semanticContextMode" className="text-xs font-medium text-foreground">
-                          Use it for
+                          {t("settings.recording.semantic.mode.label")}
                         </label>
                         <p className="text-xs text-muted-foreground mt-0.5">
-                          {
-                            SEMANTIC_CONTEXT_MODE_COPY[
+                          {t(
+                            `settings.recording.semantic.mode.${
                               (settings.semanticContextMode ?? "memory") as SemanticContextMode
-                            ].description
-                          }
+                            }.description`,
+                          )}
                         </p>
                       </div>
                       <Select
@@ -3807,9 +3866,15 @@ Your screen is a pipe. Everything you see, hear, and type flows through it. Scre
                           <SelectValue className="min-w-0 flex-1 truncate text-left" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="memory">{SEMANTIC_CONTEXT_MODE_COPY.memory.label}</SelectItem>
-                          <SelectItem value="computerUse">{SEMANTIC_CONTEXT_MODE_COPY.computerUse.label}</SelectItem>
-                          <SelectItem value="both">{SEMANTIC_CONTEXT_MODE_COPY.both.label}</SelectItem>
+                          <SelectItem value="memory">
+                            {t("settings.recording.semantic.mode.memory.label")}
+                          </SelectItem>
+                          <SelectItem value="computerUse">
+                            {t("settings.recording.semantic.mode.computerUse.label")}
+                          </SelectItem>
+                          <SelectItem value="both">
+                            {t("settings.recording.semantic.mode.both.label")}
+                          </SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
@@ -3827,8 +3892,12 @@ Your screen is a pipe. Everything you see, hear, and type flows through it. Scre
                 <div className="flex items-center space-x-2.5">
                   <Monitor className="h-4 w-4 text-muted-foreground shrink-0" />
                   <div>
-                    <h3 className="text-sm font-medium text-foreground">Screen recording</h3>
-                    <p className="text-xs text-muted-foreground">Record screen pixels for the timeline and image-only text. Turn this off to stop screen recording; accessibility text stays searchable.</p>
+                    <h3 className="text-sm font-medium text-foreground">
+                      {t("settings.recording.screenshots.title")}
+                    </h3>
+                    <p className="text-xs text-muted-foreground">
+                      {t("settings.recording.screenshots.description")}
+                    </p>
                   </div>
                 </div>
                 <ManagedSwitch
@@ -3850,8 +3919,12 @@ Your screen is a pipe. Everything you see, hear, and type flows through it. Scre
                 <div className="flex items-center space-x-2.5">
                   <Monitor className="h-4 w-4 text-muted-foreground shrink-0" />
                   <div>
-                    <h3 className="text-sm font-medium text-foreground">Use all monitors</h3>
-                    <p className="text-xs text-muted-foreground">Capture screenshot images from all available monitors</p>
+                    <h3 className="text-sm font-medium text-foreground">
+                      {t("settings.recording.allMonitors.title")}
+                    </h3>
+                    <p className="text-xs text-muted-foreground">
+                      {t("settings.recording.allMonitors.description")}
+                    </p>
                   </div>
                 </div>
                 <Switch id="useAllMonitors" checked={settings.useAllMonitors} onCheckedChange={(checked) => handleSettingsChange({ useAllMonitors: checked }, true)} />
@@ -3868,7 +3941,9 @@ Your screen is a pipe. Everything you see, hear, and type flows through it. Scre
             <CardContent className="px-3 py-2.5">
               <div className="flex items-center space-x-2.5 mb-3">
                 <Monitor className="h-4 w-4 text-muted-foreground shrink-0" />
-                <h3 className="text-sm font-medium text-foreground">Monitors</h3>
+                <h3 className="text-sm font-medium text-foreground">
+                  {t("settings.recording.monitors.title")}
+                </h3>
               </div>
 
               <div className="flex items-end justify-center gap-6 py-2">
@@ -3892,7 +3967,7 @@ Your screen is a pipe. Everything you see, hear, and type flows through it. Scre
                     )}
                   </svg>
                   <span className={cn("text-[11px] font-medium", settings.monitorIds.includes("default") ? "text-foreground" : "text-muted-foreground")}>
-                    Default
+                    {t("settings.recording.monitors.default")}
                   </span>
                 </button>
 
@@ -3920,7 +3995,10 @@ Your screen is a pipe. Everything you see, hear, and type flows through it. Scre
                       </svg>
                       <div className="text-center">
                         <span className={cn("text-[11px] font-medium block", isSelected ? "text-foreground" : "text-muted-foreground")}>
-                          {monitor.name || `Monitor ${monitor.id}`}
+                          {monitor.name ||
+                            t("settings.recording.monitors.fallbackName", {
+                              id: monitor.id,
+                            })}
                         </span>
                         <p className="text-[10px] text-muted-foreground">{monitor.width}x{monitor.height}</p>
                       </div>
@@ -3940,9 +4018,11 @@ Your screen is a pipe. Everything you see, hear, and type flows through it. Scre
                 <div className="flex items-center space-x-2.5 min-w-0">
                   <Monitor className="h-4 w-4 text-muted-foreground shrink-0" />
                   <div className="min-w-0">
-                    <h3 className="text-sm font-medium text-foreground">Recording quality</h3>
+                    <h3 className="text-sm font-medium text-foreground">
+                      {t("settings.recording.quality.title")}
+                    </h3>
                     <p className="text-xs text-muted-foreground">
-                      Pick "high" or "max" if your text looks blurry on a 4K / ultrawide. Higher = crisper + larger files.
+                      {t("settings.recording.quality.description")}
                     </p>
                   </div>
                 </div>
@@ -3950,14 +4030,17 @@ Your screen is a pipe. Everything you see, hear, and type flows through it. Scre
                   value={settings.videoQuality || "balanced"}
                   onValueChange={(value) => handleSettingsChange({ videoQuality: value }, true)}
                 >
-                  <SelectTrigger className="w-[180px] h-8 text-xs">
-                    <SelectValue />
+                  {/* 270px, not 220: the Russian option carries the same
+                      resolution plus «по умолчанию» and clipped at 220. The
+                      content column has the room; the label keeps the fact. */}
+                  <SelectTrigger className="w-[270px] h-8 text-xs">
+                    <SelectValue className="min-w-0 flex-1 truncate text-left" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="low">low — 1280px, smallest</SelectItem>
-                    <SelectItem value="balanced">balanced — 1920px (default)</SelectItem>
-                    <SelectItem value="high">high — 3840px, ultrawide-safe</SelectItem>
-                    <SelectItem value="max">max — native, no downscale</SelectItem>
+                    <SelectItem value="low">{t("settings.recording.quality.option.low")}</SelectItem>
+                    <SelectItem value="balanced">{t("settings.recording.quality.option.balanced")}</SelectItem>
+                    <SelectItem value="high">{t("settings.recording.quality.option.high")}</SelectItem>
+                    <SelectItem value="max">{t("settings.recording.quality.option.max")}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -3982,17 +4065,22 @@ Your screen is a pipe. Everything you see, hear, and type flows through it. Scre
                 <div className="flex items-center space-x-2.5 mb-2">
                   <Monitor className="h-4 w-4 text-muted-foreground shrink-0" />
                   <div className="min-w-0">
-                    <h3 className="text-sm font-medium text-foreground">Capture frequency</h3>
+                    <h3 className="text-sm font-medium text-foreground">
+                      {t("settings.recording.frequency.title")}
+                    </h3>
                     <p className="text-xs text-muted-foreground">
-                      Always take a screenshot at least this often, even when the screen
-                      isn&apos;t changing. Lower = fewer missed moments + more disk used.
+                      {t("settings.recording.frequency.description")}
                     </p>
                   </div>
                 </div>
                 <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-xs text-muted-foreground">Minimum interval</span>
+                  <span className="text-xs text-muted-foreground">
+                    {t("settings.recording.frequency.minimum")}
+                  </span>
                   <span className="text-xs font-mono text-foreground">
-                    {seconds === 0 ? "auto (power profile)" : `every ${seconds}s`}
+                    {seconds === 0
+                      ? t("settings.recording.frequency.auto")
+                      : t("settings.recording.frequency.every", { count: seconds })}
                   </span>
                 </div>
                 <Slider
@@ -4013,8 +4101,8 @@ Your screen is a pipe. Everything you see, hear, and type flows through it. Scre
                   className="w-full"
                 />
                 <div className="flex justify-between text-[10px] text-muted-foreground mt-0.5">
-                  <span>auto</span>
-                  <span>every 10s</span>
+                  <span>{t("settings.recording.frequency.autoShort")}</span>
+                  <span>{t("settings.recording.frequency.every", { count: 10 })}</span>
                 </div>
                 <CaptureFrequencyPreview seconds={seconds} />
               </CardContent>
@@ -4040,7 +4128,9 @@ Your screen is a pipe. Everything you see, hear, and type flows through it. Scre
 
       {/* System */}
       <div className="space-y-2 pt-2">
-        <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider px-1">System</h2>
+        <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider px-1">
+          {t("settings.recording.system.group")}
+        </h2>
 
         <Card className="border-border bg-card">
           <CardContent className="px-3 py-2.5">
@@ -4048,8 +4138,12 @@ Your screen is a pipe. Everything you see, hear, and type flows through it. Scre
               <div className="flex items-center space-x-2.5">
                 <Globe className="h-4 w-4 text-muted-foreground shrink-0" />
                 <div>
-                  <h3 className="text-sm font-medium text-foreground">Chinese mirror</h3>
-                  <p className="text-xs text-muted-foreground">For users in China</p>
+                  <h3 className="text-sm font-medium text-foreground">
+                    {t("settings.recording.chineseMirror.title")}
+                  </h3>
+                  <p className="text-xs text-muted-foreground">
+                    {t("settings.recording.chineseMirror.description")}
+                  </p>
                 </div>
               </div>
               <Switch id="useChineseMirror" checked={settings.useChineseMirror} onCheckedChange={handleChineseMirrorToggle} />
@@ -4065,8 +4159,12 @@ Your screen is a pipe. Everything you see, hear, and type flows through it. Scre
         <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2.5 [&::-webkit-details-marker]:hidden">
           <Zap className="h-4 w-4 shrink-0 text-muted-foreground" />
           <div>
-            <h2 className="text-sm font-medium text-foreground">Power &amp; battery</h2>
-            <p className="text-xs text-muted-foreground">Battery-aware capture and keep-awake behavior</p>
+            <h2 className="text-sm font-medium text-foreground">
+              {t("settings.recording.power.title")}
+            </h2>
+            <p className="text-xs text-muted-foreground">
+              {t("settings.recording.power.description")}
+            </p>
           </div>
         </summary>
         <div className="border-t border-border px-3 py-3">
@@ -4125,7 +4223,7 @@ Your screen is a pipe. Everything you see, hear, and type flows through it. Scre
         onApply={handleUpdate}
         isUpdating={isUpdating}
         disabled={Object.keys(validationErrors).length > 0}
-        message="unsaved recording changes. restart to apply."
+        message={t("settings.recording.unsavedBar")}
       />
     </div>
   );

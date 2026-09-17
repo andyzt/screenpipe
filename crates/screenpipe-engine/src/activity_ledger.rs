@@ -19,7 +19,9 @@ use std::path::Path;
 use tracing::debug;
 
 pub const ACTIVITY_LEDGER_PRODUCER: &str = "deterministic-v1";
-const UNOBSERVED_GAP: ChronoDuration = ChronoDuration::minutes(5);
+/// Shared with `/activity-summary` and the journal through `journal::time`, so
+/// "the screen went quiet" means the same number of minutes everywhere.
+use crate::journal::time::IDLE_GAP as UNOBSERVED_GAP;
 const LIVE_TAIL: ChronoDuration = ChronoDuration::minutes(1);
 const FINALIZATION_DELAY: ChronoDuration = ChronoDuration::minutes(5);
 
@@ -345,21 +347,21 @@ fn identity_for(observation: &ActivityLedgerObservation) -> TaskIdentity {
             let title = Path::new(path)
                 .file_name()
                 .and_then(|value| value.to_str())
-                .map(|value| clean_label(value, 200))
+                .map(|value| normalize_title(&clean_label(value, 200)))
                 .filter(|value| !value.is_empty())
                 .unwrap_or_else(|| app.clone());
             (format!("document|{}", path), title, 0.85)
         } else if let Some(title) = observation
             .window_title
             .as_deref()
-            .map(|value| clean_label(value, 200))
+            .map(|value| normalize_title(&clean_label(value, 200)))
             .filter(|value| meaningful_title(value, &app))
         {
             (format!("window|{}", title), title, 0.8)
         } else if let Some(title) = observation
             .semantic_title
             .as_deref()
-            .map(|value| clean_label(value, 200))
+            .map(|value| normalize_title(&clean_label(value, 200)))
             .filter(|value| meaningful_title(value, &app))
         {
             let key = observation
@@ -543,6 +545,133 @@ fn clean_label(value: &str, max_chars: usize) -> String {
         .collect()
 }
 
+/// Characters a window title uses as animation or status ornament rather than
+/// content: every braille spinner frame, the quadrant and clock spinners, the
+/// asterisk family agent CLIs animate, and the box/block/arrow ornaments that
+/// draw progress bars in a title bar.
+fn is_ornament(character: char) -> bool {
+    matches!(character,
+        '\u{2800}'..='\u{28FF}'   // braille patterns — every spinner frame
+        | '\u{2190}'..='\u{21FF}'  // arrows
+        | '\u{2500}'..='\u{259F}'  // box drawing and block elements
+        | '\u{25B6}' | '\u{25B8}' | '\u{25C0}' | '\u{25C2}'
+        | '\u{25CB}'..='\u{25D3}'  // ○◌◍◎● and ◐◑◒◓
+        | '\u{25F4}'..='\u{25F7}'  // ◴◵◶◷
+        | '\u{2731}'..='\u{2736}'  // ✱✲✳✴✵✶
+        | '\u{2022}' | '\u{2219}'
+        | '\u{23F0}'..='\u{23FF}'  // ⏳ ⏱ and friends
+        | '\u{2699}' | '\u{26A1}' | '\u{2705}' | '\u{2714}' | '\u{2716}' | '\u{274C}'
+    )
+}
+
+/// A token that is decoration or a live counter rather than part of the task:
+/// a bare ornament, a `[3/10]` progress fragment, `42%`, a bracketed `(12)`
+/// unread count, or an elapsed `00:12` / `1:02:33` timer.
+///
+/// `trailing` says the token is the last thing in the title with nothing
+/// decorative beside it. There a two-part `10:30` is far more often a time the
+/// task is named after — "Standup at 10:30", "Ship by 17:00" — than a running
+/// clock, and stripping it left the ledger keying a title that ends in a
+/// preposition. Only the three-part `1:02:33` form is unambiguous enough to
+/// drop from the end on its own.
+fn is_status_token(token: &str, trailing: bool) -> bool {
+    if token.is_empty() || token.chars().all(is_ornament) {
+        return true;
+    }
+    let core = token.trim_matches(|character: char| "()[]{}<>".contains(character));
+    if core.is_empty() {
+        return false;
+    }
+    let digits = |value: &str| !value.is_empty() && value.chars().all(|c| c.is_ascii_digit());
+
+    if let Some(number) = core.strip_suffix('%') {
+        if !number.is_empty()
+            && number.chars().all(|c| c.is_ascii_digit() || c == '.')
+            && number.chars().any(|c| c.is_ascii_digit())
+        {
+            return true;
+        }
+    }
+    if let Some((done, total)) = core.split_once('/') {
+        if digits(done) && digits(total) {
+            return true;
+        }
+    }
+    // A bare number is only a counter when something bracketed it: "Issue 42"
+    // is a title, "(42)" is an unread badge.
+    if core != token && digits(core) {
+        return true;
+    }
+    let parts: Vec<&str> = core.split(':').collect();
+    let clock = parts.len() >= 2 && parts.iter().all(|part| digits(part) && part.len() <= 2);
+    if clock && (!trailing || parts.len() >= 3) {
+        return true;
+    }
+    false
+}
+
+/// Punctuation left dangling once a status token next to it is gone
+/// (`Build — 42%` → `Build`).
+fn is_separator_token(token: &str) -> bool {
+    !token.is_empty()
+        && token
+            .chars()
+            .all(|character| "—–-·|:,.•".contains(character))
+}
+
+/// Strip animation and status decoration from a window title so the same task
+/// keys to the same identity from one second to the next.
+///
+/// Titles that animate — an agent CLI spinner, a progress bar, an unread badge,
+/// an elapsed timer — otherwise make every captured second its own task, its
+/// own interval and its own line in the journal prompt. Only the edges are
+/// trimmed: whatever sits between the ornaments is the task and is left
+/// exactly as the window reported it.
+pub(crate) fn normalize_title(value: &str) -> String {
+    let raw: Vec<&str> = value.split_whitespace().collect();
+    // Whether the title ends in an ornament — "Build 12:34 ⣾" or
+    // "Build 12:34⣾". The ornament itself is about to be trimmed away, and
+    // the trailing loop below needs to know it was there.
+    let decorated_tail = raw
+        .last()
+        .is_some_and(|token| token.trim_end_matches(is_ornament) != *token);
+    let mut tokens: Vec<&str> = raw
+        .iter()
+        .map(|token| token.trim_matches(is_ornament))
+        .filter(|token| !token.is_empty())
+        .collect();
+    // A timer at the head of a title is always a timer: nothing is named
+    // "10:30 Standup".
+    while tokens
+        .first()
+        .is_some_and(|token| is_status_token(token, false) || is_separator_token(token))
+    {
+        tokens.remove(0);
+    }
+    // At the tail it depends on the company it keeps: `01:23` is decoration
+    // next to other decoration ("deploy [3/10] 01:23", "Build 12:34 ⣾") and a
+    // clock time on its own ("Standup at 10:30").
+    let mut glyph_after = decorated_tail;
+    while let Some(&last) = tokens.last() {
+        if is_separator_token(last) {
+            tokens.pop();
+            continue;
+        }
+        let decorated = glyph_after
+            || tokens
+                .len()
+                .checked_sub(2)
+                .and_then(|index| tokens.get(index).copied())
+                .is_some_and(|token| is_status_token(token, false));
+        if !is_status_token(last, !decorated) {
+            break;
+        }
+        tokens.pop();
+        glyph_after = true;
+    }
+    tokens.join(" ")
+}
+
 fn meaningful_title(value: &str, app: &str) -> bool {
     !value.is_empty()
         && !value.eq_ignore_ascii_case(app)
@@ -701,6 +830,117 @@ mod tests {
             ),
             "accounts.screenpipe.com/sign-in"
         );
+    }
+
+    #[test]
+    fn animated_window_titles_normalize_to_one_key() {
+        // Raw title → the title the ledger keys and displays. The first row is
+        // the iTerm2 spinner from the 2026-09-16 live export, which by itself
+        // produced ~96 % of that day's ledger intervals.
+        let cases = [
+            (
+                "◐ Screenpipe MVP implementation plan",
+                "Screenpipe MVP implementation plan",
+            ),
+            (
+                "◑ Screenpipe MVP implementation plan",
+                "Screenpipe MVP implementation plan",
+            ),
+            (
+                "✳ Screenpipe MVP implementation plan",
+                "Screenpipe MVP implementation plan",
+            ),
+            (
+                "⠋ Screenpipe MVP implementation plan",
+                "Screenpipe MVP implementation plan",
+            ),
+            (
+                "⣾  Screenpipe MVP   implementation plan  ",
+                "Screenpipe MVP implementation plan",
+            ),
+            ("Telegram (3)", "Telegram"),
+            ("(12) Telegram — private chat", "Telegram — private chat"),
+            (
+                "[2/7] building screenpipe-engine",
+                "building screenpipe-engine",
+            ),
+            ("00:12 — Zoom Meeting", "Zoom Meeting"),
+            ("Exporting fixtures — 42%", "Exporting fixtures"),
+            // A trailing timer next to other decoration is decoration too.
+            ("◐ deploy [3/10] 01:23", "deploy"),
+            ("Build 12:34 ⣾", "Build"),
+            ("Rendering 1:02:33", "Rendering"),
+            // …and on its own it is a time the task is named after. Keying
+            // "Standup at" was worse than keying the clock: the title the user
+            // reads in their journal ended in a preposition.
+            ("Standup at 10:30", "Standup at 10:30"),
+            ("Recording 12:31", "Recording 12:31"),
+            ("Ship by 17:00", "Ship by 17:00"),
+            // Normal titles are left exactly as the window reported them.
+            ("day.rs — screenpipe", "day.rs — screenpipe"),
+            ("-bash", "-bash"),
+            (
+                "Activity Monitor – My Processes",
+                "Activity Monitor – My Processes",
+            ),
+            ("Issue 42: token refresh", "Issue 42: token refresh"),
+            // Nothing but ornament leaves nothing, and the caller falls back.
+            ("◐", ""),
+        ];
+        for (raw, expected) in cases {
+            assert_eq!(normalize_title(raw), expected, "normalizing {raw:?}");
+        }
+    }
+
+    #[test]
+    fn a_title_that_is_only_a_spinner_falls_back_to_the_app() {
+        let mut observation = frame(1, "2026-08-17T09:00:00Z", "iTerm2", "◑");
+        let identity = identity_for(&observation);
+        assert_eq!(identity.task_title, "Using iTerm2");
+        assert_eq!(identity.confidence(), 0.6);
+
+        observation.window_title = Some("◑ Screenpipe MVP implementation plan".to_string());
+        let named = identity_for(&observation);
+        assert_eq!(named.task_title, "Screenpipe MVP implementation plan");
+        assert_ne!(named.task_key, identity.task_key);
+    }
+
+    #[test]
+    fn a_rotating_spinner_title_is_one_interval_not_sixty() {
+        // One minute of the iTerm2 agent CLI: the glyph changes every second,
+        // the task does not.
+        let spinners = [
+            '\u{25D0}', '\u{25D1}', '\u{25D2}', '\u{25D3}', '\u{2733}', '\u{280B}',
+        ];
+        let observations: Vec<ActivityLedgerObservation> = (0..60)
+            .map(|second| {
+                frame(
+                    second + 1,
+                    &format!("2026-08-17T09:00:{second:02}Z"),
+                    "iTerm2",
+                    &format!(
+                        "{} Screenpipe MVP implementation plan",
+                        spinners[second as usize % spinners.len()]
+                    ),
+                )
+            })
+            .collect();
+
+        let (tasks, intervals) = build_ledger(
+            observations,
+            at("2026-08-17T09:00:00Z"),
+            at("2026-08-17T09:01:00Z"),
+        );
+
+        assert_eq!(intervals.len(), 1, "one task, one interval");
+        assert_eq!(intervals[0].start_at, at("2026-08-17T09:00:00Z"));
+        assert_eq!(intervals[0].end_at, at("2026-08-17T09:01:00Z"));
+        let task = tasks
+            .iter()
+            .find(|task| task.task_key == intervals[0].task_key)
+            .expect("the interval's task is registered");
+        assert_eq!(task.title, "Screenpipe MVP implementation plan");
+        assert_eq!(tasks.iter().filter(|task| task.kind == "task").count(), 1);
     }
 
     #[test]

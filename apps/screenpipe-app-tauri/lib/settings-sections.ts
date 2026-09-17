@@ -18,6 +18,7 @@ export type SettingsSection =
   | "ai"
   | "ai-settings"
   | "activities"
+  | "journal"
   | "general"
   | "display"
   | "shortcuts"
@@ -31,10 +32,36 @@ export type SettingsSection =
   | "speakers";
 
 export const ALL_SETTINGS_SECTIONS: SettingsSection[] = [
-  "display", "general", "ai", "ai-settings", "activities", "recording", "audio", "shortcuts", "notifications",
+  "display", "general", "ai", "ai-settings", "journal", "activities", "recording", "audio", "shortcuts", "notifications",
   "usage", "privacy", "permissions", "storage", "speakers",
   "team", "account", "referral",
 ];
+
+/**
+ * Sections kept out of the Settings nav and out of settings search.
+ *
+ * They only configure features that are off the default path (Meetings and
+ * transcription, speaker identification, the Activity ledger). Nothing is
+ * deleted: the ids stay canonical, `/settings?section=audio` still opens the
+ * real section, and dropping an id from this list puts the row back.
+ */
+export const HIDDEN_SETTINGS_SECTIONS: readonly SettingsSection[] = [
+  "audio",
+  "speakers",
+  "activities",
+  // Cloud-account surfaces: this build ships without a screenpipe account.
+  "usage",
+  "team",
+  "account",
+  "referral",
+];
+
+export function isHiddenSettingsSection(value: unknown): boolean {
+  return (
+    isSettingsSection(value) &&
+    HIDDEN_SETTINGS_SECTIONS.includes(value)
+  );
+}
 
 /** Retired section ids that still arrive from old deep links and notifications. */
 const LEGACY_SECTION_ALIASES: Record<string, SettingsSection> = {
@@ -51,7 +78,7 @@ const LEGACY_SECTION_ALIASES: Record<string, SettingsSection> = {
  * deliberate clicks. Screen is the most-chosen section, so it is the honest
  * fallback when there is no history to restore.
  */
-export const DEFAULT_SETTINGS_SECTION: SettingsSection = "recording";
+export const DEFAULT_SETTINGS_SECTION: SettingsSection = "journal";
 
 const LAST_SECTION_STORAGE_KEY = "screenpipe:settings:last-section";
 
@@ -105,7 +132,11 @@ export function readLastSettingsSection(
 ): SettingsSection {
   try {
     const stored = storage?.getItem(LAST_SECTION_STORAGE_KEY);
-    return isSettingsSection(stored) ? stored : DEFAULT_SETTINGS_SECTION;
+    // A section that is no longer in the nav must not become the landing page
+    // — the user would open Settings onto a row they cannot navigate back to.
+    return isSettingsSection(stored) && !isHiddenSettingsSection(stored)
+      ? stored
+      : DEFAULT_SETTINGS_SECTION;
   } catch {
     return DEFAULT_SETTINGS_SECTION;
   }

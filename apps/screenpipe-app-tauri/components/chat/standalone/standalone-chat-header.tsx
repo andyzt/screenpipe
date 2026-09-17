@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 import type { Message } from "@/lib/chat/types";
 import { useChatStore } from "@/lib/stores/chat-store";
 import { resolveVisibleChatTitle } from "@/lib/chat/conversation-title";
+import { useT } from "@/lib/i18n";
 
 interface StandaloneChatHeaderProps {
   className?: string;
@@ -66,6 +67,7 @@ export function StandaloneChatHeader({
   onNewChat,
   pendingUserText,
 }: StandaloneChatHeaderProps) {
+  const t = useT();
   const storeTitle = useChatStore((s) =>
     conversationId ? s.sessions[conversationId]?.title : undefined
   );
@@ -131,7 +133,7 @@ export function StandaloneChatHeader({
             setShowHistory(!showHistory);
           }}
           className="relative z-10 h-7 w-7"
-          title="Chat history"
+          title={t("chat.header.historyTooltip")}
         >
           <History size={14} />
         </Button>
@@ -163,10 +165,10 @@ export function StandaloneChatHeader({
               await onNewChat();
             }}
             className="relative z-10 h-7 px-3 gap-1.5 text-xs bg-foreground text-background hover:bg-background hover:text-foreground transition-colors duration-150"
-            title="New chat"
+            title={t("chat.header.newChatTooltip")}
           >
             <Plus size={14} />
-            <span>New</span>
+            <span>{t("chat.header.newChat")}</span>
           </Button>
           {!settings.disabledShortcuts.includes("showChatShortcut") &&
           settings.showChatShortcut ? (

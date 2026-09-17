@@ -35,6 +35,7 @@ import { AppFilterList } from "./app-filter-list";
 import { CategorySwitches } from "./category-switches";
 import { appIconUrl } from "./icon-urls";
 import { WebsiteRuleList, type ObservedDomain } from "./website-filter-list";
+import { useT } from "@/lib/i18n";
 
 export interface ContentFiltersCardProps {
 	rules: WindowRules;
@@ -80,6 +81,7 @@ export function ContentFiltersCard({
 	onTargetsChange,
 	onBrowse,
 }: ContentFiltersCardProps) {
+	const t = useT();
 	const [tab, setTab] = useState<"apps" | "websites">("apps");
 	const [showRules, setShowRules] = useState(false);
 
@@ -121,7 +123,9 @@ export function ContentFiltersCard({
 				label: scoped,
 				icon: AppWindowMac,
 				iconUrl: appIconUrl(window.app_name),
-				description: `only this window of ${window.app_name}`,
+				description: t("settings.privacy.filters.onlyWindowOf", {
+					app: window.app_name,
+				}),
 			});
 		}
 
@@ -138,7 +142,7 @@ export function ContentFiltersCard({
 		}
 
 		return options;
-	}, [observedWindows, rules]);
+	}, [observedWindows, rules, t]);
 
 	const advancedIgnored = useMemo(() => advancedRules(rules.ignored), [rules.ignored]);
 	const advancedIncluded = useMemo(() => advancedRules(rules.included), [rules.included]);
@@ -180,14 +184,15 @@ export function ContentFiltersCard({
 				<Tabs value={tab} onValueChange={(next) => setTab(next as "apps" | "websites")}>
 					<TabsList className="mb-2.5">
 						<TabsTrigger value="apps" className="text-[12px]" data-testid="privacy-tab-apps">
-							Apps{excludedCount > 0 ? ` (${excludedCount})` : ""}
+							{t("settings.privacy.filters.tab.apps")}
+							{excludedCount > 0 ? ` (${excludedCount})` : ""}
 						</TabsTrigger>
 						<TabsTrigger
 							value="websites"
 							className="text-[12px]"
 							data-testid="privacy-tab-websites"
 						>
-							Websites
+							{t("settings.privacy.filters.tab.websites")}
 							{ignoredUrls.length + includedUrls.length > 0
 								? ` (${ignoredUrls.length + includedUrls.length})`
 								: ""}
@@ -196,7 +201,7 @@ export function ContentFiltersCard({
 
 					<TabsContent value="apps" className="mt-0 space-y-2">
 						<p className="text-[11px] text-muted-foreground">
-							Switch an app off to stop recording it. Everything else keeps being captured.
+							{t("settings.privacy.filters.apps.description")}
 						</p>
 
 						{allowlistActive && (
@@ -204,8 +209,7 @@ export function ContentFiltersCard({
 								className="rounded-md border border-border bg-muted/40 px-2 py-1.5 text-[11px] text-muted-foreground"
 								data-testid="privacy-allowlist-notice"
 							>
-								An allowlist is active, so only the apps switched on are recorded. Clear the
-								&ldquo;only capture these&rdquo; rules below to go back to capturing everything.
+								{t("settings.privacy.filters.allowlistNotice")}
 							</p>
 						)}
 
@@ -227,7 +231,7 @@ export function ContentFiltersCard({
 								<ChevronRight
 									className={cn("h-3 w-3 transition-transform", showRules && "rotate-90")}
 								/>
-								Window rules
+								{t("settings.privacy.filters.windowRules")}
 								{advancedIgnored.length + advancedIncluded.length > 0 &&
 									` (${advancedIgnored.length + advancedIncluded.length})`}
 							</button>
@@ -236,8 +240,8 @@ export function ContentFiltersCard({
 								<div className="mt-2 space-y-3 border-l border-border pl-3">
 									<div className="space-y-1.5">
 										<h4 className="flex items-center gap-1.5 text-[12px] font-medium text-foreground">
-											Skip specific windows
-											<HelpTooltip text="Narrower than switching off a whole app. 'Slack::#hr' skips only that channel; '::confidential' skips any window whose title contains the word, in any app." />
+											{t("settings.privacy.filters.skipWindows.title")}
+											<HelpTooltip text={t("settings.privacy.filters.skipWindows.tooltip")} />
 										</h4>
 										<div data-testid="privacy-ignored-apps-select">
 											<MultiSelect
@@ -245,7 +249,7 @@ export function ContentFiltersCard({
 												defaultValue={advancedIgnored}
 												value={advancedIgnored}
 												onValueChange={(next) => handleAdvancedChange(next, "ignored")}
-												placeholder="e.g. Slack::#hr"
+												placeholder={t("settings.privacy.filters.skipWindows.placeholder")}
 												allowCustomValues
 											/>
 										</div>
@@ -253,8 +257,8 @@ export function ContentFiltersCard({
 
 									<div className="space-y-1.5">
 										<h4 className="flex items-center gap-1.5 text-[12px] font-medium text-foreground">
-											Only capture these
-											<HelpTooltip text="Leave empty to capture everything except what you switched off. Adding entries turns capture into an allowlist: 'Slack::#engineering' keeps only that channel of Slack and leaves other apps alone." />
+											{t("settings.privacy.filters.onlyCapture.title")}
+											<HelpTooltip text={t("settings.privacy.filters.onlyCapture.tooltip")} />
 										</h4>
 										<div data-testid="privacy-included-apps-select">
 											<MultiSelect
@@ -262,7 +266,7 @@ export function ContentFiltersCard({
 												defaultValue={advancedIncluded}
 												value={advancedIncluded}
 												onValueChange={(next) => handleAdvancedChange(next, "included")}
-												placeholder="Optional allowlist..."
+												placeholder={t("settings.privacy.filters.onlyCapture.placeholder")}
 												allowCustomValues
 											/>
 										</div>
@@ -275,7 +279,8 @@ export function ContentFiltersCard({
 											className="h-7 gap-1.5 text-[11px]"
 											onClick={() => onBrowse("ignored")}
 										>
-											<FolderTree className="h-3 w-3" /> browse to skip
+											<FolderTree className="h-3 w-3" />{" "}
+											{t("settings.privacy.filters.browseSkip")}
 										</Button>
 										<Button
 											variant="outline"
@@ -283,7 +288,8 @@ export function ContentFiltersCard({
 											className="h-7 gap-1.5 text-[11px]"
 											onClick={() => onBrowse("included")}
 										>
-											<FolderTree className="h-3 w-3" /> browse to allow
+											<FolderTree className="h-3 w-3" />{" "}
+											{t("settings.privacy.filters.browseAllow")}
 										</Button>
 									</div>
 								</div>
@@ -293,10 +299,11 @@ export function ContentFiltersCard({
 
 					<TabsContent value="websites" className="mt-0 space-y-2">
 						<div className="space-y-1.5">
-							<h4 className="text-[12px] font-medium">Only record these websites</h4>
+							<h4 className="text-[12px] font-medium">
+								{t("settings.privacy.filters.websites.allow.title")}
+							</h4>
 							<p className="text-[11px] text-muted-foreground">
-								When this list is non-empty, browser capture is restricted to matching hostnames.
-								Native apps and tabs whose URL cannot be verified are not recorded.
+								{t("settings.privacy.filters.websites.allow.description")}
 							</p>
 							<WebsiteRuleList
 								rules={includedUrls}
@@ -307,10 +314,11 @@ export function ContentFiltersCard({
 						</div>
 
 						<div className="space-y-1.5 border-t border-border pt-2">
-							<h4 className="text-[12px] font-medium">Always skip these websites</h4>
+							<h4 className="text-[12px] font-medium">
+								{t("settings.privacy.filters.websites.block.title")}
+							</h4>
 							<p className="text-[11px] text-muted-foreground">
-								Block rules take priority over the allowlist. Choose exact domain matching or
-								include its subdomains; optional exceptions stay visible on the rule.
+								{t("settings.privacy.filters.websites.block.description")}
 							</p>
 							<WebsiteRuleList
 								rules={ignoredUrls}

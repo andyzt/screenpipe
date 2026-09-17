@@ -17,6 +17,13 @@ import {
 } from "@/components/ui/select";
 import { Card, CardContent } from "@/components/ui/card";
 import { HelpTooltip } from "@/components/ui/help-tooltip";
+import {
+  FALLBACK_LOCALE,
+  useLocale,
+  useT,
+  type Locale,
+  type TranslateFn,
+} from "@/lib/i18n";
 
 export interface ScheduleRule {
   dayOfWeek: number; // 0=Mon, 6=Sun
@@ -31,22 +38,15 @@ interface ScheduleSettingsProps {
   onChange: (enabled: boolean, rules: ScheduleRule[]) => void;
 }
 
-const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-const DAY_NAMES_FULL = [
-  "Monday",
-  "Tuesday",
-  "Wednesday",
-  "Thursday",
-  "Friday",
-  "Saturday",
-  "Sunday",
-];
 const HOUR_MARKERS = [0, 6, 12, 18, 24];
 
-const MODE_LABELS: Record<string, string> = {
-  all: "All",
-  audio_only: "Audio",
-  screen_only: "Screen",
+/** Monday-first, so the grid row index maps straight onto `week.day.N`. */
+const DAY_INDEXES = [0, 1, 2, 3, 4, 5, 6];
+
+const MODE_KEYS: Record<string, string> = {
+  all: "settings.privacy.schedule.mode.all",
+  audio_only: "settings.privacy.schedule.mode.audio",
+  screen_only: "settings.privacy.schedule.mode.screen",
 };
 
 const WEEKDAY_9_TO_5: ScheduleRule[] = Array.from({ length: 5 }, (_, i) => ({
@@ -68,11 +68,17 @@ function timeToPercent(time: string): number {
   return ((h * 60 + m) / 1440) * 100;
 }
 
-function formatTime(time: string): string {
+/**
+ * The bar label. Russian is a 24-hour clock (`formatClock` in lib/i18n does the
+ * same for the journal); English keeps the 12-hour form it shipped with.
+ */
+function formatTime(time: string, locale: Locale = FALLBACK_LOCALE): string {
   const [h, m] = time.split(":").map(Number);
+  const minutes = m.toString().padStart(2, "0");
+  if (locale === "ru") return `${h.toString().padStart(2, "0")}:${minutes}`;
   const suffix = h >= 12 ? "pm" : "am";
   const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
-  return `${h12}:${m.toString().padStart(2, "0")}${suffix}`;
+  return `${h12}:${minutes}${suffix}`;
 }
 
 function validateTimeInput(value: string): string | null {
@@ -89,6 +95,8 @@ export function ScheduleSettings({
   rules,
   onChange,
 }: ScheduleSettingsProps) {
+  const t = useT();
+  const locale = useLocale();
   const setScheduleEnabled = useCallback(
     (val: boolean) => onChange(val, rules),
     [onChange, rules]
@@ -165,16 +173,16 @@ export function ScheduleSettings({
             <Calendar className="h-4 w-4 text-muted-foreground shrink-0" />
             <div>
               <h3 className="text-sm font-medium text-foreground">
-                Recording Schedule
+                {t("settings.privacy.schedule.title")}
                 <span className="ml-1.5 text-[9px] font-mono uppercase tracking-wider bg-muted text-muted-foreground px-1 py-0.5 rounded">
                   beta
                 </span>
               </h3>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Define when recording is active
+                {t("settings.privacy.schedule.description")}
               </p>
             </div>
-            <HelpTooltip text="Set specific time ranges per day when screen and audio recording should be active. Outside these hours, recording pauses automatically." />
+            <HelpTooltip text={t("settings.privacy.schedule.tooltip")} />
           </div>
           <Switch
             checked={enabled}
@@ -186,14 +194,16 @@ export function ScheduleSettings({
           <div className="space-y-3 mt-3">
             {/* Presets */}
             <div className="flex items-center gap-2">
-              <span className="text-xs text-muted-foreground">Presets:</span>
+              <span className="text-xs text-muted-foreground">
+                {t("settings.privacy.schedule.presets")}
+              </span>
               <Button
                 variant="outline"
                 size="sm"
                 className="h-6 px-2 text-xs font-mono"
                 onClick={() => applyPreset("weekdays")}
               >
-                Weekdays 9-5
+                {t("settings.privacy.schedule.preset.weekdays")}
               </Button>
               <Button
                 variant="outline"
@@ -201,7 +211,7 @@ export function ScheduleSettings({
                 className="h-6 px-2 text-xs font-mono"
                 onClick={() => applyPreset("always")}
               >
-                Always On
+                {t("settings.privacy.schedule.preset.always")}
               </Button>
               <Button
                 variant="outline"
@@ -209,7 +219,7 @@ export function ScheduleSettings({
                 className="h-6 px-2 text-xs font-mono"
                 onClick={() => applyPreset("custom")}
               >
-                Clear All
+                {t("settings.privacy.schedule.preset.clear")}
               </Button>
             </div>
 
@@ -233,15 +243,19 @@ export function ScheduleSettings({
               </div>
 
               {/* Day rows */}
-              {DAY_NAMES.map((dayName, dayIndex) => {
+              {DAY_INDEXES.map((dayIndex) => {
                 const dayRules = getRulesForDay(dayIndex);
                 return (
                   <DayRow
                     key={dayIndex}
                     dayIndex={dayIndex}
-                    dayName={dayName}
-                    dayNameFull={DAY_NAMES_FULL[dayIndex]}
+                    dayName={t(`week.day.${dayIndex + 1}`)}
+                    dayNameFull={t(
+                      `settings.privacy.schedule.day.${dayIndex + 1}`,
+                    )}
                     rules={dayRules}
+                    t={t}
+                    locale={locale}
                     onAddRule={() => addRule(dayIndex)}
                     onRemoveRule={(ruleIdx) => removeRule(dayIndex, ruleIdx)}
                     onUpdateRule={(ruleIdx, updates) =>
@@ -263,6 +277,8 @@ interface DayRowProps {
   dayName: string;
   dayNameFull: string;
   rules: ScheduleRule[];
+  t: TranslateFn;
+  locale: Locale;
   onAddRule: () => void;
   onRemoveRule: (ruleIdx: number) => void;
   onUpdateRule: (ruleIdx: number, updates: Partial<ScheduleRule>) => void;
@@ -273,6 +289,8 @@ function DayRow({
   dayName,
   dayNameFull,
   rules,
+  t,
+  locale,
   onAddRule,
   onRemoveRule,
   onUpdateRule,
@@ -319,11 +337,19 @@ function DayRow({
                 key={idx}
                 className="absolute top-0.5 bottom-0.5 bg-foreground/20 transition-all duration-150"
                 style={{ left: `${left}%`, width: `${width}%` }}
-                title={`${formatTime(rule.startTime)} - ${formatTime(rule.endTime)} (${MODE_LABELS[rule.recordMode] || "All"})`}
+                title={t("settings.privacy.schedule.rangeTitle", {
+                  start: formatTime(rule.startTime, locale),
+                  end: formatTime(rule.endTime, locale),
+                  mode: t(
+                    MODE_KEYS[rule.recordMode] ??
+                      "settings.privacy.schedule.mode.all",
+                  ),
+                })}
               >
                 {width > 15 && (
                   <span className="absolute inset-0 flex items-center justify-center text-[9px] text-foreground font-mono truncate px-1">
-                    {formatTime(rule.startTime)}-{formatTime(rule.endTime)}
+                    {formatTime(rule.startTime, locale)}-
+                    {formatTime(rule.endTime, locale)}
                   </span>
                 )}
               </div>
@@ -333,7 +359,7 @@ function DayRow({
           {/* Empty state hint */}
           {rules.length === 0 && (
             <span className="absolute inset-0 flex items-center justify-center text-[10px] text-muted-foreground/50 font-mono select-none">
-              No recording
+              {t("settings.privacy.schedule.noRecording")}
             </span>
           )}
         </div>
@@ -345,7 +371,7 @@ function DayRow({
             e.stopPropagation();
             onAddRule();
           }}
-          title={`Add time range for ${dayNameFull}`}
+          title={t("settings.privacy.schedule.addRange", { day: dayNameFull })}
         >
           <Plus className="h-3.5 w-3.5" />
         </button>
@@ -358,6 +384,7 @@ function DayRow({
             <RuleEditor
               key={idx}
               rule={rule}
+              t={t}
               onUpdate={(updates) => onUpdateRule(idx, updates)}
               onRemove={() => onRemoveRule(idx)}
             />
@@ -370,11 +397,12 @@ function DayRow({
 
 interface RuleEditorProps {
   rule: ScheduleRule;
+  t: TranslateFn;
   onUpdate: (updates: Partial<ScheduleRule>) => void;
   onRemove: () => void;
 }
 
-function RuleEditor({ rule, onUpdate, onRemove }: RuleEditorProps) {
+function RuleEditor({ rule, t, onUpdate, onRemove }: RuleEditorProps) {
   const startInput = rule.startTime;
   const endInput = rule.endTime;
 
@@ -392,7 +420,9 @@ function RuleEditor({ rule, onUpdate, onRemove }: RuleEditorProps) {
         className="w-24 h-6 text-xs font-mono px-1.5 text-center rounded border border-input bg-background"
       />
 
-      <span className="text-xs text-muted-foreground">to</span>
+      <span className="text-xs text-muted-foreground">
+        {t("settings.privacy.schedule.to")}
+      </span>
 
       <input
         type="time"
@@ -412,16 +442,22 @@ function RuleEditor({ rule, onUpdate, onRemove }: RuleEditorProps) {
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="all">All</SelectItem>
-          <SelectItem value="audio_only">Audio only</SelectItem>
-          <SelectItem value="screen_only">Screen only</SelectItem>
+          <SelectItem value="all">
+            {t("settings.privacy.schedule.modeOption.all")}
+          </SelectItem>
+          <SelectItem value="audio_only">
+            {t("settings.privacy.schedule.modeOption.audio")}
+          </SelectItem>
+          <SelectItem value="screen_only">
+            {t("settings.privacy.schedule.modeOption.screen")}
+          </SelectItem>
         </SelectContent>
       </Select>
 
       <button
         className="text-muted-foreground hover:text-destructive transition-colors duration-100"
         onClick={onRemove}
-        title="Remove time range"
+        title={t("settings.privacy.schedule.removeRange")}
       >
         <Trash2 className="h-3 w-3" />
       </button>

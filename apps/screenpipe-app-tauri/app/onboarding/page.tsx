@@ -7,17 +7,16 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/components/ui/use-toast";
-import OnboardingLogin from "@/components/onboarding/login-gate";
 import AcquisitionStep from "@/components/onboarding/acquisition-step";
 import PermissionsStep from "@/components/onboarding/permissions-step";
 import TimelineChoice from "@/components/onboarding/timeline-choice";
+import RoleStep from "@/components/onboarding/role-step";
 import EngineStartup from "@/components/onboarding/engine-startup";
 import PlanSelectionStep from "@/components/onboarding/plan-selection-step";
 import FinalSetupStep from "@/components/onboarding/final-setup-step";
 import { useOnboarding } from "@/lib/hooks/use-onboarding";
 import { useManagedPolicy } from "@/lib/hooks/use-managed-policy";
 import { useSettings } from "@/lib/hooks/use-settings";
-import { EnterpriseLicensePrompt } from "@/components/enterprise-license-prompt";
 import posthog from "posthog-js";
 import { commands } from "@/lib/utils/tauri";
 import { onboardingFunnel } from "@/lib/analytics/onboarding-funnel";
@@ -34,14 +33,15 @@ import {
   TRIAL_ACTIVATION_UNLOCKED_STEP,
 } from "@/lib/first-run/trial-activation";
 import { readOnboardingCheckoutStatus } from "@/lib/onboarding-checkout-navigation";
-import { StartupAuthenticationContext } from "@/components/app-entitlement-gate";
-import { shouldRestoreOnboardingLogin } from "@/lib/onboarding-auth-restore";
+import { useT } from "@/lib/i18n";
 
+// "login" is gone: this build has no screenpipe account. Saved installs that
+// stopped on it resume at acquisition.
 type SlideKey =
-  | "login"
   | "acquisition"
   | "permissions"
   | "timeline"
+  | "role"
   | "engine"
   | "plan"
   | "recommended-setup";
@@ -213,15 +213,29 @@ function TrialActivationFlagAssignment({
 
 // When shown, the timeline choice sits before "engine" so disableTimeline is
 // persisted before the engine spawns and reads it — no restart needed.
+// "role" sits after the capture questions and before the engine: it only
+// writes settings, and the journal categories it implies are applied later by
+// `lib/journal/use-role-preset.ts` once the engine this step precedes is up.
 const SLIDE_ORDER: SlideKey[] = [
-  "login",
   "acquisition",
   "permissions",
   "timeline",
+  "role",
   "engine",
   "plan",
   "recommended-setup",
 ];
+
+/**
+ * Slides kept out of the default flow.
+ *
+ * "recommended-setup" installs and promotes scheduled tasks (daily email
+ * summary, digital clone, speaker reconciliation) — Automations and Meetings,
+ * which are not on the user's path any more. The step itself is untouched:
+ * `FinalSetupStep` still renders for a saved step, and removing the id from
+ * this list puts it back in the flow.
+ */
+const HIDDEN_ONBOARDING_SLIDES: readonly SlideKey[] = ["recommended-setup"];
 
 // endowed progress: the bar first renders on permissions with login already
 // counted done, so it always starts above zero. When the current step reports
@@ -235,13 +249,13 @@ const EndowedProgress = ({
   step: number;
   total: number;
   sub?: { done: number; total: number } | null;
-}) => (
+}) => {
+  const t = useT();
+  return (
   <div className="w-full max-w-sm mx-auto mb-[22px]">
     <div className="flex justify-between font-mono text-[9px] lowercase tracking-[0.04em] text-muted-foreground mb-[5px]">
-      <span>setup</span>
-      <span>
-        {step} of {total}
-      </span>
+      <span>{t("onboarding.setup")}</span>
+      <span>{t("onboarding.stepOf", { step, total })}</span>
     </div>
     <div className="flex gap-[3px]">
       {Array.from({ length: total }, (_, i) =>
@@ -275,7 +289,8 @@ const EndowedProgress = ({
       )}
     </div>
   </div>
-);
+  );
+};
 
 // Corrective only: Rust already builds the window at this size. It still runs
 // so a window left at an old per-slide size — an install that upgraded midway
@@ -290,6 +305,7 @@ const applyOnboardingWindowSize = async () => {
 };
 
 export default function OnboardingPage() {
+  const t = useT();
   const router = useRouter();
   const { toast } = useToast();
   const [checkoutReturnStatus] = useState(() =>
@@ -301,8 +317,19 @@ export default function OnboardingPage() {
     if (!checkoutReturnStatus) return;
     window.sessionStorage.removeItem(TRIAL_ACTIVATION_CHECKOUT_STATE_KEY);
   }, [checkoutReturnStatus]);
-  const [currentSlide, setCurrentSlide] = useState<SlideKey>(() =>
-    checkoutReturnStatus ? "plan" : "login",
+  // Development-only, browser mock builds: `/onboarding?step=role` opens on
+  // that slide so one step can be screenshotted without driving the whole
+  // flow. Read once, and never in a packaged app.
+  const [devStepRequest] = useState<SlideKey | null>(() => {
+    if (!process.env.NEXT_PUBLIC_SCREENPIPE_WEB_DEV) return null;
+    if (typeof window === "undefined") return null;
+    const requested = new URLSearchParams(window.location.search).get("step");
+    return SLIDE_ORDER.includes(requested as SlideKey)
+      ? (requested as SlideKey)
+      : null;
+  });
+  const [currentSlide, setCurrentSlide] = useState<SlideKey>(
+    () => devStepRequest ?? (checkoutReturnStatus ? "plan" : "acquisition"),
   );
   const [isVisible, setIsVisible] = useState(true);
   const [isTransitioning, setIsTransitioning] = useState(false);
@@ -317,45 +344,15 @@ export default function OnboardingPage() {
   const { onboardingData, isLoading, completeOnboarding } = useOnboarding();
   const { settings, isSettingsLoaded } = useSettings();
   const user = settings.user as AppUser | null | undefined;
-  const isLoggedIn = Boolean(user?.token);
-  const startupAuthenticationStatus = React.useContext(
-    StartupAuthenticationContext,
-  );
-  const previousLoginStateRef = React.useRef<boolean | null>(null);
   const completedForHiddenUiRef = React.useRef(false);
   const transitioningRef = React.useRef(false);
   const funnelStartedRef = React.useRef(false);
   const {
     isManagedDeployment,
     isManagedDeploymentResolved,
-    authenticationState,
-    authenticationError,
-    isManagedAuthenticated,
-    selectAuthenticationMethod,
-    submitLicenseKey,
-    policy: managedPolicy,
     isSettingLocked,
   } = useManagedPolicy();
 
-  // The page survives the assignment-pending screen; the login slide does
-  // not. Observe the auth transition here so a new account still records its
-  // completion when that same render unmounts the slide. Wait for hydration
-  // so reopening an already authenticated installation remains a resume.
-  useEffect(() => {
-    if (isLoading || !isSettingsLoaded || !isManagedDeploymentResolved) return;
-    const loginCompleted = previousLoginStateRef.current === false && isLoggedIn;
-    previousLoginStateRef.current = isLoggedIn;
-    if (loginCompleted && currentSlide === "login" && !isManagedDeployment) {
-      posthog.capture("onboarding_login_completed");
-    }
-  }, [
-    currentSlide,
-    isLoading,
-    isLoggedIn,
-    isManagedDeployment,
-    isManagedDeploymentResolved,
-    isSettingsLoaded,
-  ]);
   // This intervention is intentionally narrow: only a canonical "low" tier
   // written by the native hardware detector is enough evidence to show it.
   // Missing, malformed, mid, and high tiers all skip it. We also wait for the
@@ -451,7 +448,8 @@ export default function OnboardingPage() {
           (s !== "plan" || shouldShowPlanSelection) &&
           // Managed deployments may authenticate with only a license key, so
           // consumer Gmail/Calendar authorization is not available there.
-          (s !== "recommended-setup" || !isManagedDeployment),
+          (s !== "recommended-setup" || !isManagedDeployment) &&
+          !HIDDEN_ONBOARDING_SLIDES.includes(s),
       ),
     [isManagedDeployment, shouldShowPlanSelection, timelineChoiceVisible],
   );
@@ -469,6 +467,9 @@ export default function OnboardingPage() {
     const init = async () => {
       const { loadOnboardingStatus } = useOnboarding.getState();
       await loadOnboardingStatus();
+      // The dev step request owns the slide; the status above still has to be
+      // loaded, because the page waits on it before rendering anything.
+      if (devStepRequest) return;
       const { onboardingData } = useOnboarding.getState();
       const returnsToTrialActivation =
         onboardingData.currentStep === TRIAL_ACTIVATION_PAYWALL_STEP;
@@ -499,10 +500,11 @@ export default function OnboardingPage() {
         const step = onboardingData.currentStep as string;
         // Map old and new step names
         const stepMap: Record<string, SlideKey> = {
-          login: "login",
+          login: "acquisition",
           acquisition: "acquisition",
           permissions: "permissions",
           timeline: "timeline",
+          role: "role",
           engine: "engine",
           plan: "plan",
           "recommended-setup": "recommended-setup",
@@ -519,8 +521,8 @@ export default function OnboardingPage() {
           encrypt: "engine",
           read: "engine",
           shortcut: "engine",
-          welcome: "login",
-          intro: "login",
+          welcome: "acquisition",
+          intro: "acquisition",
           usecases: "permissions",
           status: "permissions",
           setup: "permissions",
@@ -530,25 +532,16 @@ export default function OnboardingPage() {
           // A saved step must not resume onto a slide that this device or its
           // managed policy is no longer eligible to see.
           const mappedSlide =
-            // Post-login steps assume native startup authentication succeeded.
-            // If the session was lost between launches, restoring one of those
-            // steps calls spawn_screenpipe while signed out and strands the user
-            // on the engine error screen. Return consumer installs to the login
-            // gate so they can re-authenticate before setup resumes.
-            shouldRestoreOnboardingLogin({
-              isManagedDeployment,
-              startupAuthenticationStatus,
-              isLoggedIn,
-              mappedSlide: mapped,
-            })
-              ? "login"
-              : mapped === "acquisition" && isManagedDeployment
+            mapped === "acquisition" && isManagedDeployment
               ? // A managed install saved mid-acquisition, from a build that
                 // still asked, resumes at the step that follows it rather than
                 // at the engine: permissions still have to be granted.
                 "permissions"
               : (mapped === "timeline" && !timelineChoiceVisibleRef.current) ||
-                  (mapped === "plan" && !shouldShowPlanSelection)
+                  (mapped === "plan" && !shouldShowPlanSelection) ||
+                  // A saved step that is no longer in the flow resumes at the
+                  // engine and finishes from there.
+                  HIDDEN_ONBOARDING_SLIDES.includes(mapped)
                 ? "engine"
                 : mapped;
           setCurrentSlide(mappedSlide);
@@ -558,13 +551,12 @@ export default function OnboardingPage() {
     init();
   }, [
     checkoutReturnStatus,
+    devStepRequest,
     isManagedDeployment,
     isManagedDeploymentResolved,
-    isLoggedIn,
     isSettingsLoaded,
     router,
     shouldShowPlanSelection,
-    startupAuthenticationStatus,
   ]);
 
   useEffect(() => {
@@ -636,11 +628,7 @@ export default function OnboardingPage() {
       return;
     }
 
-    // The page's auth-transition observer owns login completion. Advancing a
-    // resumed session or rerunning this callback must not emit it again.
-    if (currentSlide !== "login") {
-      posthog.capture(`onboarding_${currentSlide}_completed`);
-    }
+    posthog.capture(`onboarding_${currentSlide}_completed`);
     const currentIdx = SLIDE_ORDER.indexOf(currentSlide);
     posthog.capture("onboarding_step_reached", {
       step_name: `${currentSlide}_completed`,
@@ -786,25 +774,24 @@ export default function OnboardingPage() {
     wasTrialActivationEligible,
   ]);
 
-  // Enterprise authentication owns the onboarding login step. Existing saved
-  // keys and accepted workspace accounts advance silently once verified.
+
+  // The login slide used to be the universal entry point and auto-advanced
+  // managed installs past "acquisition". Without it, land on the first slide
+  // this deployment actually shows and persist it so a relaunch resumes there.
   useEffect(() => {
-    if (
-      currentSlide === "login" &&
-      isManagedDeploymentResolved &&
-      isManagedDeployment &&
-      isManagedAuthenticated &&
-      !isTransitioning
-    ) {
-      void handleNextSlide();
-    }
+    if (isLoading || !isSettingsLoaded || !isManagedDeploymentResolved) return;
+    if (isTransitioning || visibleOrder.length === 0) return;
+    if (visibleOrder.includes(currentSlide)) return;
+    const first = visibleOrder[0];
+    setCurrentSlide(first);
+    commands.setOnboardingStep(first).catch(() => {});
   }, [
     currentSlide,
-    isManagedDeployment,
+    isLoading,
     isManagedDeploymentResolved,
-    isManagedAuthenticated,
+    isSettingsLoaded,
     isTransitioning,
-    handleNextSlide,
+    visibleOrder,
   ]);
 
   if (isLoading || !isSettingsLoaded || !isManagedDeploymentResolved) {
@@ -828,7 +815,7 @@ export default function OnboardingPage() {
         >
           <div className="h-6 w-6 animate-spin rounded-full border border-foreground border-t-transparent" />
           <p className="font-mono text-[11px] text-muted-foreground">
-            preparing your setup
+            {t("onboarding.preparing")}
           </p>
         </div>
       </div>
@@ -851,59 +838,11 @@ export default function OnboardingPage() {
             isVisible ? "opacity-100" : "opacity-0"
           }`}
         >
-          {currentSlide !== "login" && (
-            <EndowedProgress
-              step={Math.max(1, visibleOrder.indexOf(currentSlide) + 1)}
-              total={visibleOrder.length}
-              sub={currentSlide === "permissions" ? permissionsProgress : null}
-            />
-          )}
-          {currentSlide === "login" &&
-            (isManagedDeployment ? (
-              authenticationState === "license_key" ? (
-                <div className="mx-auto w-full max-w-sm">
-                  <h2 className="mb-1 text-lg font-semibold">
-                    activate this device
-                  </h2>
-                  <p className="mb-4 text-sm text-muted-foreground">
-                    enter the enterprise key provided by your administrator
-                  </p>
-                  <EnterpriseLicensePrompt
-                    embedded
-                    onSubmit={submitLicenseKey}
-                    onSignIn={() => selectAuthenticationMethod("account")}
-                  />
-                </div>
-              ) : authenticationState === "choice" ||
-                authenticationState === "account" ? (
-                <div className="flex flex-col items-center">
-                  {authenticationError && (
-                    <p className="mb-3 max-w-[360px] text-center font-mono text-[11px] text-destructive">
-                      {authenticationError}
-                    </p>
-                  )}
-                  <OnboardingLogin
-                    handleNextSlide={handleNextSlide}
-                    suppressAutoAdvance
-                  />
-                  {!managedPolicy?.requireAccountLogin && (
-                    <button
-                      type="button"
-                      onClick={() => selectAuthenticationMethod("license_key")}
-                      className="mt-3 font-mono text-xs text-muted-foreground/70 underline underline-offset-4 decoration-muted-foreground/40 transition-colors hover:text-foreground hover:decoration-foreground"
-                    >
-                      use enterprise key
-                    </button>
-                  )}
-                </div>
-              ) : (
-                <div className="flex min-h-[400px] items-center justify-center">
-                  <div className="h-6 w-6 animate-spin rounded-full border border-foreground border-t-transparent" />
-                </div>
-              )
-            ) : (
-              <OnboardingLogin handleNextSlide={handleNextSlide} />
-            ))}
+          <EndowedProgress
+            step={Math.max(1, visibleOrder.indexOf(currentSlide) + 1)}
+            total={visibleOrder.length}
+            sub={currentSlide === "permissions" ? permissionsProgress : null}
+          />
           {currentSlide === "acquisition" && (
             <AcquisitionStep handleNextSlide={handleNextSlide} />
           )}
@@ -915,6 +854,9 @@ export default function OnboardingPage() {
           )}
           {currentSlide === "timeline" && (
             <TimelineChoice handleNextSlide={handleNextSlide} />
+          )}
+          {currentSlide === "role" && (
+            <RoleStep handleNextSlide={handleNextSlide} />
           )}
           {currentSlide === "engine" && (
             <EngineStartup handleNextSlide={handleNextSlide} />

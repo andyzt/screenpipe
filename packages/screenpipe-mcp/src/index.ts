@@ -36,6 +36,15 @@ import { PKG_VERSION } from "./version";
 import { formatForElementPurpose } from "./element-format";
 import { buildActivitySummaryResult } from "./activity-summary-tool";
 import {
+  buildFocusStatusResult,
+  buildJournalActivityResult,
+  buildJournalDayResult,
+  buildJournalRecapResult,
+  buildJournalReviewResult,
+  buildJournalWeekResult,
+  buildSetIntentionResult,
+} from "./journal-tools";
+import {
   localContextDayStarts,
   normalizeTime,
   normalizeTimeFields,
@@ -342,7 +351,7 @@ const TOOLS: Tool[] = [
     description:
       "Search screen text, audio transcriptions, input events, memories, and parsed app data. Returns timestamped results with app context. " +
       "USE WHEN: you need the actual text/content of a moment — quotes, screen text, transcript lines, or compact parsed messages, emails, tasks, documents, and code review — or want to filter by speaker/window. " +
-      "DO NOT USE for: broad questions like 'what was I doing?' (use activity-summary, it pre-summarizes apps + windows + transcripts). " +
+      "DO NOT USE for: broad questions like 'what was I doing?' — use journal-day for a specific day's curated cards, or activity-summary for a live time-range snapshot. " +
       "Also DO NOT USE for: targeted UI controls (use search-elements). " +
       "Start with limit=5, increase only if needed. Per-result text is auto-truncated to 1000 chars; pass max_content_length=0 to opt out, or a custom integer to override.",
     annotations: { title: "Search Content", readOnlyHint: true, openWorldHint: false, idempotentHint: true },
@@ -456,8 +465,8 @@ const TOOLS: Tool[] = [
     name: "activity-summary",
     description:
       "Rich activity overview: authoritative active minutes, app/window time, edited document paths, key text, and audio transcriptions, with optional parsed task context when available. " +
-      "USE WHEN: any broad question about what the user did — 'what was I doing?', 'how long on X?', 'which apps?', 'recap my morning'. " +
-      "This is almost always the right first call for time-range questions — usually sufficient without follow-up searches. " +
+      "USE WHEN: any broad question about what the user did in an arbitrary time range — 'what was I doing in the last 2 hours?', 'how long on X?', 'which apps?'. " +
+      "For 'what did I do today/yesterday?' about one calendar day, try journal-day first — it returns curated cards instead of raw window/app aggregates; fall back to this tool if journal-day says the feature is unavailable. " +
       "Use parsed/path evidence to identify tasks, but only active-minute fields for duration; frame and row counts are never time. " +
       "DO NOT USE for: finding a specific keyword (use keyword-search) or a specific UI control (use search-elements).",
     annotations: { title: "Activity Summary", readOnlyHint: true, openWorldHint: false, idempotentHint: true },
@@ -482,6 +491,163 @@ const TOOLS: Tool[] = [
         },
       },
       required: ["start_time", "end_time"],
+    },
+  },
+  {
+    name: "journal-day",
+    description:
+      "Curated day overview: pre-written activity cards for one calendar day (04:00-04:00 local) plus totals (active/focus/distraction/idle minutes, longest focus block, top categories). " +
+      "USE WHEN: 'what did I do today/yesterday?' or reviewing one specific day — try this FIRST for that question; it is a small, already-summarized read, lighter than activity-summary or search-content. " +
+      "DO NOT USE for: a specific keyword or quote (use search-content) or an arbitrary/rolling time range like 'the last 3 hours' (use activity-summary). " +
+      "Follow up with journal-activity (an id from a card) for the full card detail and evidence. " +
+      "If the result says journal is unavailable, fall back to activity-summary or search-content — older screenpipe builds do not have this feature yet.",
+    annotations: { title: "Journal Day", readOnlyHint: true, openWorldHint: false, idempotentHint: true },
+    inputSchema: {
+      type: "object",
+      properties: {
+        date: {
+          type: "string",
+          description: "Calendar date as YYYY-MM-DD, or \"today\"/\"yesterday\" (resolved against the 04:00 journal-day boundary, so before 04:00 local \"today\" still means yesterday's journal day). Defaults to today. A journal day runs local 04:00 to the next local 04:00.",
+        },
+      },
+    },
+  },
+  {
+    name: "journal-activity",
+    description:
+      "Full detail for one journal activity card: title, summary, detailed summary, category, intention relation and reason, primary/secondary apps, distraction sub-intervals, and — with include_evidence — sampled frame/audio evidence for that window. " +
+      "USE WHEN: following up on a card id returned by journal-day. " +
+      "Evidence rows include frame ids; use frame-context with one of those ids for the full text of that moment.",
+    annotations: { title: "Journal Activity", readOnlyHint: true, openWorldHint: false, idempotentHint: true },
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "integer", description: "Activity card id, from a journal-day result." },
+        include_evidence: {
+          type: "boolean",
+          description: "Include up to 24 sampled evidence rows (frame/audio) for this card.",
+          default: false,
+        },
+      },
+      required: ["id"],
+    },
+  },
+  {
+    name: "focus-status",
+    description:
+      "Current focus state: the active intention (if any), how recent activity relates to it, divergence time, dominant app/task, and whether there is enough capture data to know at all. " +
+      "USE WHEN: the user asks 'what am I supposed to be working on?', 'am I on track?', or 'am I distracted right now?'. " +
+      "If evidence_ok is false, say plainly that capture data is missing or stalled and the state is unknown — do not guess from stale evidence.",
+    annotations: { title: "Focus Status", readOnlyHint: true, openWorldHint: false, idempotentHint: true },
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "set-intention",
+    description:
+      "Set or end the user's current work intention. This is one of three tools on this list that change app state (with journal-recap, when it triggers generation, and journal-review) — it drives focus-status and the journal's intention_relation labels for cards recorded afterward. " +
+      "Setting a new intention automatically ends whichever one is currently active. Pass end: true to end the active intention without starting a new one. " +
+      "USE WHEN: the user states what they are about to work on ('I'm going to fix the auth bug', 'switching to writing docs'), or says they're done / stepping away.",
+    annotations: {
+      title: "Set Intention",
+      readOnlyHint: false,
+      destructiveHint: false,
+      openWorldHint: false,
+      idempotentHint: false,
+    },
+    inputSchema: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "What the user intends to work on. Required unless end: true." },
+        project: { type: "string", description: "Optional project label." },
+        notes: { type: "string", description: "Optional free-text notes." },
+        end: {
+          type: "boolean",
+          description: "Set true to end the currently active intention instead of starting a new one.",
+          default: false,
+        },
+      },
+    },
+  },
+  {
+    name: "journal-recap",
+    description:
+      "Daily recap: one LLM-written summary of a day's final journal cards — a short narrative, what got done, what's still open, and a note on the biggest detour. " +
+      "USE WHEN: the user asks for a recap, a summary of their day, or 'what did I get done today/yesterday?' — this reads faster than walking every journal-day card. " +
+      "DO NOT USE for: the individual cards themselves (use journal-day) or a whole week (use journal-week). " +
+      "Regenerates automatically when there is no stored recap yet or the stored one is stale (a card changed after it was written); pass regenerate: true to force a fresh one regardless. " +
+      "If the result says journal is unavailable, fall back to journal-day or activity-summary — older screenpipe builds do not have this feature yet.",
+    annotations: {
+      title: "Journal Recap",
+      readOnlyHint: false,
+      destructiveHint: false,
+      openWorldHint: false,
+      idempotentHint: false,
+    },
+    inputSchema: {
+      type: "object",
+      properties: {
+        date: {
+          type: "string",
+          description: "Calendar date as YYYY-MM-DD, or \"today\"/\"yesterday\" (resolved against the 04:00 journal-day boundary, so before 04:00 local \"today\" still means yesterday's journal day). Defaults to today. A journal day runs local 04:00 to the next local 04:00.",
+        },
+        regenerate: {
+          type: "boolean",
+          description: "Force a fresh recap even if a ready one is already stored.",
+          default: false,
+        },
+      },
+    },
+  },
+  {
+    name: "journal-review",
+    description:
+      "Mark a span of the day as focused, neutral, or distracted — the user's own judgment, layered on top of the automatic category and intention-relation labels. DESTRUCTIVE: ratings never overlap, so this call replaces any existing rating(s) inside the span, in whole or in part, with no way to recover what it overwrote. journal-day's response lists the day's current reviews and review_totals — check those first if you need to know what's there before overwriting it. " +
+      "USE WHEN: the user corrects or confirms how a stretch of time went ('mark 9 to 10:30 as focused', 'that whole afternoon was distracted'). Pass rating: null to clear a span instead of setting one. " +
+      "This is one of three tools on this list that change app state (with set-intention and journal-recap, when it triggers generation). Rating a span does not itself rewrite existing card text — regenerating a card is a separate, engine-side action. " +
+      "If the result says journal is unavailable, this feature does not exist on this screenpipe build yet.",
+    annotations: {
+      title: "Journal Review",
+      readOnlyHint: false,
+      destructiveHint: true,
+      openWorldHint: false,
+      idempotentHint: true,
+    },
+    inputSchema: {
+      type: "object",
+      properties: {
+        start: {
+          type: "string",
+          description: "Start of the span, a strict RFC3339 timestamp with an explicit UTC offset or \"Z\" — e.g. 2026-09-16T09:00:00-07:00 for 9am in the user's own local time zone, or 2026-09-16T16:00:00Z for the same instant in UTC. A bare timestamp with no offset is rejected. Must be before end.",
+        },
+        end: {
+          type: "string",
+          description: "End of the span, same strict RFC3339 format with an explicit UTC offset or \"Z\". Span is at most 24 hours.",
+        },
+        rating: {
+          type: ["string", "null"],
+          enum: ["focused", "neutral", "distracted", null],
+          description: "Rating to apply to the span, or null to clear whatever rating currently covers it.",
+        },
+      },
+      required: ["start", "end", "rating"],
+    },
+  },
+  {
+    name: "journal-week",
+    description:
+      "Analytical week dashboard: totals with week-over-week deltas, the top categories and apps by time, the week's five longest focus blocks, and how each active intention's time split between supporting it, other work, and distraction. " +
+      "USE WHEN: the user asks about a week, 'how was my week', wants a trend versus the previous week, or wants a breakdown by category/app instead of a chronological read. " +
+      "DO NOT USE for: one specific day's cards (use journal-day) or a short narrative summary (use journal-recap). " +
+      "If the result says journal is unavailable, fall back to journal-day for individual days or activity-summary — older screenpipe builds do not have this feature yet.",
+    annotations: { title: "Journal Week", readOnlyHint: true, openWorldHint: false, idempotentHint: true },
+    inputSchema: {
+      type: "object",
+      properties: {
+        start: {
+          type: "string",
+          description: "First day of the week as YYYY-MM-DD, or \"today\"/\"yesterday\" (resolved against the 04:00 journal-day boundary). Defaults to the Monday of the current local journal week.",
+        },
+      },
     },
   },
   {
@@ -1115,6 +1281,31 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     const now = new Date();
     const ms = now.getTime();
     const dayStarts = localContextDayStarts(now);
+
+    // Best-effort: an older engine 404s /focus/status (no journal/focus
+    // routes yet). The resource must still render in that case, so any
+    // failure here just omits the `focus` key instead of throwing.
+    let focus: { active_intention: { id: number; title: string; project: string | null } | null; relation: string } | undefined;
+    try {
+      const focusResponse = await callAPI("/focus/status");
+      const focusData = (await focusResponse.json()) as {
+        intention?: { id?: number; title?: string; project?: string | null } | null;
+        relation?: string;
+      };
+      focus = {
+        active_intention: focusData.intention
+          ? {
+              id: focusData.intention.id ?? 0,
+              title: focusData.intention.title ?? "",
+              project: focusData.intention.project ?? null,
+            }
+          : null,
+        relation: focusData.relation || "unknown",
+      };
+    } catch {
+      // No /focus/status on this engine, or a transient failure — omit.
+    }
+
     return {
       contents: [
         {
@@ -1137,6 +1328,7 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
                 ...dayStarts,
                 one_week_ago: new Date(ms - 7 * 24 * 60 * 60 * 1000).toISOString(),
               },
+              ...(focus ? { focus } : {}),
             },
             null,
             2
@@ -1786,6 +1978,41 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (result.hasArtifact) {
           qualifiedValue.artifactResult();
         }
+        return { content: [{ type: "text", text: result.text }] };
+      }
+
+      case "journal-day": {
+        const result = await buildJournalDayResult(args, callAPI);
+        return { content: [{ type: "text", text: result.text }] };
+      }
+
+      case "journal-activity": {
+        const result = await buildJournalActivityResult(args, callAPI);
+        return { content: [{ type: "text", text: result.text }] };
+      }
+
+      case "focus-status": {
+        const result = await buildFocusStatusResult(args, callAPI);
+        return { content: [{ type: "text", text: result.text }] };
+      }
+
+      case "set-intention": {
+        const result = await buildSetIntentionResult(args, callAPI);
+        return { content: [{ type: "text", text: result.text }] };
+      }
+
+      case "journal-recap": {
+        const result = await buildJournalRecapResult(args, callAPI);
+        return { content: [{ type: "text", text: result.text }] };
+      }
+
+      case "journal-review": {
+        const result = await buildJournalReviewResult(args, callAPI);
+        return { content: [{ type: "text", text: result.text }] };
+      }
+
+      case "journal-week": {
+        const result = await buildJournalWeekResult(args, callAPI);
         return { content: [{ type: "text", text: result.text }] };
       }
 

@@ -1,0 +1,24 @@
+{
+  "windows": {
+    "2026-09-16-2035.json": {
+      "expected_category": null,
+      "expected_relation": null,
+      "notes": ""
+    },
+    "2026-09-16-2123.json": {
+      "expected_category": null,
+      "expected_relation": null,
+      "notes": ""
+    },
+    "2026-09-16-2148.json": {
+      "expected_category": null,
+      "expected_relation": null,
+      "notes": ""
+    },
+    "2026-09-16-2217.json": {
+      "expected_category": null,
+      "expected_relation": null,
+      "notes": ""
+    }
+  }
+}

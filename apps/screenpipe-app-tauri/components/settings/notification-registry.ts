@@ -15,7 +15,17 @@
  * `settings.notificationPrefs[id]` (a boolean). The Rust emission side
  * reads the same key by name (see `notifications/routes.rs` and the
  * per-source `*_enabled` gates), so keep ids stable once shipped.
+ *
+ * The user-visible strings live in the dictionary. This file is plain data —
+ * read by non-React code and by the settings-search index — so every row
+ * carries the dictionary key next to the English source text, and the
+ * component resolves it with `t()`.
  */
+
+// Imported from the leaf modules, not `@/lib/i18n`, so this stays a
+// React-free module that non-UI callers can import.
+import type { Locale } from "@/lib/i18n/dictionary";
+import { intlLocale } from "@/lib/i18n/format";
 
 export type NotificationGroupId =
   | "recording"
@@ -26,19 +36,32 @@ export type NotificationGroupId =
 
 export interface NotificationGroup {
   id: NotificationGroupId;
-  /** lowercase section heading, screenpipe house style */
+  /** lowercase section heading, screenpipe house style — English source */
   label: string;
-  /** one-line group subtitle */
+  /** dictionary key the settings UI renders instead of `label` */
+  labelKey: string;
+  /** one-line group subtitle — English source */
   description: string;
+  /** dictionary key for `description` */
+  descriptionKey: string;
 }
 
 export interface NotificationCategory {
   /** stable key in `notificationPrefs` — never rename once shipped */
   id: string;
-  /** heading shown in settings (also the settings-search label) */
+  /** heading shown in settings (also the settings-search label) — English source */
   label: string;
-  /** one-line explanation under the heading */
+  /**
+   * Dictionary key the settings UI resolves instead of `label`.
+   *
+   * The registry stays plain data — it is read by non-React code and by the
+   * search index — so it carries keys and the component calls `t()` on them.
+   */
+  labelKey: string;
+  /** one-line explanation under the heading — English source */
   description: string;
+  /** dictionary key for `description` */
+  descriptionKey: string;
   group: NotificationGroupId;
   /** default when the user has never touched it */
   default: boolean;
@@ -56,27 +79,37 @@ export const NOTIFICATION_GROUPS: NotificationGroup[] = [
   {
     id: "recording",
     label: "recording health",
+    labelKey: "settings.notifications.group.recording.label",
     description: "know the moment capture stops working",
+    descriptionKey: "settings.notifications.group.recording.description",
   },
   {
     id: "meetings",
     label: "meetings",
+    labelKey: "settings.notifications.group.meetings.label",
     description: "live notes and audio/transcript health during calls",
+    descriptionKey: "settings.notifications.group.meetings.description",
   },
   {
     id: "system",
     label: "system",
+    labelKey: "settings.notifications.group.system.label",
     description: "monitors, docking, and power changes",
+    descriptionKey: "settings.notifications.group.system.description",
   },
   {
     id: "automation",
     label: "scheduled tasks & automation",
+    labelKey: "settings.notifications.group.automation.label",
     description: "ideas and alerts from your automations",
+    descriptionKey: "settings.notifications.group.automation.description",
   },
   {
     id: "app",
     label: "app",
+    labelKey: "settings.notifications.group.app.label",
     description: "updates to screenpipe itself",
+    descriptionKey: "settings.notifications.group.app.description",
   },
 ];
 
@@ -84,8 +117,10 @@ export const NOTIFICATION_CATEGORIES: NotificationCategory[] = [
   {
     id: "captureStalls",
     label: "Recording health alerts",
+    labelKey: "settings.notifications.category.captureStalls.label",
     description:
       "Show “recording needs help” and notify when capture stops — may send false positives",
+    descriptionKey: "settings.notifications.category.captureStalls.description",
     group: "recording",
     default: false,
     experimental: true,
@@ -95,7 +130,9 @@ export const NOTIFICATION_CATEGORIES: NotificationCategory[] = [
   {
     id: "meetingLiveNotes",
     label: "Meeting live notes",
+    labelKey: "settings.notifications.category.meetingLiveNotes.label",
     description: "Prompt to open a live note when a meeting is detected",
+    descriptionKey: "settings.notifications.category.meetingLiveNotes.description",
     group: "meetings",
     default: true,
     keywords: ["live note", "meeting detected", "call"],
@@ -103,8 +140,10 @@ export const NOTIFICATION_CATEGORIES: NotificationCategory[] = [
   {
     id: "audioCaptureStalled",
     label: "Meeting audio not capturing",
+    labelKey: "settings.notifications.category.audioCaptureStalled.label",
     description:
       "OS notification when a meeting is detected but no audio reaches the recorder within 60s",
+    descriptionKey: "settings.notifications.category.audioCaptureStalled.description",
     group: "meetings",
     default: true,
     keywords: ["no audio", "mic", "silent", "meeting"],
@@ -112,8 +151,10 @@ export const NOTIFICATION_CATEGORIES: NotificationCategory[] = [
   {
     id: "liveTranscriptStalled",
     label: "Live transcript not flowing",
+    labelKey: "settings.notifications.category.liveTranscriptStalled.label",
     description:
       "In-app alert when audio is captured but no live transcript arrives within 60s",
+    descriptionKey: "settings.notifications.category.liveTranscriptStalled.description",
     group: "meetings",
     default: true,
     keywords: ["transcript", "subtitles", "stt"],
@@ -121,8 +162,10 @@ export const NOTIFICATION_CATEGORIES: NotificationCategory[] = [
   {
     id: "displayChanges",
     label: "Display changes",
+    labelKey: "settings.notifications.category.displayChanges.label",
     description:
       "Tells you when a monitor is plugged in, unplugged, or switched (laptop lid closed, docking)",
+    descriptionKey: "settings.notifications.category.displayChanges.description",
     group: "system",
     default: true,
     keywords: ["monitor", "display", "dock", "clamshell", "screen"],
@@ -130,8 +173,10 @@ export const NOTIFICATION_CATEGORIES: NotificationCategory[] = [
   {
     id: "powerModeChanges",
     label: "Power mode changes",
+    labelKey: "settings.notifications.category.powerModeChanges.label",
     description:
       "Tells you when battery saver turns on (Balanced or Saver). You'll still get critical alerts if recording pauses on low battery.",
+    descriptionKey: "settings.notifications.category.powerModeChanges.description",
     group: "system",
     default: true,
     keywords: ["battery", "saver", "power", "thermal", "ac"],
@@ -139,7 +184,9 @@ export const NOTIFICATION_CATEGORIES: NotificationCategory[] = [
   {
     id: "pipeNotifications",
     label: "Scheduled task alerts",
+    labelKey: "settings.notifications.category.pipeNotifications.label",
     description: "Alerts from installed scheduled tasks",
+    descriptionKey: "settings.notifications.category.pipeNotifications.description",
     group: "automation",
     default: true,
     hasPerPipe: true,
@@ -148,8 +195,10 @@ export const NOTIFICATION_CATEGORIES: NotificationCategory[] = [
   {
     id: "pipeAllowanceWarnings",
     label: "Scheduled task allowance warnings",
+    labelKey: "settings.notifications.category.pipeAllowanceWarnings.label",
     description:
       "Warn before background scheduled tasks use most of your hosted-AI allowance while the reset is still far away",
+    descriptionKey: "settings.notifications.category.pipeAllowanceWarnings.description",
     group: "automation",
     default: true,
     keywords: [
@@ -164,7 +213,9 @@ export const NOTIFICATION_CATEGORIES: NotificationCategory[] = [
   {
     id: "appUpdates",
     label: "App updates",
+    labelKey: "settings.notifications.category.appUpdates.label",
     description: "New version available",
+    descriptionKey: "settings.notifications.category.appUpdates.description",
     group: "app",
     default: true,
     keywords: ["update", "upgrade", "what's new", "version"],
@@ -194,17 +245,45 @@ export const DEFAULT_QUIET_HOURS: QuietHoursPref = {
 };
 
 export interface SnoozePreset {
+  /** stable id — also the `data-testid` suffix, so it never moves with copy */
+  id: string;
+  /** English source label */
   label: string;
+  /** dictionary key the UI renders instead of `label` */
+  labelKey: string;
   /** minutes from now, or a marker resolved by `snoozeUntilMs` */
   kind: "minutes" | "untilTomorrow";
   minutes?: number;
 }
 
 export const SNOOZE_PRESETS: SnoozePreset[] = [
-  { label: "30 min", kind: "minutes", minutes: 30 },
-  { label: "1 hour", kind: "minutes", minutes: 60 },
-  { label: "2 hours", kind: "minutes", minutes: 120 },
-  { label: "until tomorrow", kind: "untilTomorrow" },
+  {
+    id: "30-min",
+    label: "30 min",
+    labelKey: "settings.notifications.snooze.30-min",
+    kind: "minutes",
+    minutes: 30,
+  },
+  {
+    id: "1-hour",
+    label: "1 hour",
+    labelKey: "settings.notifications.snooze.1-hour",
+    kind: "minutes",
+    minutes: 60,
+  },
+  {
+    id: "2-hours",
+    label: "2 hours",
+    labelKey: "settings.notifications.snooze.2-hours",
+    kind: "minutes",
+    minutes: 120,
+  },
+  {
+    id: "until-tomorrow",
+    label: "until tomorrow",
+    labelKey: "settings.notifications.snooze.until-tomorrow",
+    kind: "untilTomorrow",
+  },
 ];
 
 /** Resolve a snooze preset to an absolute epoch-ms expiry (local clock). */
@@ -243,14 +322,32 @@ export function isQuietActive(
     : nowMin >= start || nowMin < end;
 }
 
-/** Human label for an active snooze, e.g. "until 3:40 PM" / "until Tue 8:00 AM". */
-export function formatSnoozeUntil(untilMs: number, now = new Date()): string {
+/**
+ * The clock (and weekday, when the snooze runs past midnight) an active pause
+ * ends at, formatted for `locale`.
+ *
+ * Split into parts rather than one sentence because Russian and English word
+ * the "paused until …" line differently; the dictionary owns the sentence and
+ * this owns the numbers.
+ */
+export function snoozeUntilParts(
+  untilMs: number,
+  now = new Date(),
+  locale: Locale = "en",
+): { time: string; day: string | null } {
   const until = new Date(untilMs);
+  // Russian is always 24-hour; English keeps following the machine, so a UK or
+  // German user in the English UI does not suddenly get AM/PM.
+  const tag: Intl.LocalesArgument = locale === "ru" ? intlLocale(locale) : [];
+  const time = until.toLocaleTimeString(tag, {
+    hour: "numeric",
+    minute: "2-digit",
+  });
   const sameDay = until.toDateString() === now.toDateString();
-  const time = until.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  if (sameDay) return `until ${time}`;
-  const day = until.toLocaleDateString([], { weekday: "short" });
-  return `until ${day} ${time}`;
+  return {
+    time,
+    day: sameDay ? null : until.toLocaleDateString(tag, { weekday: "short" }),
+  };
 }
 
 // ── presets (bulk set) ───────────────────────────────────────────────

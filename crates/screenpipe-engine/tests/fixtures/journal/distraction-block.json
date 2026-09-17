@@ -1,0 +1,46 @@
+{
+  "window_start": "2026-09-16T14:45:00Z",
+  "window_end": "2026-09-16T15:00:00Z",
+  "context_start": "2026-09-16T14:00:00Z",
+  "active_minutes": 51.0,
+  "intervals": [
+    {
+      "interval_key": "dbk-1",
+      "task_key": "task-journal-day",
+      "title": "day.rs — screenpipe",
+      "app": "Code",
+      "window_title": "day.rs — screenpipe",
+      "host": null,
+      "document": "/Users/dev/screenpipe/crates/screenpipe-engine/src/journal/day.rs",
+      "start_at": "2026-09-16T14:05:00Z",
+      "end_at": "2026-09-16T14:40:00Z",
+      "active_minutes": 33.0,
+      "click_count": 38,
+      "text_event_count": 2100,
+      "audio_segments": 0,
+      "text_snippets": [
+        "pub fn compute_day_totals(cards: &[ActivityCard]) -> DayTotals {",
+        "longest focus block: 5 minute gap tolerance"
+      ]
+    },
+    {
+      "interval_key": "dbk-2",
+      "task_key": "task-video-feed",
+      "title": "Shorts — YouTube",
+      "app": "Arc",
+      "window_title": "Shorts — YouTube",
+      "host": "youtube.com",
+      "document": null,
+      "start_at": "2026-09-16T14:40:00Z",
+      "end_at": "2026-09-16T15:00:00Z",
+      "active_minutes": 18.0,
+      "click_count": 96,
+      "text_event_count": 0,
+      "audio_segments": 0,
+      "text_snippets": [
+        "Up next: a drone flight over a coastline · 3.1M views",
+        "Recommended: a cat knocks a glass off a table · 812K views"
+      ]
+    }
+  ]
+}
