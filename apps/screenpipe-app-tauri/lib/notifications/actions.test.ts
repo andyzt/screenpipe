@@ -44,8 +44,26 @@ describe("journal notification deeplinks", () => {
   it("recognizes both forms the app uses for the journal section", () => {
     expect(isJournalDeeplink("screenpipe://journal")).toBe(true);
     expect(isJournalDeeplink("screenpipe://home?section=journal")).toBe(true);
+    expect(isJournalDeeplink("screenpipe:///home?section=journal")).toBe(true);
+    expect(isJournalDeeplink("screenpipe://journal?date=2026-09-16")).toBe(true);
+    expect(isJournalDeeplink("screenpipe://home/?section=journal")).toBe(true);
     expect(isJournalDeeplink("screenpipe://home?section=brain")).toBe(false);
     expect(isJournalDeeplink("screenpipe://activity")).toBe(false);
+  });
+
+  // A notification body is attacker-controllable, so the host is part of the
+  // route: only screenpipe's own `journal`/`home` target opens the journal.
+  it("refuses a deeplink that smuggles the route in under a foreign host", () => {
+    expect(isJournalDeeplink("screenpipe://evil.example/home?section=journal")).toBe(
+      false,
+    );
+    expect(isJournalDeeplink("https://evil.example/home?section=journal")).toBe(
+      false,
+    );
+    expect(isJournalDeeplink("screenpipe://evil.example/journal")).toBe(false);
+    expect(windowForDeeplink("screenpipe://evil.example/home?section=journal")).toBe(
+      "Main",
+    );
   });
 
   it("routes screenpipe://home?section=journal to Home's journal page", async () => {
@@ -90,6 +108,11 @@ describe("focus override notification deeplinks", () => {
       ),
     ).toBeNull();
     expect(focusOverrideRelationFromDeeplink("screenpipe://activity")).toBeNull();
+    expect(
+      focusOverrideRelationFromDeeplink(
+        "screenpipe://evil.example/override?relation=break",
+      ),
+    ).toBeNull();
   });
 
   it("applies the override then lands on the journal", async () => {

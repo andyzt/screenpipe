@@ -110,9 +110,11 @@ export function JournalView({
   focusIntentionRequest = false,
   onIntentionFocusHandled,
   /**
-   * Development-only: `/home?section=journal&select=<card id>` opens with that
-   * card selected. It exists so the screenshot harness can capture the card
-   * inspector without driving a click, and is read once on mount.
+   * `/home?section=journal&select=<card id>` opens with that card selected.
+   * `home/page.tsx` parses it in every build: it is a harmless navigation
+   * parameter, so a link to one card can be sent, and it is also what lets the
+   * screenshot harness capture the card inspector without driving a click. It
+   * is read once on mount.
    */
   selectRequest = null,
   /**
@@ -151,7 +153,13 @@ export function JournalView({
   const setWeek = onWeekStartChange ?? setLocalWeek;
   const [day, setDay] = useState<JournalDay | null>(null);
   const [loading, setLoading] = useState(true);
+  // Two failures, two weights. `error` replaces the day, so only a read the
+  // reader asked for — opening a date, pressing Retry — may set it.
+  // `pollError` is the background 30s refresh failing under a day that is
+  // still on screen and still true; it says so in a strip and leaves the day
+  // where it is.
   const [error, setError] = useState<string | null>(null);
+  const [pollError, setPollError] = useState<string | null>(null);
   const [waitingForEngine, setWaitingForEngine] = useState(false);
   const [reloadToken, setReloadToken] = useState(0);
   const [selectedId, setSelectedId] = useState<number | null>(selectRequest);
@@ -161,10 +169,21 @@ export function JournalView({
   // Only the first load of a date blanks the page; a poll refresh must not make
   // the day flicker back to a skeleton under the reader.
   const loadedDateRef = useRef<string | null>(null);
+  // How many reads are in flight. A poll that fires while one is still running
+  // would stack a second chain on the same day — two answers racing to be the
+  // last `setDay` — so that tick is skipped instead.
+  const inFlightRef = useRef(0);
 
   const load = useCallback(
-    async (target: string, signal: AbortSignal, showSkeleton: boolean) => {
+    async (
+      target: string,
+      signal: AbortSignal,
+      showSkeleton: boolean,
+      /** A background refresh: it may not take the day off the screen. */
+      background = false,
+    ) => {
       if (showSkeleton) setLoading(true);
+      inFlightRef.current += 1;
       try {
         const next = await withEngineWait(
           () => fetchJournalDay(target, signal),
@@ -175,11 +194,18 @@ export function JournalView({
         setWaitingForEngine(false);
         setDay(next);
         setError(null);
+        setPollError(null);
         loadedDateRef.current = target;
       } catch (reason) {
         if (signal.aborted) return;
-        setError(reason instanceof Error ? reason.message : String(reason));
+        const message = reason instanceof Error ? reason.message : String(reason);
+        if (background) setPollError(message);
+        else {
+          setError(message);
+          setPollError(null);
+        }
       } finally {
+        inFlightRef.current -= 1;
         if (!signal.aborted) setLoading(false);
       }
     },
@@ -188,6 +214,7 @@ export function JournalView({
 
   useEffect(() => {
     const controller = new AbortController();
+    setPollError(null);
     void load(date, controller.signal, loadedDateRef.current !== date);
     return () => controller.abort();
   }, [date, load, reloadToken]);
@@ -198,7 +225,8 @@ export function JournalView({
     if (!generating) return;
     const controller = new AbortController();
     const timer = window.setInterval(() => {
-      void load(date, controller.signal, false);
+      if (inFlightRef.current > 0) return;
+      void load(date, controller.signal, false, true);
     }, POLL_MS);
     return () => {
       controller.abort();
@@ -478,6 +506,16 @@ export function JournalView({
           >
             {t("journal.retry")}
           </Button>
+        </div>
+      ) : null}
+
+      {pollError && !error ? (
+        <div
+          role="status"
+          data-testid="journal-poll-error"
+          className="rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground"
+        >
+          {t("journal.pollError", { message: pollError })}
         </div>
       ) : null}
 

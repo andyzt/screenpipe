@@ -322,6 +322,95 @@ describe("JournalView", () => {
     expect(fetchJournalDay).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps the day on screen when a background poll fails", async () => {
+    // A poll failing under a reader is not a reason to take the day away: the
+    // cards on screen were read from the engine and are still true.
+    vi.useFakeTimers();
+    const generatingDay = () =>
+      makeJournalDay({
+        date: journalDayToday(),
+        day_start: at(4),
+        day_end: at(28),
+        activities: [makeActivityCard({ id: 1, start_at: at(9), end_at: at(10) })],
+        generation: {
+          enabled: true,
+          provider_ready: true,
+          provider_message: null,
+          processing: true,
+          pending_windows: 2,
+          last_window_end_at: null,
+          last_error: null,
+        },
+      });
+    fetchJournalDay.mockResolvedValue(generatingDay());
+    render(<JournalView />);
+    await vi.waitFor(() =>
+      expect(screen.getByTestId("journal-canvas")).toBeInTheDocument(),
+    );
+
+    fetchJournalDay.mockRejectedValueOnce(new Error("engine went away"));
+    await vi.advanceTimersByTimeAsync(31_000);
+
+    await vi.waitFor(() =>
+      expect(screen.getByTestId("journal-poll-error")).toHaveTextContent(
+        "engine went away",
+      ),
+    );
+    // The day, not a blank page with an error on it.
+    expect(screen.getByTestId("journal-canvas")).toBeInTheDocument();
+    expect(screen.queryByTestId("journal-error")).toBeNull();
+
+    // The next tick that works takes the strip away again.
+    fetchJournalDay.mockResolvedValue(generatingDay());
+    await vi.advanceTimersByTimeAsync(31_000);
+    await vi.waitFor(() =>
+      expect(screen.queryByTestId("journal-poll-error")).toBeNull(),
+    );
+  });
+
+  it("skips a poll tick while a read is still in flight", async () => {
+    vi.useFakeTimers();
+    fetchJournalDay.mockResolvedValue(
+      makeJournalDay({
+        date: journalDayToday(),
+        day_start: at(4),
+        day_end: at(28),
+        activities: [makeActivityCard({ id: 1, start_at: at(9), end_at: at(10) })],
+        generation: {
+          enabled: true,
+          provider_ready: true,
+          provider_message: null,
+          processing: true,
+          pending_windows: 2,
+          last_window_end_at: null,
+          last_error: null,
+        },
+      }),
+    );
+    render(<JournalView />);
+    await vi.waitFor(() =>
+      expect(screen.getByTestId("journal-canvas")).toBeInTheDocument(),
+    );
+
+    const before = fetchJournalDay.mock.calls.length;
+    // A slow engine: the first poll never answers, so the ticks behind it must
+    // not stack a second chain racing to be the last setDay.
+    let release: ((value: unknown) => void) | undefined;
+    fetchJournalDay.mockImplementationOnce(
+      () =>
+        new Promise((done) => {
+          release = done;
+        }),
+    );
+    await vi.advanceTimersByTimeAsync(31_000);
+    expect(fetchJournalDay.mock.calls.length).toBe(before + 1);
+    await vi.advanceTimersByTimeAsync(93_000);
+    expect(fetchJournalDay.mock.calls.length).toBe(before + 1);
+
+    release?.(makeJournalDay({ date: journalDayToday(), day_start: at(4) }));
+    await vi.advanceTimersByTimeAsync(31_000);
+  });
+
   it("offers a retry after a failed read", async () => {
     fetchJournalDay.mockRejectedValueOnce(new Error("mock backend unavailable"));
     render(<JournalView />);

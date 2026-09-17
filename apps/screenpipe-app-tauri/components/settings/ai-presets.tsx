@@ -419,6 +419,18 @@ const AISection = ({
   const connectionTestPassed =
     lastValidatedConnectionFingerprint === currentConnectionFingerprint;
   const apiKeyRequired = isAiApiKeyRequired(settingsPreset || {});
+  /**
+   * A keyless DeepSeek preset is not a broken one.
+   *
+   * Its key comes from the build itself — the `DEEPSEEK_API_KEY` environment
+   * variable, then the credential compiled into the binary — which this
+   * webview cannot read and cannot send. Running the connection diagnostic
+   * from here therefore reports "connection failed" about a preset that works
+   * everywhere else in the app. Say where the key comes from instead.
+   */
+  const usesBuiltInTeamKey =
+    settingsPreset?.provider === "deepseek" &&
+    !String(settingsPreset?.apiKey ?? "").trim();
 
   const isFormValid = useMemo(() => {
     // Name is not required: an empty name gets auto-generated at save time.
@@ -1383,6 +1395,9 @@ const AISection = ({
   useEffect(() => {
     if (settingsPreset?.provider === "screenpipe-cloud" || settingsPreset?.provider === "acp") return;
     if (!settingsPreset?.provider) return;
+    // Nothing here can authenticate as the built-in key, so the only thing
+    // this diagnostic could report is a failure that is not true.
+    if (usesBuiltInTeamKey) return;
     if (Object.keys(connectionFieldErrors).length > 0) return;
 
     if (
@@ -1399,7 +1414,7 @@ const AISection = ({
       }, 1000);
       return () => clearTimeout(timer);
     }
-  }, [settingsPreset?.provider, settingsPreset?.url, settingsPreset?.apiKey, connectionFieldErrors, runDiagnostics, chatgptLoggedIn]);
+  }, [settingsPreset?.provider, settingsPreset?.url, settingsPreset?.apiKey, connectionFieldErrors, runDiagnostics, chatgptLoggedIn, usesBuiltInTeamKey]);
 
   // Cleanup abort controller on unmount
   useEffect(() => {
@@ -2060,6 +2075,14 @@ const AISection = ({
               {connectionTestRequired && !connectionTestPassed && testStatus !== "testing" && (
                 <span className="text-xs text-destructive">
                   {t("settings.ai.test.required")}
+                </span>
+              )}
+              {usesBuiltInTeamKey && testStatus === "idle" && (
+                <span
+                  className="text-xs text-muted-foreground"
+                  data-testid="ai-preset-built-in-key"
+                >
+                  {t("settings.ai.test.builtInTeamKey")}
                 </span>
               )}
               {testStatus === "done" && (

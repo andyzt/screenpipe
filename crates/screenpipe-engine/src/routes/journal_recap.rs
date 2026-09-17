@@ -124,7 +124,13 @@ pub async fn get_journal_recap(
         .get_journal_recap(&date.to_string())
         .await
         .map_err(internal)?;
-    let status = resolve_status(&state.db, stored.as_ref(), day_start, day_end).await?;
+    let status = resolve_status(
+        &state.db,
+        stored.as_ref(),
+        read_start(&state, day_start, now),
+        day_end,
+    )
+    .await?;
     Ok(JsonResponse(response_from(date, status, stored)))
 }
 
@@ -158,6 +164,7 @@ pub async fn generate_journal_recap(
         .map_err(|error| provider_not_ready(Some(error.to_string())))?;
 
     let categories = state.db.list_journal_categories().await.map_err(internal)?;
+    let day_start = read_start(&state, day_start, now);
     let activities: Vec<_> = state
         .db
         .list_journal_activities(day_start, day_end)
@@ -261,6 +268,11 @@ pub async fn generate_journal_recap(
 
 /// The `recap` line `GET /journal/day` carries. Lives here so the day route
 /// adds one field and one call rather than a copy of the staleness rule.
+///
+/// `day_start` is the *clamped* start the caller is reading from, not the
+/// day's 04:00 bound: the staleness fingerprint must cover exactly the cards
+/// the response shows, or a card behind the history cutoff — which the reader
+/// never sees — turns the recap `stale` and stays that way.
 pub async fn recap_status_for_day(
     db: &DatabaseManager,
     day: NaiveDate,
@@ -423,6 +435,21 @@ fn hidden(state: &Arc<AppState>, day_end: DateTime<Utc>, now: DateTime<Utc>) -> 
         .is_some_and(|cutoff| day_end < cutoff)
 }
 
+/// Where this day's cards start being readable. A day only partly inside the
+/// history window is summarised — and its staleness fingerprint taken — over
+/// the visible part alone, which is the same set of cards `GET /journal/day`
+/// serves and the same start it passes to [`recap_status_for_day`].
+fn read_start(
+    state: &Arc<AppState>,
+    day_start: DateTime<Utc>,
+    now: DateTime<Utc>,
+) -> DateTime<Utc> {
+    match state.history_access.cutoff(now) {
+        Some(cutoff) => day_start.max(cutoff),
+        None => day_start,
+    }
+}
+
 fn parse_instant(value: &str) -> Option<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(value)
         .ok()
@@ -559,6 +586,58 @@ mod tests {
         assert_eq!(status, JournalRecapStatus::none());
         assert_eq!(status.status, "none");
         assert!(status.generated_at.is_none());
+    }
+
+    /// The day route hands this function the *clamped* start, so the
+    /// fingerprint covers exactly the cards that response shows. Fingerprinting
+    /// the unclamped day would fold in cards behind the history cutoff and a
+    /// restricted account would see a recap flip to `stale` because of a card
+    /// it is not allowed to read.
+    #[tokio::test]
+    async fn the_fingerprint_covers_only_the_readable_part_of_the_day() {
+        let (db, _dir) = test_db().await;
+        let day = date("2026-09-16");
+        let (day_start, day_end) = (at("2026-09-16T04:00:00Z"), at("2026-09-17T04:00:00Z"));
+        // The cutoff a 24-hour rolling window would put inside this day.
+        let read_start = at("2026-09-16T07:00:00Z");
+        let mut behind = card("behind-the-cutoff");
+        behind.start_at = at("2026-09-16T05:00:00Z");
+        behind.end_at = at("2026-09-16T05:40:00Z");
+        db.replace_activities_in_range(behind.start_at, behind.end_at, &[behind])
+            .await
+            .unwrap();
+        db.replace_activities_in_range(
+            at("2026-09-16T08:00:00Z"),
+            at("2026-09-16T09:00:00Z"),
+            &[card("visible")],
+        )
+        .await
+        .unwrap();
+
+        // The recap was generated over the readable part of the day.
+        let marks = db
+            .journal_activity_write_marks(read_start, day_end)
+            .await
+            .unwrap();
+        db.upsert_journal_recap(&stored(Some(&cards_hash(&marks))))
+            .await
+            .unwrap();
+        assert_eq!(
+            recap_status_for_day(&db, day, read_start, day_end)
+                .await
+                .unwrap()
+                .status,
+            "ready"
+        );
+        // The same recap against the unclamped day is a different fingerprint:
+        // the hidden card is in it.
+        assert_eq!(
+            recap_status_for_day(&db, day, day_start, day_end)
+                .await
+                .unwrap()
+                .status,
+            "stale"
+        );
     }
 
     #[tokio::test]

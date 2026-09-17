@@ -567,7 +567,14 @@ fn is_ornament(character: char) -> bool {
 /// A token that is decoration or a live counter rather than part of the task:
 /// a bare ornament, a `[3/10]` progress fragment, `42%`, a bracketed `(12)`
 /// unread count, or an elapsed `00:12` / `1:02:33` timer.
-fn is_status_token(token: &str) -> bool {
+///
+/// `trailing` says the token is the last thing in the title with nothing
+/// decorative beside it. There a two-part `10:30` is far more often a time the
+/// task is named after — "Standup at 10:30", "Ship by 17:00" — than a running
+/// clock, and stripping it left the ledger keying a title that ends in a
+/// preposition. Only the three-part `1:02:33` form is unambiguous enough to
+/// drop from the end on its own.
+fn is_status_token(token: &str, trailing: bool) -> bool {
     if token.is_empty() || token.chars().all(is_ornament) {
         return true;
     }
@@ -596,7 +603,8 @@ fn is_status_token(token: &str) -> bool {
         return true;
     }
     let parts: Vec<&str> = core.split(':').collect();
-    if parts.len() >= 2 && parts.iter().all(|part| digits(part) && part.len() <= 2) {
+    let clock = parts.len() >= 2 && parts.iter().all(|part| digits(part) && part.len() <= 2);
+    if clock && (!trailing || parts.len() >= 3) {
         return true;
     }
     false
@@ -620,22 +628,46 @@ fn is_separator_token(token: &str) -> bool {
 /// trimmed: whatever sits between the ornaments is the task and is left
 /// exactly as the window reported it.
 pub(crate) fn normalize_title(value: &str) -> String {
-    let mut tokens: Vec<&str> = value
-        .split_whitespace()
+    let raw: Vec<&str> = value.split_whitespace().collect();
+    // Whether the title ends in an ornament — "Build 12:34 ⣾" or
+    // "Build 12:34⣾". The ornament itself is about to be trimmed away, and
+    // the trailing loop below needs to know it was there.
+    let decorated_tail = raw
+        .last()
+        .is_some_and(|token| token.trim_end_matches(is_ornament) != *token);
+    let mut tokens: Vec<&str> = raw
+        .iter()
         .map(|token| token.trim_matches(is_ornament))
         .filter(|token| !token.is_empty())
         .collect();
+    // A timer at the head of a title is always a timer: nothing is named
+    // "10:30 Standup".
     while tokens
         .first()
-        .is_some_and(|token| is_status_token(token) || is_separator_token(token))
+        .is_some_and(|token| is_status_token(token, false) || is_separator_token(token))
     {
         tokens.remove(0);
     }
-    while tokens
-        .last()
-        .is_some_and(|token| is_status_token(token) || is_separator_token(token))
-    {
+    // At the tail it depends on the company it keeps: `01:23` is decoration
+    // next to other decoration ("deploy [3/10] 01:23", "Build 12:34 ⣾") and a
+    // clock time on its own ("Standup at 10:30").
+    let mut glyph_after = decorated_tail;
+    while let Some(&last) = tokens.last() {
+        if is_separator_token(last) {
+            tokens.pop();
+            continue;
+        }
+        let decorated = glyph_after
+            || tokens
+                .len()
+                .checked_sub(2)
+                .and_then(|index| tokens.get(index).copied())
+                .is_some_and(|token| is_status_token(token, false));
+        if !is_status_token(last, !decorated) {
+            break;
+        }
         tokens.pop();
+        glyph_after = true;
     }
     tokens.join(" ")
 }
@@ -832,10 +864,18 @@ mod tests {
                 "[2/7] building screenpipe-engine",
                 "building screenpipe-engine",
             ),
-            ("Recording 12:31", "Recording"),
             ("00:12 — Zoom Meeting", "Zoom Meeting"),
             ("Exporting fixtures — 42%", "Exporting fixtures"),
+            // A trailing timer next to other decoration is decoration too.
             ("◐ deploy [3/10] 01:23", "deploy"),
+            ("Build 12:34 ⣾", "Build"),
+            ("Rendering 1:02:33", "Rendering"),
+            // …and on its own it is a time the task is named after. Keying
+            // "Standup at" was worse than keying the clock: the title the user
+            // reads in their journal ended in a preposition.
+            ("Standup at 10:30", "Standup at 10:30"),
+            ("Recording 12:31", "Recording 12:31"),
+            ("Ship by 17:00", "Ship by 17:00"),
             // Normal titles are left exactly as the window reported them.
             ("day.rs — screenpipe", "day.rs — screenpipe"),
             ("-bash", "-bash"),

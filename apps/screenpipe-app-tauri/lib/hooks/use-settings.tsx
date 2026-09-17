@@ -318,7 +318,7 @@ export type Settings = SettingsStore & {
 	/** Next native Activity generation run as an ISO timestamp. */
 	activitiesNextRunAt?: string;
 	/** Run the background daily-journal writer. Default true.
-	 *  Frontend-only today: these seven keys ride the Rust `extra` map
+	 *  Frontend-only today: these eight keys ride the Rust `extra` map
 	 *  (`SettingsStore.extra`) so a Rust save round-trips them untouched.
 	 *  Contract: `docs/JOURNAL_API_CONTRACT.md` § Settings. */
 	journalEnabled?: boolean;
@@ -334,6 +334,10 @@ export type Settings = SettingsStore & {
 	 *  `PUT /journal/categories`. Unset means the choice is still pending and
 	 *  `lib/journal/use-role-preset.ts` retries it on the next journal mount. */
 	journalRolePresetApplied?: boolean;
+	/** Let the journal's app icons fall back to fetching favicons from the public
+	 *  internet; off by default because it would send every browsed hostname to a
+	 *  third party. */
+	journalRemoteFavicons?: boolean;
 	/** Notification layer for focus divergence. Default false. */
 	focusNudgesEnabled?: boolean;
 	/** How long a divergence must persist before it is classified. Default 10. */
@@ -679,6 +683,66 @@ export function makeDefaultPresets(_isPro: boolean): AIPreset[] {
 
 const DEFAULT_DEEPSEEK_PRESET: AIPreset = makeDefaultPresets(false)[0];
 
+/** Host of the direct DeepSeek endpoint the first accountless build seeded. */
+const DIRECT_DEEPSEEK_HOST = "api.deepseek.com";
+/** The only two model ids that build ever wrote into the direct preset. */
+const DIRECT_DEEPSEEK_MODELS = new Set([
+	"deepseek-v4-flash-vision-exp",
+	"deepseek/deepseek-v4-flash-vision-exp",
+]);
+
+/**
+ * Drop the direct-endpoint DeepSeek preset the first accountless build seeded.
+ * That account is not funded by the team, so every call from it fails with
+ * `402 Insufficient Balance`, and while it stayed the default preset the
+ * journal could not write a single card.
+ *
+ * The match is deliberately narrow — exactly the shape that build wrote, never
+ * a preset the user made:
+ *   - `provider === "custom"`, and
+ *   - the URL parses and its hostname is exactly `api.deepseek.com` (parsed,
+ *     lowercased and compared whole, so neither `api.deepseek.com.evil.test`
+ *     nor a path prefix such as `https://evil.test/api.deepseek.com` matches),
+ *     and
+ *   - `model` is exactly `deepseek-v4-flash-vision-exp` or
+ *     `deepseek/deepseek-v4-flash-vision-exp`.
+ * A user's own `deepseek-chat` / `deepseek-reasoner` preset pointed at
+ * `https://api.deepseek.com/v1` with their own key therefore survives.
+ *
+ * The team gateway preset replaces the dropped one when nothing is left, or
+ * when the dropped preset was the default and nothing left is: an existing
+ * keyless gateway preset takes the default role, otherwise one is seeded. Both
+ * paths leave exactly one preset flagged as the default.
+ *
+ * Pure: the input presets are never mutated; copies are returned. Returns
+ * `null` when there is nothing to drop.
+ */
+export function dropDirectDeepSeekPreset(value: unknown): AIPreset[] | null {
+	const presets: any[] = Array.isArray(value) ? value : [];
+	const isDirect = (p: any) => {
+		if (!p || p.provider !== "custom") return false;
+		if (typeof p.url !== "string" || typeof p.model !== "string") return false;
+		if (!DIRECT_DEEPSEEK_MODELS.has(p.model)) return false;
+		try {
+			return new URL(p.url).hostname.toLowerCase() === DIRECT_DEEPSEEK_HOST;
+		} catch {
+			return false;
+		}
+	};
+	if (!presets.some(isDirect)) return null;
+	const wasDefault = presets.some((p) => isDirect(p) && p.defaultPreset === true);
+	const kept = presets
+		.filter((p) => !isDirect(p))
+		.map((p) => (p && typeof p === "object" ? { ...p } : p));
+	const hasDefault = kept.some((p) => p?.defaultPreset === true);
+	if (kept.length === 0 || (wasDefault && !hasDefault)) {
+		const gateway = kept.find((p) => p?.provider === "deepseek");
+		if (gateway) gateway.defaultPreset = true;
+		else kept.push({ ...DEFAULT_DEEPSEEK_PRESET, defaultPreset: true });
+	}
+	return kept as AIPreset[];
+}
+
 /**
  * Move keyless DeepSeek presets off the retired vision model onto the current
  * default. The vision model was the seed until 2026-09-18, but no feature in
@@ -910,6 +974,7 @@ let DEFAULT_SETTINGS: Settings = {
 			sidebarNavLayout: { ...DEFAULT_SIDEBAR_NAV_LAYOUT },
 			journalEnabled: true,
 			journalWorkProfile: { role: "", projects: [], notes: "" },
+			journalRemoteFavicons: false,
 			focusNudgesEnabled: false,
 			focusGraceMinutes: 10,
 			ignoreIncognitoWindows: true,
@@ -1373,25 +1438,38 @@ function createSettingsStore() {
 				settings.aiPresets = retired as any;
 				needsUpdate = true;
 			}
+			const dropped = dropDirectDeepSeekPreset(settings.aiPresets);
+			if (dropped) {
+				settings.aiPresets = dropped as any;
+				needsUpdate = true;
+			}
 		}
 
 		// Migration: add the DeepSeek preset for existing installs (without
 		// touching their existing presets). It becomes the default so a store that
 		// only ever had screenpipe-cloud presets (which now need no account but
 		// still need a cloud token) lands on a provider that works out of the box.
-		const hasDeepSeekPreset = settings.aiPresets?.some(
-			(p: any) => p.provider === "deepseek"
-		);
-		if (settings.aiPresets && settings.aiPresets.length > 0 && !hasDeepSeekPreset) {
-			const onlyCloudDefaults = settings.aiPresets.every(
-				(p: any) => !p.defaultPreset || p.provider === "screenpipe-cloud"
+		// Runs exactly once per store: `_deepseekPresetSeeded` is written the first
+		// time this block is evaluated, whether or not it seeded anything, so a
+		// preset the user later deletes is never resurrected on the next load.
+		if (!(settings as any)._deepseekPresetSeeded) {
+			const hasDeepSeekPreset = settings.aiPresets?.some(
+				(p: any) => p.provider === "deepseek"
 			);
-			settings.aiPresets = [
-				{ ...DEFAULT_DEEPSEEK_PRESET, defaultPreset: onlyCloudDefaults } as any,
-				...settings.aiPresets.map((p: any) =>
-					onlyCloudDefaults ? { ...p, defaultPreset: false } : p
-				),
-			];
+			if (settings.aiPresets && settings.aiPresets.length > 0 && !hasDeepSeekPreset) {
+				const onlyCloudDefaults = settings.aiPresets.every(
+					(p: any) => !p.defaultPreset || p.provider === "screenpipe-cloud"
+				);
+				settings.aiPresets = [
+					{ ...DEFAULT_DEEPSEEK_PRESET, defaultPreset: onlyCloudDefaults } as any,
+					...settings.aiPresets.map((p: any) =>
+						onlyCloudDefaults ? { ...p, defaultPreset: false } : p
+					),
+				];
+			}
+			// The marker itself has to reach the store, so this write is needed even
+			// when no preset was seeded.
+			(settings as any)._deepseekPresetSeeded = true;
 			needsUpdate = true;
 		}
 

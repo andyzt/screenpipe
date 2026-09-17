@@ -60,16 +60,27 @@ time zone.
 }
 ```
 
+`activities` carries every card whose span overlaps the day, whole — a card
+running across local 04:00 is served by both of its days, unchanged. `totals`
+and `review_totals`, by contrast, count only the part of each card that falls
+inside `[day_start, day_end)`, clipped by the history-access policy: the
+estimates that are spread over a span (`active_minutes`, a card's `apps`
+minutes) are scaled by the share of the span that survives the clip, and
+`longest_focus_block_minutes` never merges across the boundary. Summing the
+seven days of a week therefore counts every minute exactly once.
+
 `review_totals` split `wall_minutes` of non-idle cards by the review rating
 covering each minute. `recap.status` is `stale` when cards changed after the
 recap was written (see *Daily recap*); the recap body itself is fetched
-separately.
+separately, and both are computed over the readable part of the day.
 
-`focus_minutes` = minutes of cards whose category is not system/idle and not
-named "Distraction", minus `distractions[]` sub-intervals.
-`distraction_minutes` = minutes of "Distraction"-category cards plus
-`distractions[]` sub-intervals inside other cards. `longest_focus_block_minutes`
-merges focus intervals separated by less than 5 minutes.
+`focus_minutes` = minutes of cards whose category is not system/idle and whose
+`category.id` is not `distraction`, minus `distractions[]` sub-intervals.
+`distraction_minutes` = minutes of cards in the `distraction` category plus
+`distractions[]` sub-intervals inside other cards. The match is on the category
+id, not on the name, so a renamed or translated Distraction category keeps
+counting. `longest_focus_block_minutes` merges focus intervals separated by
+less than 5 minutes.
 
 `by_app` is every card's `apps` summed, top 12, descending by `minutes` with
 ties broken by `name` then `host`.
@@ -172,21 +183,27 @@ order, and each is clamped by the history-access policy on its own.
 }
 ```
 
-The week's minute totals are the seven days' totals summed;
+The week's minute totals are the seven days' totals summed. Because each day's
+totals are clipped to that day, a card straddling local 04:00 — which appears
+in `activities` of both days — is counted once across the week.
 `longest_focus_block_minutes` is the largest of the seven, not a block merged
 across the 04:00 boundary. `by_app` is the top 12 across the week, summed from
-the cards themselves (deduplicated by card id, because a card straddling local
-04:00 is served by both of its days) rather than from the per-day top-12 lists.
-An unparseable `start` is a 400.
+the cards themselves, each clipped to the day holding it, rather than from the
+per-day top-12 lists. An unparseable `start` is a 400.
 
 ## GET /journal/week/dashboard?start=YYYY-MM-DD
 
 The analytical view of a week, computed by the engine from the same cards
 and ledger intervals as `GET /journal/week`, so the two never disagree.
 `start` follows the same rules as `/journal/week`. Idle and system cards are
-excluded from every section; a card straddling 04:00 is counted once, in the
-day of its `start_at`. `compare` is the same computation for the seven days
-before `start`, with `null` when that week has no cards.
+excluded from every section; a card straddling 04:00 is split at the boundary
+and each day counts only its own minutes, exactly as `/journal/day` totals do,
+so the two routes report the same week. `compare` is the same computation for
+the seven days before `start`, with `null` when that week has no cards. The
+two weeks are clamped by the history-access policy separately: when any part of
+the compare week is behind the cutoff, `compare` is `null` and every
+`compare_minutes` with it, rather than a partial week being presented as a
+full one.
 
 ```json
 {
@@ -228,8 +245,9 @@ Definitions:
 - `focus_share` — `focus_minutes / active_minutes`, `null` when active is 0.
 - `categories[].share` — minutes over all categorised minutes of the week
   (sums to 1); `apps[].share` — minutes over all app minutes of the week, not
-  just the top 12. `compare_minutes` is `null` when the compare week has no
-  cards and `0.0` when it has cards but not that category or app.
+  just the top 12. `compare_minutes` is `null` when there is no compare week
+  to report — no cards in it, or the history-access policy hiding part of it —
+  and `0.0` when the week has cards but not that category or app.
 - `categories` — descending by minutes, every category with minutes > 0,
   each with its top 6 apps; the donut and the sankey are drawn from this.
 - `apps` — top 12 across the week; `category_id` is the category the app spent

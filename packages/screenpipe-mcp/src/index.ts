@@ -507,7 +507,7 @@ const TOOLS: Tool[] = [
       properties: {
         date: {
           type: "string",
-          description: "Calendar date as YYYY-MM-DD. Defaults to today. A journal day runs local 04:00 to the next local 04:00.",
+          description: "Calendar date as YYYY-MM-DD, or \"today\"/\"yesterday\" (resolved against the 04:00 journal-day boundary, so before 04:00 local \"today\" still means yesterday's journal day). Defaults to today. A journal day runs local 04:00 to the next local 04:00.",
         },
       },
     },
@@ -544,7 +544,7 @@ const TOOLS: Tool[] = [
   {
     name: "set-intention",
     description:
-      "Set or end the user's current work intention. This is the only tool on this list that changes app state — it drives focus-status and the journal's intention_relation labels for cards recorded afterward. " +
+      "Set or end the user's current work intention. This is one of three tools on this list that change app state (with journal-recap, when it triggers generation, and journal-review) — it drives focus-status and the journal's intention_relation labels for cards recorded afterward. " +
       "Setting a new intention automatically ends whichever one is currently active. Pass end: true to end the active intention without starting a new one. " +
       "USE WHEN: the user states what they are about to work on ('I'm going to fix the auth bug', 'switching to writing docs'), or says they're done / stepping away.",
     annotations: {
@@ -588,7 +588,7 @@ const TOOLS: Tool[] = [
       properties: {
         date: {
           type: "string",
-          description: "Calendar date as YYYY-MM-DD. Defaults to today. A journal day runs local 04:00 to the next local 04:00.",
+          description: "Calendar date as YYYY-MM-DD, or \"today\"/\"yesterday\" (resolved against the 04:00 journal-day boundary, so before 04:00 local \"today\" still means yesterday's journal day). Defaults to today. A journal day runs local 04:00 to the next local 04:00.",
         },
         regenerate: {
           type: "boolean",
@@ -601,14 +601,14 @@ const TOOLS: Tool[] = [
   {
     name: "journal-review",
     description:
-      "Mark a span of the day as focused, neutral, or distracted — the user's own judgment, layered on top of the automatic category and intention-relation labels. Ratings never overlap: a new one splits or replaces whatever it previously covered. " +
+      "Mark a span of the day as focused, neutral, or distracted — the user's own judgment, layered on top of the automatic category and intention-relation labels. DESTRUCTIVE: ratings never overlap, so this call replaces any existing rating(s) inside the span, in whole or in part, with no way to recover what it overwrote. journal-day's response lists the day's current reviews and review_totals — check those first if you need to know what's there before overwriting it. " +
       "USE WHEN: the user corrects or confirms how a stretch of time went ('mark 9 to 10:30 as focused', 'that whole afternoon was distracted'). Pass rating: null to clear a span instead of setting one. " +
-      "This is the only tool on this list besides set-intention that changes app state. Rating a span does not itself rewrite existing card text — regenerating a card is a separate, engine-side action. " +
+      "This is one of three tools on this list that change app state (with set-intention and journal-recap, when it triggers generation). Rating a span does not itself rewrite existing card text — regenerating a card is a separate, engine-side action. " +
       "If the result says journal is unavailable, this feature does not exist on this screenpipe build yet.",
     annotations: {
       title: "Journal Review",
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       openWorldHint: false,
       idempotentHint: true,
     },
@@ -617,11 +617,11 @@ const TOOLS: Tool[] = [
       properties: {
         start: {
           type: "string",
-          description: "Start of the span, ISO-8601 timestamp (e.g. 2026-09-16T09:00:00Z). Must be before end.",
+          description: "Start of the span, a strict RFC3339 timestamp with an explicit UTC offset or \"Z\" — e.g. 2026-09-16T09:00:00-07:00 for 9am in the user's own local time zone, or 2026-09-16T16:00:00Z for the same instant in UTC. A bare timestamp with no offset is rejected. Must be before end.",
         },
         end: {
           type: "string",
-          description: "End of the span, ISO-8601 timestamp. Span is at most 24 hours.",
+          description: "End of the span, same strict RFC3339 format with an explicit UTC offset or \"Z\". Span is at most 24 hours.",
         },
         rating: {
           type: ["string", "null"],
@@ -645,7 +645,7 @@ const TOOLS: Tool[] = [
       properties: {
         start: {
           type: "string",
-          description: "First day of the week as YYYY-MM-DD. Defaults to the Monday of the current local journal week.",
+          description: "First day of the week as YYYY-MM-DD, or \"today\"/\"yesterday\" (resolved against the 04:00 journal-day boundary). Defaults to the Monday of the current local journal week.",
         },
       },
     },

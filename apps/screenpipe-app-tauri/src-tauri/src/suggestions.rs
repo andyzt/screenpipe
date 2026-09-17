@@ -15,6 +15,7 @@
 #![deny(clippy::string_slice)]
 
 use crate::recording::{local_api_context_from_app, LocalApiContext};
+use crate::ui_language::{ui_language, UiLanguage};
 use futures::StreamExt;
 use screenpipe_core::strings::{safe_byte_prefix, truncate_string};
 use serde::{Deserialize, Serialize};
@@ -106,7 +107,7 @@ pub async fn get_cached_suggestions(
     let windows = windows.unwrap_or_default();
     let mode = detect_mode(&apps, &windows);
     let top_apps: Vec<String> = apps.iter().map(|a| a.app_name.clone()).collect();
-    let suggestions = template_suggestions(mode, &top_apps, &apps, &windows);
+    let suggestions = template_suggestions(mode, &top_apps, &apps, &windows, ui_language(&app));
     let tags = generate_heuristic_tags(mode, &top_apps);
 
     let result = CachedSuggestions {
@@ -136,7 +137,7 @@ pub async fn force_regenerate_suggestions(
 ) -> Result<CachedSuggestions, String> {
     let enhanced = state.enhanced_ai.lock().await.clone();
     let api = local_api_context_from_app(&app);
-    let cached = generate_suggestions(&api, enhanced.as_ref()).await?;
+    let cached = generate_suggestions(&api, enhanced.as_ref(), ui_language(&app)).await?;
     let mut guard = state.cache.lock().await;
     *guard = Some(cached.clone());
     Ok(cached)
@@ -218,7 +219,7 @@ pub async fn auto_start_scheduler(app: AppHandle, state: &SuggestionsState) {
 
             // Fetch activity & generate suggestions
             let api = local_api_context_from_app(&app);
-            match generate_suggestions(&api, enhanced.as_ref()).await {
+            match generate_suggestions(&api, enhanced.as_ref(), ui_language(&app)).await {
                 Ok(cached) => {
                     debug!(
                         "suggestions scheduler: generated {} suggestions (mode={}, ai={}, trigger={})",
@@ -476,11 +477,67 @@ fn detect_mode(apps: &[AppActivity], windows: &[WindowActivity]) -> &'static str
 }
 
 // ─── Template suggestions ───────────────────────────────────────────────────
+//
+// These chips are what the chat shows when cloud AI is off — which, in this
+// build, is always. They are the user's first read of the product, so they
+// follow `settings.uiLanguage` like the rest of the interface
+// (`crate::ui_language`). App names, window titles and file names stay exactly
+// as the activity data spells them: translating "Cursor" or "auth.rs" would
+// make the chip stop matching what the user sees on screen.
+
+/// The one chip every mode ends with.
+fn summarize_day(language: UiLanguage) -> &'static str {
+    language.pick("summarize my day so far", "подведи итог дня")
+}
+
+/// "12min in Cursor" / "12 мин в Cursor".
+fn minutes_in(language: UiLanguage, minutes: i64, name: &str) -> String {
+    if language.is_ru() {
+        format!("{} мин в {}", minutes, name)
+    } else {
+        format!("{}min in {}", minutes, name)
+    }
+}
+
+/// [`minutes_in`] plus the window/file titles behind it.
+fn minutes_in_with_detail(language: UiLanguage, minutes: i64, name: &str, detail: &str) -> String {
+    format!("{} — {}", minutes_in(language, minutes, name), detail)
+}
+
+/// "8min active" / "8 мин активности".
+fn minutes_active(language: UiLanguage, minutes: i64) -> String {
+    if language.is_ru() {
+        format!("{} мин активности", minutes)
+    } else {
+        format!("{}min active", minutes)
+    }
+}
+
+/// The generic chips used to fill the six slots when a mode produced fewer.
+fn filler_suggestions(language: UiLanguage) -> [&'static str; 5] {
+    match language {
+        UiLanguage::En => [
+            "summarize my day so far",
+            "which apps did I use most today",
+            "show my recent screen activity",
+            "what was I working on",
+            "how much time did I spend on each app",
+        ],
+        UiLanguage::Ru => [
+            "подведи итог дня",
+            "какими приложениями я сегодня пользовался больше всего",
+            "покажи мою недавнюю активность на экране",
+            "над чем я работал",
+            "сколько времени я провёл в каждом приложении",
+        ],
+    }
+}
 
 fn coding_suggestions(
     top_apps: &[String],
     apps: &[AppActivity],
     windows: &[WindowActivity],
+    language: UiLanguage,
 ) -> Vec<Suggestion> {
     let editor = top_apps.iter().find(|a| {
         [
@@ -537,35 +594,57 @@ fn coding_suggestions(
         })
         .unwrap_or_default();
 
-    let editor_name = editor.map(|e| e.as_str()).unwrap_or("your editor");
+    let editor_name = editor
+        .map(|e| e.as_str())
+        .unwrap_or(language.pick("your editor", "вашем редакторе"));
     let editor_preview = if editor_mins > 0 && !editor_windows.is_empty() {
-        Some(format!(
-            "{}min in {} — {}",
+        Some(minutes_in_with_detail(
+            language,
             editor_mins,
             editor_name,
-            editor_windows.join(", ")
+            &editor_windows.join(", "),
         ))
     } else if editor_mins > 0 {
-        Some(format!("{}min in {}", editor_mins, editor_name))
+        Some(minutes_in(language, editor_mins, editor_name))
     } else {
         None
     };
 
     let mut suggestions = vec![
         Suggestion {
-            text: "summarize my coding session".into(),
+            text: language
+                .pick(
+                    "summarize my coding session",
+                    "подведи итог сессии программирования",
+                )
+                .into(),
             preview: editor_preview,
             priority: 1,
         },
         Suggestion {
-            text: "any errors or warnings in my terminal?".into(),
-            preview: terminal.map(|t| format!("check {} output", t)),
+            text: language
+                .pick(
+                    "any errors or warnings in my terminal?",
+                    "были ли ошибки или предупреждения в терминале?",
+                )
+                .into(),
+            preview: terminal.map(|t| {
+                if language.is_ru() {
+                    format!("посмотреть вывод {}", t)
+                } else {
+                    format!("check {} output", t)
+                }
+            }),
             priority: 2,
         },
     ];
     if let Some(ed) = editor {
         suggestions.push(Suggestion {
-            text: format!("what files did I edit in {}?", ed),
+            text: if language.is_ru() {
+                format!("какие файлы я редактировал в {}?", ed)
+            } else {
+                format!("what files did I edit in {}?", ed)
+            },
             preview: if !editor_windows.is_empty() {
                 Some(editor_windows.join(", "))
             } else {
@@ -576,19 +655,28 @@ fn coding_suggestions(
     }
     if let Some(term) = terminal {
         suggestions.push(Suggestion {
-            text: format!("what commands did I run in {}?", term),
+            text: if language.is_ru() {
+                format!("какие команды я выполнял в {}?", term)
+            } else {
+                format!("what commands did I run in {}?", term)
+            },
             preview: None,
             priority: 2,
         });
     }
     // Extra suggestions to fill 6 slots
     suggestions.push(Suggestion {
-        text: "how much time did I spend coding today?".into(),
+        text: language
+            .pick(
+                "how much time did I spend coding today?",
+                "сколько времени я сегодня программировал?",
+            )
+            .into(),
         preview: None,
         priority: 3,
     });
     suggestions.push(Suggestion {
-        text: "summarize my day so far".into(),
+        text: summarize_day(language).into(),
         preview: None,
         priority: 3,
     });
@@ -596,7 +684,11 @@ fn coding_suggestions(
     suggestions
 }
 
-fn browsing_suggestions(apps: &[AppActivity], windows: &[WindowActivity]) -> Vec<Suggestion> {
+fn browsing_suggestions(
+    apps: &[AppActivity],
+    windows: &[WindowActivity],
+    language: UiLanguage,
+) -> Vec<Suggestion> {
     let browser_total_mins: i64 = apps
         .iter()
         .filter(|a| BROWSER_APPS.iter().any(|b| *b == a.app_name.to_lowercase()))
@@ -627,17 +719,25 @@ fn browsing_suggestions(apps: &[AppActivity], windows: &[WindowActivity]) -> Vec
         .collect();
 
     let mut suggestions = vec![Suggestion {
-        text: "summarize the pages I browsed".into(),
+        text: language
+            .pick(
+                "summarize the pages I browsed",
+                "подведи итог страниц, которые я смотрел",
+            )
+            .into(),
         preview: if browser_total_mins > 0 {
-            Some(format!(
-                "{}min browsing — {}",
-                browser_total_mins,
-                if top_pages.is_empty() {
-                    "various pages".into()
-                } else {
-                    top_pages.join(", ")
-                }
-            ))
+            let pages = if top_pages.is_empty() {
+                language
+                    .pick("various pages", "разные страницы")
+                    .to_string()
+            } else {
+                top_pages.join(", ")
+            };
+            Some(if language.is_ru() {
+                format!("{} мин в браузере — {}", browser_total_mins, pages)
+            } else {
+                format!("{}min browsing — {}", browser_total_mins, pages)
+            })
         } else {
             None
         },
@@ -647,23 +747,40 @@ fn browsing_suggestions(apps: &[AppActivity], windows: &[WindowActivity]) -> Vec
     for w in &browser_windows {
         let title = truncate_string(&w.window_name, 35);
         suggestions.push(Suggestion {
-            text: format!("what was I reading on \"{}\"?", title),
-            preview: Some(format!("{}min on this page", w.cnt / 60)),
+            text: if language.is_ru() {
+                format!("что я читал на «{}»?", title)
+            } else {
+                format!("what was I reading on \"{}\"?", title)
+            },
+            preview: Some(if language.is_ru() {
+                format!("{} мин на этой странице", w.cnt / 60)
+            } else {
+                format!("{}min on this page", w.cnt / 60)
+            }),
             priority: 2,
         });
     }
 
     suggestions.push(Suggestion {
-        text: "how much time did I spend browsing?".into(),
+        text: language
+            .pick(
+                "how much time did I spend browsing?",
+                "сколько времени я провёл в браузере?",
+            )
+            .into(),
         preview: if browser_total_mins > 0 {
-            Some(format!("~{}min total", browser_total_mins))
+            Some(if language.is_ru() {
+                format!("~{} мин всего", browser_total_mins)
+            } else {
+                format!("~{}min total", browser_total_mins)
+            })
         } else {
             None
         },
         priority: 3,
     });
     suggestions.push(Suggestion {
-        text: "summarize my day so far".into(),
+        text: summarize_day(language).into(),
         preview: None,
         priority: 3,
     });
@@ -671,7 +788,11 @@ fn browsing_suggestions(apps: &[AppActivity], windows: &[WindowActivity]) -> Vec
     suggestions
 }
 
-fn meeting_suggestions(apps: &[AppActivity], windows: &[WindowActivity]) -> Vec<Suggestion> {
+fn meeting_suggestions(
+    apps: &[AppActivity],
+    windows: &[WindowActivity],
+    language: UiLanguage,
+) -> Vec<Suggestion> {
     // Find meeting app and duration
     let meeting_app = apps
         .iter()
@@ -679,7 +800,7 @@ fn meeting_suggestions(apps: &[AppActivity], windows: &[WindowActivity]) -> Vec<
     let meeting_mins = meeting_app.map(|a| a.cnt / 60).unwrap_or(0);
     let meeting_name = meeting_app
         .map(|a| a.app_name.as_str())
-        .unwrap_or("your call");
+        .unwrap_or(language.pick("your call", "вашем звонке"));
 
     // Try to get meeting title from window
     let meeting_title = windows
@@ -691,9 +812,13 @@ fn meeting_suggestions(apps: &[AppActivity], windows: &[WindowActivity]) -> Vec<
 
     let preview = if meeting_mins > 0 {
         if let Some(title) = &meeting_title {
-            Some(format!("{}min — {}", meeting_mins, title))
+            Some(if language.is_ru() {
+                format!("{} мин — {}", meeting_mins, title)
+            } else {
+                format!("{}min — {}", meeting_mins, title)
+            })
         } else {
-            Some(format!("{}min in {}", meeting_mins, meeting_name))
+            Some(minutes_in(language, meeting_mins, meeting_name))
         }
     } else {
         None
@@ -701,32 +826,45 @@ fn meeting_suggestions(apps: &[AppActivity], windows: &[WindowActivity]) -> Vec<
 
     vec![
         Suggestion {
-            text: "summarize my last meeting".into(),
+            text: language
+                .pick(
+                    "summarize my last meeting",
+                    "подведи итог последней встречи",
+                )
+                .into(),
             preview,
             priority: 1,
         },
         Suggestion {
-            text: "what action items came up?".into(),
+            text: language
+                .pick("what action items came up?", "какие задачи появились?")
+                .into(),
             preview: None,
             priority: 1,
         },
         Suggestion {
-            text: "who said what in the call?".into(),
+            text: language
+                .pick("who said what in the call?", "кто что говорил на встрече?")
+                .into(),
             preview: None,
             priority: 2,
         },
         Suggestion {
-            text: "list the key decisions made".into(),
+            text: language
+                .pick("list the key decisions made", "перечисли принятые решения")
+                .into(),
             preview: None,
             priority: 2,
         },
         Suggestion {
-            text: "what topics were discussed?".into(),
+            text: language
+                .pick("what topics were discussed?", "какие темы обсуждались?")
+                .into(),
             preview: None,
             priority: 3,
         },
         Suggestion {
-            text: "summarize my day so far".into(),
+            text: summarize_day(language).into(),
             preview: None,
             priority: 3,
         },
@@ -737,6 +875,7 @@ fn writing_suggestions(
     top_apps: &[String],
     apps: &[AppActivity],
     windows: &[WindowActivity],
+    language: UiLanguage,
 ) -> Vec<Suggestion> {
     let app = top_apps
         .iter()
@@ -767,29 +906,37 @@ fn writing_suggestions(
         .unwrap_or_default();
 
     let preview = if app_mins > 0 {
-        let app_name = app.map(|a| a.as_str()).unwrap_or("writing app");
+        let app_name = app
+            .map(|a| a.as_str())
+            .unwrap_or(language.pick("writing app", "редакторе"));
         if !doc_titles.is_empty() {
-            Some(format!(
-                "{}min in {} — {}",
+            Some(minutes_in_with_detail(
+                language,
                 app_mins,
                 app_name,
-                doc_titles.join(", ")
+                &doc_titles.join(", "),
             ))
         } else {
-            Some(format!("{}min in {}", app_mins, app_name))
+            Some(minutes_in(language, app_mins, app_name))
         }
     } else {
         None
     };
 
     let mut suggestions = vec![Suggestion {
-        text: "summarize what I wrote".into(),
+        text: language
+            .pick("summarize what I wrote", "подведи итог того, что я написал")
+            .into(),
         preview,
         priority: 1,
     }];
     if let Some(app_name) = app {
         suggestions.push(Suggestion {
-            text: format!("show my recent notes in {}", app_name),
+            text: if language.is_ru() {
+                format!("покажи мои последние заметки в {}", app_name)
+            } else {
+                format!("show my recent notes in {}", app_name)
+            },
             preview: if !doc_titles.is_empty() {
                 Some(doc_titles.join(", "))
             } else {
@@ -799,12 +946,14 @@ fn writing_suggestions(
         });
     }
     suggestions.push(Suggestion {
-        text: "what topics was I writing about?".into(),
+        text: language
+            .pick("what topics was I writing about?", "о чём я писал?")
+            .into(),
         preview: None,
         priority: 2,
     });
     suggestions.push(Suggestion {
-        text: "summarize my day so far".into(),
+        text: summarize_day(language).into(),
         preview: None,
         priority: 3,
     });
@@ -812,7 +961,11 @@ fn writing_suggestions(
     suggestions
 }
 
-fn communication_suggestions(apps: &[AppActivity], windows: &[WindowActivity]) -> Vec<Suggestion> {
+fn communication_suggestions(
+    apps: &[AppActivity],
+    windows: &[WindowActivity],
+    language: UiLanguage,
+) -> Vec<Suggestion> {
     let comm_apps: Vec<_> = apps
         .iter()
         .filter(|a| {
@@ -829,13 +982,16 @@ fn communication_suggestions(apps: &[AppActivity], windows: &[WindowActivity]) -
         .collect();
 
     let mut suggestions = vec![Suggestion {
-        text: "summarize my conversations".into(),
+        text: language
+            .pick("summarize my conversations", "подведи итог переписок")
+            .into(),
         preview: if total_comm_mins > 0 {
-            Some(format!(
-                "{}min across {}",
-                total_comm_mins,
-                comm_app_names.join(", ")
-            ))
+            let names = comm_app_names.join(", ");
+            Some(if language.is_ru() {
+                format!("{} мин в {}", total_comm_mins, names)
+            } else {
+                format!("{}min across {}", total_comm_mins, names)
+            })
         } else {
             None
         },
@@ -871,8 +1027,12 @@ fn communication_suggestions(apps: &[AppActivity], windows: &[WindowActivity]) -
         }
         seen.insert(name.to_lowercase());
         suggestions.push(Suggestion {
-            text: format!("what did I discuss on {}?", name),
-            preview: Some(format!("{}min active", w.cnt / 60)),
+            text: if language.is_ru() {
+                format!("что я обсуждал в {}?", name)
+            } else {
+                format!("what did I discuss on {}?", name)
+            },
+            preview: Some(minutes_active(language, w.cnt / 60)),
             priority: 2,
         });
         if suggestions.len() >= 4 {
@@ -881,12 +1041,17 @@ fn communication_suggestions(apps: &[AppActivity], windows: &[WindowActivity]) -
     }
 
     suggestions.push(Suggestion {
-        text: "any messages I need to reply to?".into(),
+        text: language
+            .pick(
+                "any messages I need to reply to?",
+                "на какие сообщения нужно ответить?",
+            )
+            .into(),
         preview: None,
         priority: 2,
     });
     suggestions.push(Suggestion {
-        text: "summarize my day so far".into(),
+        text: summarize_day(language).into(),
         preview: None,
         priority: 3,
     });
@@ -898,6 +1063,7 @@ fn video_editing_suggestions(
     top_apps: &[String],
     apps: &[AppActivity],
     windows: &[WindowActivity],
+    language: UiLanguage,
 ) -> Vec<Suggestion> {
     let app_entry = apps.iter().find(|a| {
         VIDEO_EDITING_APPS
@@ -912,7 +1078,7 @@ fn video_editing_suggestions(
                 .find(|a| VIDEO_EDITING_APPS.iter().any(|v| *v == a.to_lowercase()))
                 .map(|s| s.as_str())
         })
-        .unwrap_or("my editor");
+        .unwrap_or(language.pick("my editor", "моём редакторе"));
     let app_mins = app_entry.map(|a| a.cnt / 60).unwrap_or(0);
 
     // Get project name from window title
@@ -936,26 +1102,38 @@ fn video_editing_suggestions(
 
     vec![
         Suggestion {
-            text: format!("how long was my {} session?", app),
+            text: if language.is_ru() {
+                format!("сколько длилась моя сессия в {}?", app)
+            } else {
+                format!("how long was my {} session?", app)
+            },
             preview: if app_mins > 0 {
-                Some(format!("{}min so far", app_mins))
+                Some(if language.is_ru() {
+                    format!("{} мин пока что", app_mins)
+                } else {
+                    format!("{}min so far", app_mins)
+                })
             } else {
                 None
             },
             priority: 1,
         },
         Suggestion {
-            text: "what project was I editing?".into(),
+            text: language
+                .pick("what project was I editing?", "какой проект я монтировал?")
+                .into(),
             preview: project_name,
             priority: 2,
         },
         Suggestion {
-            text: "summarize my editing timeline".into(),
+            text: language
+                .pick("summarize my editing timeline", "подведи итог монтажа")
+                .into(),
             preview: None,
             priority: 2,
         },
         Suggestion {
-            text: "summarize my day so far".into(),
+            text: summarize_day(language).into(),
             preview: None,
             priority: 3,
         },
@@ -966,6 +1144,7 @@ fn idle_suggestions(
     top_apps: &[String],
     apps: &[AppActivity],
     windows: &[WindowActivity],
+    language: UiLanguage,
 ) -> Vec<Suggestion> {
     let skip = [
         "finder",
@@ -990,13 +1169,22 @@ fn idle_suggestions(
         .map(|a| a.cnt / 60);
 
     let mut suggestions = vec![Suggestion {
-        text: "what did I work on in the last hour?".into(),
+        text: language
+            .pick(
+                "what did I work on in the last hour?",
+                "над чем я работал последний час?",
+            )
+            .into(),
         preview: if total_mins > 0 {
             let app_count = apps
                 .iter()
                 .filter(|a| !skip.contains(&a.app_name.to_lowercase().as_str()))
                 .count();
-            Some(format!("{}min across {} apps", total_mins, app_count))
+            Some(if language.is_ru() {
+                format!("{} мин в {} приложениях", total_mins, app_count)
+            } else {
+                format!("{}min across {} apps", total_mins, app_count)
+            })
         } else {
             None
         },
@@ -1005,8 +1193,12 @@ fn idle_suggestions(
 
     if let Some(app) = top_app {
         suggestions.push(Suggestion {
-            text: format!("what was I doing in {}?", app),
-            preview: top_app_mins.map(|m| format!("{}min active", m)),
+            text: if language.is_ru() {
+                format!("что я делал в {}?", app)
+            } else {
+                format!("what was I doing in {}?", app)
+            },
+            preview: top_app_mins.map(|m| minutes_active(language, m)),
             priority: 2,
         });
     }
@@ -1020,21 +1212,22 @@ fn idle_suggestions(
     if let Some(w) = interesting_window {
         let title = truncate_string(&w.window_name, 35);
         suggestions.push(Suggestion {
-            text: format!("summarize \"{}\"", title),
-            preview: Some(format!("in {}", w.app_name)),
+            text: if language.is_ru() {
+                format!("подведи итог «{}»", title)
+            } else {
+                format!("summarize \"{}\"", title)
+            },
+            preview: Some(if language.is_ru() {
+                format!("в {}", w.app_name)
+            } else {
+                format!("in {}", w.app_name)
+            }),
             priority: 2,
         });
     }
 
     // Fill remaining slots to always have exactly 6
-    let fillers = [
-        "summarize my day so far",
-        "which apps did I use most today",
-        "show my recent screen activity",
-        "what was I working on",
-        "how much time did I spend on each app",
-    ];
-    for text in fillers {
+    for text in filler_suggestions(language) {
         if suggestions.len() >= 6 {
             break;
         }
@@ -1079,15 +1272,16 @@ fn template_suggestions(
     top_apps: &[String],
     apps: &[AppActivity],
     windows: &[WindowActivity],
+    language: UiLanguage,
 ) -> Vec<Suggestion> {
     let mut suggestions = match mode {
-        "coding" => coding_suggestions(top_apps, apps, windows),
-        "browsing" => browsing_suggestions(apps, windows),
-        "meeting" => meeting_suggestions(apps, windows),
-        "writing" => writing_suggestions(top_apps, apps, windows),
-        "communication" => communication_suggestions(apps, windows),
-        "video_editing" => video_editing_suggestions(top_apps, apps, windows),
-        _ => idle_suggestions(top_apps, apps, windows),
+        "coding" => coding_suggestions(top_apps, apps, windows, language),
+        "browsing" => browsing_suggestions(apps, windows, language),
+        "meeting" => meeting_suggestions(apps, windows, language),
+        "writing" => writing_suggestions(top_apps, apps, windows, language),
+        "communication" => communication_suggestions(apps, windows, language),
+        "video_editing" => video_editing_suggestions(top_apps, apps, windows, language),
+        _ => idle_suggestions(top_apps, apps, windows, language),
     };
 
     // Filter out suggestions that reference apps/services the user hasn't used.
@@ -1114,15 +1308,12 @@ fn template_suggestions(
 
     // Backfill if filtering removed too many suggestions
     if suggestions.len() < 6 {
-        let fillers = [
-            "summarize my day so far",
-            "which apps did I use most today",
-            "show my recent screen activity",
-            "what was I working on",
-            "how much time did I spend on each app",
+        let last_hour = language.pick(
             "summarize my activity from the last hour",
-        ];
-        for filler in fillers {
+            "подведи итог активности за последний час",
+        );
+        let fillers = filler_suggestions(language);
+        for filler in fillers.iter().copied().chain(std::iter::once(last_hour)) {
             if suggestions.len() >= 6 {
                 break;
             }
@@ -1593,6 +1784,7 @@ fn extract_json_object(content: &str) -> Option<String> {
 async fn generate_suggestions(
     api: &LocalApiContext,
     enhanced_ai: Option<&EnhancedAIConfig>,
+    language: UiLanguage,
 ) -> Result<CachedSuggestions, String> {
     let (apps, windows) = tokio::join!(fetch_app_activity(api), fetch_window_activity(api));
     let apps = apps.unwrap_or_default();
@@ -1628,7 +1820,7 @@ async fn generate_suggestions(
                     fallback_tags.len()
                 );
                 (
-                    template_suggestions(mode, &top_apps, &apps, &windows),
+                    template_suggestions(mode, &top_apps, &apps, &windows, language),
                     fallback_tags,
                     false,
                 )
@@ -1784,25 +1976,149 @@ mod tests {
         assert_eq!(detect_mode(&apps, &windows), "browsing");
     }
 
+    const MODES: [&str; 7] = [
+        "coding",
+        "browsing",
+        "meeting",
+        "writing",
+        "communication",
+        "video_editing",
+        "idle",
+    ];
+
     #[test]
     fn test_template_suggestions_non_empty() {
-        let modes = [
-            "coding",
-            "browsing",
-            "meeting",
-            "writing",
-            "communication",
-            "video_editing",
-            "idle",
-        ];
-        for mode in modes {
-            let suggestions = template_suggestions(mode, &[], &[], &[]);
-            assert!(
-                !suggestions.is_empty(),
-                "mode '{}' returned empty suggestions",
-                mode
-            );
+        for mode in MODES {
+            for language in [UiLanguage::En, UiLanguage::Ru] {
+                let suggestions = template_suggestions(mode, &[], &[], &[], language);
+                assert!(
+                    !suggestions.is_empty(),
+                    "mode '{}' returned empty suggestions in {}",
+                    mode,
+                    language.as_str()
+                );
+            }
         }
+    }
+
+    /// Every chip has to change language with the interface: a Russian app
+    /// showing English chips is the bug this replaced.
+    #[test]
+    fn every_mode_speaks_the_ui_language() {
+        let apps = vec![
+            AppActivity {
+                app_name: "Cursor".into(),
+                cnt: 600,
+            },
+            AppActivity {
+                app_name: "zoom.us".into(),
+                cnt: 600,
+            },
+            AppActivity {
+                app_name: "Slack".into(),
+                cnt: 600,
+            },
+            AppActivity {
+                app_name: "Notion".into(),
+                cnt: 600,
+            },
+            AppActivity {
+                app_name: "Arc".into(),
+                cnt: 600,
+            },
+            AppActivity {
+                app_name: "Final Cut Pro".into(),
+                cnt: 600,
+            },
+        ];
+        let windows = vec![
+            WindowActivity {
+                app_name: "Cursor".into(),
+                window_name: "auth.rs — screenpipe".into(),
+                cnt: 300,
+            },
+            WindowActivity {
+                app_name: "Arc".into(),
+                window_name: "rust async book — chapter 3".into(),
+                cnt: 300,
+            },
+            WindowActivity {
+                app_name: "Slack".into(),
+                window_name: "#general".into(),
+                cnt: 300,
+            },
+        ];
+        let top_apps: Vec<String> = apps.iter().map(|a| a.app_name.clone()).collect();
+
+        let cyrillic = |s: &str| {
+            s.chars()
+                .any(|c| ('а'..='я').contains(&c.to_ascii_lowercase()))
+        };
+        for mode in MODES {
+            let russian = template_suggestions(mode, &top_apps, &apps, &windows, UiLanguage::Ru);
+            for suggestion in &russian {
+                assert!(
+                    cyrillic(&suggestion.text),
+                    "mode '{}' chip is not Russian: {}",
+                    mode,
+                    suggestion.text
+                );
+            }
+            let english = template_suggestions(mode, &top_apps, &apps, &windows, UiLanguage::En);
+            for suggestion in &english {
+                assert!(
+                    !cyrillic(&suggestion.text),
+                    "mode '{}' chip is not English: {}",
+                    mode,
+                    suggestion.text
+                );
+            }
+            assert_eq!(russian.len(), english.len(), "mode '{}'", mode);
+        }
+    }
+
+    /// App, window and file names come from the user's screen. Translating
+    /// them would stop the chip from matching what is actually on it.
+    #[test]
+    fn app_and_file_names_stay_untranslated() {
+        let apps = vec![AppActivity {
+            app_name: "Cursor".into(),
+            cnt: 600,
+        }];
+        let windows = vec![WindowActivity {
+            app_name: "Cursor".into(),
+            window_name: "auth.rs — screenpipe".into(),
+            cnt: 300,
+        }];
+        let chips = template_suggestions(
+            "coding",
+            &["Cursor".to_string()],
+            &apps,
+            &windows,
+            UiLanguage::Ru,
+        );
+        assert!(
+            chips.iter().any(|s| s.text.contains("Cursor")),
+            "the editor name must survive translation: {:?}",
+            chips.iter().map(|s| &s.text).collect::<Vec<_>>()
+        );
+        assert!(chips
+            .iter()
+            .filter_map(|s| s.preview.as_ref())
+            .any(|p| p.contains("auth.rs")));
+    }
+
+    #[test]
+    fn fillers_exist_in_both_languages() {
+        let english = filler_suggestions(UiLanguage::En);
+        let russian = filler_suggestions(UiLanguage::Ru);
+        assert_eq!(english.len(), russian.len());
+        assert_eq!(english[0], summarize_day(UiLanguage::En));
+        assert_eq!(russian[0], summarize_day(UiLanguage::Ru));
+        assert_eq!(minutes_in(UiLanguage::En, 12, "Cursor"), "12min in Cursor");
+        assert_eq!(minutes_in(UiLanguage::Ru, 12, "Cursor"), "12 мин в Cursor");
+        assert_eq!(minutes_active(UiLanguage::En, 8), "8min active");
+        assert_eq!(minutes_active(UiLanguage::Ru, 8), "8 мин активности");
     }
 
     #[test]

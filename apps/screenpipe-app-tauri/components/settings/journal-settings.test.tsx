@@ -80,13 +80,22 @@ const CATEGORIES = [
     sort_order: 0,
   },
   {
+    id: "distraction",
+    name: "Distraction",
+    description: "Away from the intention",
+    color_hex: "#F78C6B",
+    is_system: false,
+    is_idle: false,
+    sort_order: 1,
+  },
+  {
     id: "idle",
     name: "Idle",
     description: "No input",
     color_hex: "#78786F",
     is_system: true,
     is_idle: true,
-    sort_order: 1,
+    sort_order: 2,
   },
 ];
 
@@ -197,6 +206,46 @@ describe("JournalSettings", () => {
     fireEvent.click(screen.getByTestId("journal-category-save"));
     await waitFor(() => expect(saveJournalCategories).toHaveBeenCalled());
     expect(saveJournalCategories.mock.calls[0][0][0].name).toBe("Deep work");
+  });
+
+  it("ends the pending role preset when the categories are hand-edited", async () => {
+    // A role picked during onboarding that has not reached the engine yet
+    // would otherwise land later and replace exactly these edits.
+    render(<JournalSettings />);
+    await waitFor(() =>
+      expect(screen.getByTestId("journal-category-work")).toBeInTheDocument(),
+    );
+    fireEvent.change(screen.getByLabelText("work name"), {
+      target: { value: "Deep work" },
+    });
+    fireEvent.click(screen.getByTestId("journal-category-save"));
+    await waitFor(() =>
+      expect(updateSettings).toHaveBeenCalledWith({
+        journalRolePresetApplied: true,
+      }),
+    );
+  });
+
+  it("does not offer to remove Distraction, and says why", async () => {
+    // Every distraction figure in the journal is counted against this one id.
+    render(<JournalSettings />);
+    await waitFor(() =>
+      expect(screen.getByTestId("journal-category-distraction")).toBeInTheDocument(),
+    );
+    expect(screen.queryByLabelText("remove Distraction")).toBeNull();
+    const note = within(
+      screen.getByTestId("journal-category-distraction"),
+    ).getByTestId("journal-category-required");
+    expect(note).toHaveAttribute("title", expect.stringContaining("cannot be removed"));
+    // Every other editable row still has its remove button.
+    expect(screen.getByLabelText("remove Work")).toBeInTheDocument();
+  });
+
+  it("keeps remote favicons off until the reader asks for them", async () => {
+    render(<JournalSettings />);
+    expect(screen.getByTestId("journal-remote-favicons-toggle")).not.toBeChecked();
+    fireEvent.click(screen.getByTestId("journal-remote-favicons-toggle"));
+    expect(updateSettings).toHaveBeenCalledWith({ journalRemoteFavicons: true });
   });
 
   it("adds a category with a slug id that does not collide", async () => {

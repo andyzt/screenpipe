@@ -5,6 +5,7 @@
 
 import { useEffect } from "react";
 import { useToast } from "@/components/ui/use-toast";
+import { useT } from "@/lib/i18n";
 import { useChangelogDialog } from "@/lib/hooks/use-changelog-dialog";
 import { useStatusDialog } from "@/lib/hooks/use-status-dialog";
 import { useSettings } from "@/lib/hooks/use-settings";
@@ -74,6 +75,7 @@ function finishDeepLink(url: string) {
 
 export function DeeplinkHandler() {
   const { toast } = useToast();
+  const t = useT();
   const { setShowChangelogDialog } = useChangelogDialog();
   const { open: openStatusDialog } = useStatusDialog();
   const { settings, loadUser, reloadStore } = useSettings();
@@ -386,8 +388,8 @@ export function DeeplinkHandler() {
         } catch (error) {
           const msg = error instanceof Error ? error.message : String(error);
           toast({
-            title: "couldn't apply the focus override",
-            description: msg || "try it again from the journal",
+            title: t("deeplink.focusOverride.failed.title"),
+            description: msg || t("deeplink.focusOverride.failed.description"),
             variant: "destructive",
           });
         }
@@ -708,6 +710,7 @@ export function DeeplinkHandler() {
       });
     };
   }, [
+    t,
     toast,
     setShowChangelogDialog,
     openStatusDialog,

@@ -367,6 +367,12 @@ async copyTextToClipboard(text: string) : Promise<Result<null, string>> {
 },
 /**
  * What the frontend needs to decide whether DeepSeek calls can be made.
+ *
+ * `async` on purpose: a synchronous Tauri command runs on the main thread,
+ * and resolving the config reads (and, on a legacy store, sanitizes and
+ * rewrites) `store.bin` — a decrypt plus a disk write on the thread that
+ * draws the UI. As an async command Tauri runs it on the async runtime
+ * instead. The body stays blocking, but it no longer blocks the window.
  */
 async deepseekConfig() : Promise<DeepSeekConfig> {
     return await TAURI_INVOKE("deepseek_config");
@@ -4328,7 +4334,12 @@ headless?: boolean;
  * and the local server continue in the background.
  */
 headlessRecordOnly?: boolean }
-export type ShowRewindWindow = "Main" | { Home: { page: string | null } } | { Search: { query: string | null } } | "Onboarding" | "Chat" | "PermissionRecovery"
+export type ShowRewindWindow = "Main" |
+/**
+ * `page` is the query tail after `/home?section=`, built with
+ * [`home_page_query`] whenever it carries more than a bare section name.
+ */
+{ Home: { page: string | null } } | { Search: { query: string | null } } | "Onboarding" | "Chat" | "PermissionRecovery"
 export type StartExportRecordingResponse = { jobId: string }
 export type Suggestion = { text: string;
 /**

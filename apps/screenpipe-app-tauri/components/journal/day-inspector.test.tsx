@@ -35,6 +35,7 @@ vi.mock("./now-strip", () => ({
 }));
 
 import { DayInspector } from "./day-inspector";
+import type { ActivityCard } from "@/lib/journal/types";
 import {
   makeActivityCard,
   makeCategory,
@@ -461,6 +462,82 @@ describe("DayInspector → review rating", () => {
         screen.getByTestId(`journal-card-review-${value}`),
       ).toHaveAttribute("aria-pressed", "false");
     }
+  });
+});
+
+/**
+ * The card in the panel is the card the day just handed back.
+ *
+ * `refreshDay` re-reads the day after a write, and the engine can settle a
+ * rating differently from what was asked for it — two ratings over one span
+ * come back as `mixed`. The lit segment and the lit thumb follow the card, and
+ * a re-read that changes nothing leaves a write in flight alone.
+ */
+describe("DayInspector → resync from a re-read day", () => {
+  const card = makeActivityCard({ id: 4105, review: "focused" });
+
+  function inspector(selected: ActivityCard) {
+    return (
+      <DayInspector
+        day={makeJournalDay()}
+        selected={selected}
+        onClose={vi.fn()}
+        showNow={false}
+      />
+    );
+  }
+
+  it("follows the card when the re-read changes its review and its feedback", () => {
+    const { rerender } = render(inspector(card));
+    expect(screen.getByTestId("journal-card-review-focused")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByTestId("journal-feedback-up")).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+
+    rerender(
+      inspector({
+        ...card,
+        review: "mixed",
+        feedback: {
+          rating: "up",
+          note: null,
+          created_at: "2026-09-16T10:02:00Z",
+        },
+      }),
+    );
+
+    expect(screen.getByTestId("journal-card-review-mixed")).toHaveTextContent(
+      "several ratings cover this card",
+    );
+    expect(screen.getByTestId("journal-card-review-focused")).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    expect(screen.getByTestId("journal-feedback-up")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  it("keeps a rating the person just pressed while the day has not caught up", async () => {
+    const { rerender } = render(
+      inspector({ ...card, review: null, feedback: null }),
+    );
+
+    fireEvent.click(screen.getByTestId("journal-feedback-up"));
+    await waitFor(() => expect(putCardFeedback).toHaveBeenCalledTimes(1));
+
+    // The same card, unchanged: the write is still in flight upstream.
+    rerender(inspector({ ...card, review: null, feedback: null }));
+
+    expect(screen.getByTestId("journal-feedback-up")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
   });
 });
 

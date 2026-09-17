@@ -21,7 +21,7 @@
 
 import { FALLBACK_LOCALE, type Locale } from "@/lib/i18n/dictionary";
 import { formatWeekRange, weekdayShortName } from "@/lib/i18n/format";
-import { JOURNAL_DAY_START_HOUR } from "./format";
+import { JOURNAL_DAY_START_HOUR, journalDayToday } from "./format";
 import type { CardApp } from "./types";
 
 /** Pixels per minute. Constant across the week, unlike the day canvas. */
@@ -87,9 +87,16 @@ export function shiftWeek(start: string, weeks: number): string {
   return toDateKey(monday);
 }
 
-/** The week `now` is in, honouring nothing but the calendar. */
+/**
+ * The week `now` is in — by the journal day, not the calendar date.
+ *
+ * At 02:00 on a Monday the journal day is still the Sunday that has not ended
+ * (the day boundary is local 04:00), and that Sunday belongs to the week that
+ * *ended*. Reading the calendar date here would move the week forward hours
+ * before the day it is made of has started, and take "next week" with it.
+ */
 export function mondayOfToday(now: Date = new Date()): string {
-  return mondayOf(toDateKey(now));
+  return mondayOf(journalDayToday(now));
 }
 
 /** The journal never shows a week that has not started. */

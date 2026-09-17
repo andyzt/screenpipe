@@ -484,10 +484,10 @@ pub use self::activity_ledger::{
 };
 pub use self::focus::{FocusIntention, FocusStateDraft, FocusStateRecord, NewFocusIntention};
 pub use self::journal::{
-    evenly_spaced_indices, JournalActivity, JournalActivityDraft, JournalCategory,
-    JournalCategoryDraft, JournalDistraction, JournalDistractionDraft, JournalEvidence,
-    JournalEvidenceDraft, JournalFrameSample, JournalLedgerInterval, JournalRun, JournalRunDraft,
-    JournalWindow, JournalWindowCounts, JOURNAL_STATE_PRODUCER,
+    evenly_spaced_indices, JournalActivity, JournalActivityDraft, JournalActivitySpan,
+    JournalCategory, JournalCategoryDraft, JournalDistraction, JournalDistractionDraft,
+    JournalEvidence, JournalEvidenceDraft, JournalFrameSample, JournalLedgerInterval, JournalRun,
+    JournalRunDraft, JournalWindow, JournalWindowCounts, JOURNAL_STATE_PRODUCER,
 };
 pub use self::journal_dashboard::JournalReviewSpan;
 pub use self::journal_recap::{JournalActivityWriteMark, JournalRecap, JournalRecapDraft};

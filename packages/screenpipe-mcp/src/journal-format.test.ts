@@ -135,6 +135,9 @@ describe("formatJournalDay", () => {
     const text = formatJournalDay(fullDayFixture());
 
     expect(text).toContain("Journal — 2026-09-16 (status: ok)");
+    // day_start/day_end are always 24h apart, so their local HH:MM match;
+    // "next day" is what actually distinguishes the close from the open.
+    expect(text).toContain("Journal day 18:00 → 18:00 next day");
     expect(text).toContain(
       "Active 312.5 min · Focus 240 min · Distraction 22 min · Idle 60 min · Longest focus block 84 min · Top categories: Work 240m, Personal 32.5m",
     );
@@ -171,6 +174,92 @@ describe("formatJournalDay", () => {
     const text = formatJournalDay(fixture);
     expect(text).toContain("x".repeat(239) + "…");
     expect(text).not.toContain("x".repeat(240) + "x");
+  });
+
+  it("omits the day boundary line when the engine doesn't send day_start/day_end", () => {
+    const fixture = fullDayFixture();
+    delete fixture.day_start;
+    delete fixture.day_end;
+    const text = formatJournalDay(fixture);
+    expect(text).not.toContain("Journal day");
+  });
+
+  it("renders review totals and the day's existing ratings before the cards, so the model looks before it writes", () => {
+    const fixture = fullDayFixture();
+    fixture.review_totals = {
+      focused_minutes: 120,
+      neutral_minutes: 30,
+      distracted_minutes: 15,
+      unrated_minutes: 147.5,
+    };
+    fixture.reviews = [
+      { id: 1, start_at: "2026-09-16T16:00:00Z", end_at: "2026-09-16T17:30:00Z", rating: "focused" },
+    ];
+    const text = formatJournalDay(fixture);
+
+    expect(text).toContain(
+      "Review totals: focused 120 min · neutral 30 min · distracted 15 min · unrated 147.5 min",
+    );
+    const reviewsIndex = text.indexOf("Reviews:");
+    const cardsIndex = text.indexOf("#42");
+    expect(reviewsIndex).toBeGreaterThan(-1);
+    expect(cardsIndex).toBeGreaterThan(reviewsIndex);
+    expect(text).toContain("  09:00–10:30: focused");
+  });
+
+  it("renders a recap freshness line but not for status: none", () => {
+    const withRecap = formatJournalDay({
+      ...fullDayFixture(),
+      recap: { status: "ready", generated_at: "2026-09-16T18:05:00Z" },
+    });
+    expect(withRecap).toContain("Recap: ready (generated 11:05 local)");
+
+    const withoutRecap = formatJournalDay({
+      ...fullDayFixture(),
+      recap: { status: "none", generated_at: null },
+    });
+    expect(withoutRecap).not.toContain("Recap:");
+  });
+
+  it("marks a card or review that lands after local midnight on the next calendar date with +1", () => {
+    const fixture = fullDayFixture();
+    // 2026-09-17T09:00:00Z is 02:00 local on 2026-09-17 (PDT) — after
+    // midnight but still inside the 2026-09-16 journal day (which runs to
+    // the next local 04:00).
+    fixture.activities!.push({
+      id: 99,
+      start_at: "2026-09-17T09:00:00Z",
+      end_at: "2026-09-17T09:30:00Z",
+      active_minutes: 30,
+      title: "Late-night reading",
+      category: { id: "personal", name: "Personal" },
+    });
+    fixture.reviews = [
+      { start_at: "2026-09-17T09:00:00Z", end_at: "2026-09-17T09:30:00Z", rating: "neutral" },
+    ];
+    const text = formatJournalDay(fixture);
+
+    expect(text).toContain("#99 02:00–02:30 +1 (30 min est.)");
+    expect(text).toContain("02:00–02:30 +1: neutral");
+    // The same-day card is unmarked.
+    expect(text).toContain("#42 01:15–01:59 (41.5 min est.)");
+  });
+
+  it("caps activity cards at 30 with a footer noting how many more exist", () => {
+    const fixture = fullDayFixture();
+    fixture.activities = Array.from({ length: 35 }, (_, i) => ({
+      id: i + 1,
+      start_at: `2026-09-16T0${(i % 9) + 1}:00:00Z`,
+      end_at: `2026-09-16T0${(i % 9) + 1}:10:00Z`,
+      active_minutes: 10,
+      title: `Card ${i + 1}`,
+      category: { id: "work", name: "Work" },
+    }));
+    const text = formatJournalDay(fixture);
+
+    const cardCount = (text.match(/^#\d+ /gm) ?? []).length;
+    expect(cardCount).toBe(30);
+    expect(text).toContain("(+5 more — narrow with journal-activity)");
   });
 
   it("renders an empty day without crashing on missing cards", () => {
@@ -332,6 +421,25 @@ describe("formatJournalActivity", () => {
     const text = formatJournalActivity(fixture, false);
     expect(text).toContain("Apps: Code, Chrome (github.com)");
     expect(text).not.toContain("Apps: code.visualstudio.com, github.com");
+  });
+
+  it("bounds the ledger app list at a fixed constant even if the server sends more", () => {
+    const fixture = activityDetailFixture();
+    fixture.apps = Array.from({ length: 10 }, (_, i) => ({
+      name: `App${i}`,
+      host: null,
+      minutes: 10 - i,
+    }));
+    const text = formatJournalActivity(fixture, false);
+    expect(text).toContain("Apps: App0, App1, App2, App3, App4, App5 (+4)");
+  });
+
+  it("caps a very long detailed_summary instead of rendering it unbounded", () => {
+    const fixture = activityDetailFixture();
+    fixture.detailed_summary = "y".repeat(5000);
+    const text = formatJournalActivity(fixture, false);
+    expect(text).toContain("y".repeat(1999) + "…");
+    expect(text).not.toContain("y".repeat(2000) + "y");
   });
 
   it("renders the full card without evidence when not requested", () => {
@@ -693,6 +801,26 @@ describe("formatJournalWeek", () => {
     expect(text).toContain(
       "Ship auth fix — supporting 5h · other 40m · distraction 12m",
     );
+  });
+
+  it("caps the intentions list at 8, keeping the top ones by supporting minutes", () => {
+    const fixture = dashboardFixture();
+    fixture.intentions = Array.from({ length: 12 }, (_, i) => ({
+      id: i,
+      title: `Intention ${i}`,
+      supporting_minutes: 100 - i,
+      other_minutes: 0,
+      distraction_minutes: 0,
+    }));
+    const text = formatJournalWeek(fixture);
+
+    const intentionLines = text
+      .split("\n")
+      .filter((line) => /^\s*Intention \d+ —/.test(line));
+    expect(intentionLines).toHaveLength(8);
+    expect(text).toContain("Intention 0 —");
+    expect(text).toContain("Intention 7 —");
+    expect(text).not.toContain("Intention 8 —");
   });
 
   it("renders 'none' placeholders instead of crashing on empty sections", () => {

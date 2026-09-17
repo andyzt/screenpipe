@@ -6,12 +6,18 @@
 /**
  * The icon for one app named by a card.
  *
- * Three sources, tried in order: the site's favicon when the card named a host,
- * then the desktop's app-icon server, then a monogram drawn from the name. The
- * chain matters because this icon appears inside 28px calendar blocks — a
- * broken-image glyph there is worse than no icon at all, and both of the first
- * two sources are allowed to be unavailable (no network in a screenshot run,
- * no Tauri app server in the browser mock).
+ * Three sources, tried in order: the site's favicon when the card named a host
+ * *and* the reader asked for remote icons, then the desktop's app-icon server,
+ * then a monogram drawn from the name. The chain matters because this icon
+ * appears inside 28px calendar blocks — a broken-image glyph there is worse
+ * than no icon at all, and both of the first two sources are allowed to be
+ * unavailable (no network in a screenshot run, no Tauri app server in the
+ * browser mock).
+ *
+ * The favicon stage is off unless `journalRemoteFavicons` is on, because it
+ * asks a third-party favicon service for every host the day touched — which
+ * is the reader's browsing history, told to someone else, to decorate a 18px
+ * square. The local app-icon server answers for most of them anyway.
  *
  * It uses `getFaviconUrl`/`appIconUrl` rather than `FaviconImg` for exactly
  * that reason: `FaviconImg`'s last resort *is* the app-icon server, so in the
@@ -21,6 +27,7 @@
 import React, { useEffect, useState } from "react";
 
 import { getFaviconUrl } from "@/components/rewind/timeline/favicon-utils";
+import { useSettings } from "@/lib/hooks/use-settings";
 import { getAppServerBaseUrl } from "@/lib/notifications/app-server";
 import { cn } from "@/lib/utils";
 import type { CardApp } from "@/lib/journal/types";
@@ -29,6 +36,21 @@ type Stage = "favicon" | "app" | "monogram";
 
 /** Resolved once per webview; see `getAppServerBaseUrl`. */
 let resolvedAppServerBase: string | null = null;
+
+/**
+ * The setting, read without demanding a `SettingsProvider`.
+ *
+ * This icon is mounted by canvases, inspectors and strips that unit tests
+ * render on their own, outside the settings tree. A missing provider has to
+ * mean "no remote favicons" — the safe answer — not a thrown render.
+ */
+function useRemoteFaviconsEnabled(): boolean {
+  try {
+    return useSettings().settings?.journalRemoteFavicons === true;
+  } catch {
+    return false;
+  }
+}
 
 function monogram(name: string): string {
   const trimmed = name.trim();
@@ -45,9 +67,12 @@ export function AppIcon({
   size?: number;
   className?: string;
 }) {
+  const remoteFavicons = useRemoteFaviconsEnabled();
   // Callers key this by `app.name`, so a different app is a different element
   // and starts its own chain — no effect needed to reset a failed one.
-  const [stage, setStage] = useState<Stage>(app.host ? "favicon" : "app");
+  const [stage, setStage] = useState<Stage>(
+    app.host && remoteFavicons ? "favicon" : "app",
+  );
   // The app-icon server runs on a per-profile port (11435 in production,
   // 11535 for dev builds), so the base URL is asked from the native side once
   // and cached; until it resolves the favicon stage still works.
@@ -97,7 +122,7 @@ export function AppIcon({
   }
 
   const src =
-    stage === "favicon" && app.host
+    stage === "favicon" && app.host && remoteFavicons
       ? getFaviconUrl(app.host)
       : `${appServerBase}/app-icon?name=${encodeURIComponent(app.name)}`;
 

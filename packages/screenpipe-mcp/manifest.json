@@ -56,7 +56,19 @@
     },
     {
       "name": "set-intention",
-      "description": "Start or end the tracked work intention (the only write among the journal tools)"
+      "description": "Start or end the tracked work intention (one of three writes among the journal/focus tools, with journal-recap and journal-review)"
+    },
+    {
+      "name": "journal-recap",
+      "description": "LLM-written daily recap; generates one when none is stored yet or the stored one is stale (a write)"
+    },
+    {
+      "name": "journal-review",
+      "description": "Mark a span of the day as focused, neutral, or distracted, replacing any rating already covering it (a write)"
+    },
+    {
+      "name": "journal-week",
+      "description": "Analytical week dashboard: totals with week-over-week deltas, top categories/apps, longest focus blocks, intention split"
     },
     {
       "name": "search-elements",

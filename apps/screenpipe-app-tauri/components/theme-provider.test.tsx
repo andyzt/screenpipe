@@ -40,6 +40,7 @@ vi.mock("@tauri-apps/api/window", () => ({
 }));
 
 import { ThemeProvider, useTheme } from "./theme-provider";
+import { JOURNAL_THEME } from "@/lib/journal-shell";
 
 function ThemeProbe() {
   const { theme, setTheme, toggleTheme } = useTheme();
@@ -104,16 +105,35 @@ afterEach(() => {
 
 describe("ThemeProvider", () => {
   it("replaces a stale local cache with the shared settings theme", async () => {
-    localStorage.setItem("screenpipe-ui-theme", "light");
+    localStorage.setItem("screenpipe-ui-theme", "dark");
 
     renderThemeProvider();
 
     await waitFor(() => {
       expect(localStorage.getItem("screenpipe-ui-theme")).toBe("system");
-      expect(document.documentElement).toHaveClass("dark");
     });
     expect(screen.getByTestId("theme")).toHaveTextContent("system");
     expect(mocks.setNativeTheme).toHaveBeenCalledWith("system");
+  });
+
+  // shadcn/ui's surfaces are light and this build follows them: while the
+  // journal theme is on, "system" means light rather than whatever the OS
+  // reports. app/layout.tsx's first-paint script applies the same rule, and
+  // Settings → Appearance hides the option so nobody is promised OS following.
+  it("resolves system to light under the journal theme, ignoring a dark OS", async () => {
+    expect(JOURNAL_THEME).toBeTruthy();
+    mocks.currentNativeTheme.mockResolvedValue("dark");
+
+    renderThemeProvider();
+
+    await waitFor(() => {
+      expect(document.documentElement).toHaveClass("light");
+    });
+    expect(document.documentElement.getAttribute("data-theme")).toBe(JOURNAL_THEME);
+    expect(document.documentElement).not.toHaveClass("dark");
+    // The OS theme is never consulted, so it can never flip the app to dark.
+    expect(mocks.currentNativeTheme).not.toHaveBeenCalled();
+    expect(mocks.onThemeChanged).not.toHaveBeenCalled();
   });
 
   it("uses an explicit shared setting even when localStorage disagrees", async () => {
@@ -132,6 +152,7 @@ describe("ThemeProvider", () => {
   });
 
   it("follows shared setting changes from another window", async () => {
+    mocks.settings.uiTheme = "dark";
     const view = renderThemeProvider();
     await waitFor(() => expect(document.documentElement).toHaveClass("dark"));
 

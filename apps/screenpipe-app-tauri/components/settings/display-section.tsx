@@ -7,6 +7,7 @@ import React from "react";
 import { useSettings } from "@/lib/hooks/use-settings";
 import { commands } from "@/lib/utils/tauri";
 import { useTheme } from "@/components/theme-provider";
+import { JOURNAL_THEME } from "@/lib/journal-shell";
 import { Switch } from "@/components/ui/switch";
 import { Card, CardContent } from "@/components/ui/card";
 import { Moon, Sun, Monitor, Layers, MessageSquare, PanelLeft, Maximize2, EyeOff, MinusSquare, Type, CalendarClock, Languages } from "lucide-react";
@@ -141,12 +142,28 @@ export function DisplaySection() {
     }
   };
 
+  // Under the journal theme "system" resolves to light rather than to the OS
+  // preference (see components/theme-provider.tsx), so offering the option
+  // would promise something the app does not do. Hide it instead of lying.
   const themeOptions = [
-    { value: "system" as const, labelKey: "settings.display.theme.option.system", icon: Monitor },
+    ...(JOURNAL_THEME
+      ? []
+      : [
+          {
+            value: "system" as const,
+            labelKey: "settings.display.theme.option.system",
+            icon: Monitor,
+          },
+        ]),
     { value: "light" as const, labelKey: "settings.display.theme.option.light", icon: Sun },
     { value: "dark" as const, labelKey: "settings.display.theme.option.dark", icon: Moon },
   ];
 
+  // A store that still holds "system" — seeded before the option was hidden —
+  // must not render an empty radio group. Show the value the app is actually
+  // painting. This is display only: the stored setting is left alone until the
+  // user picks something, and picking Light writes "light" like any other pick.
+  const selectedTheme = JOURNAL_THEME && theme === "system" ? "light" : theme;
 
   return (
     <div className="space-y-5">
@@ -176,18 +193,32 @@ export function DisplaySection() {
                         type="radio"
                         name="theme"
                         value={option.value}
-                        checked={theme === option.value}
+                        checked={selectedTheme === option.value}
                         onChange={() => setTheme(option.value)}
+                        onClick={() => {
+                          // A store still holding "system" paints Light as
+                          // checked, so clicking Light changes no DOM state and
+                          // React fires no change event — the pick would be
+                          // dropped and the stale value would survive. Commit it
+                          // here. Every other click reaches onChange as usual,
+                          // so this never double-fires.
+                          if (
+                            theme !== selectedTheme &&
+                            option.value === selectedTheme
+                          ) {
+                            setTheme(option.value);
+                          }
+                        }}
                         className="sr-only"
                       />
                       <div className={`
                         flex items-center justify-center w-3.5 h-3.5 rounded-full border-2 transition-colors
-                        ${theme === option.value
+                        ${selectedTheme === option.value
                           ? 'border-primary bg-primary'
                           : 'border-muted-foreground group-hover:border-primary'
                         }
                       `}>
-                        {theme === option.value && (
+                        {selectedTheme === option.value && (
                           <div className="w-1.5 h-1.5 rounded-full bg-primary-foreground" />
                         )}
                       </div>

@@ -123,7 +123,10 @@ describe("Appearance in Russian", () => {
     expect(screen.getByText("Размер шрифта")).toBeInTheDocument();
     expect(screen.getByText("Встречи в боковой панели")).toBeInTheDocument();
     // The theme radios and the font-size buttons are options, not headings.
-    expect(screen.getByText("Системная")).toBeInTheDocument();
+    // Only light and dark are offered: under the journal theme "system" would
+    // silently mean light, so the picker drops it (see display-section.tsx).
+    expect(screen.getByText("Светлая")).toBeInTheDocument();
+    expect(screen.queryByText("Системная")).toBeNull();
     // "Мелкий" is both a font size and an overlay size.
     expect(screen.getAllByText("Мелкий").length).toBeGreaterThan(0);
   });

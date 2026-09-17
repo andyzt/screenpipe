@@ -38,7 +38,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use screenpipe_db::{
-    DatabaseManager, FocusIntention, FocusStateDraft, FocusStateRecord, JournalActivity,
+    DatabaseManager, FocusIntention, FocusStateDraft, FocusStateRecord, JournalActivitySpan,
     JournalFrameSample, JournalLedgerInterval, JournalRunDraft,
 };
 use serde_json::Value;
@@ -717,8 +717,13 @@ async fn support_set(
 
     // An intention nobody ended can be days old; the detector runs every
     // minute, so the card scan is bounded rather than growing without limit.
+    //
+    // The narrow read, not the full one: this loop wants two app names per
+    // card, and `list_journal_activities` would build the distractions, the
+    // feedback, the review ratings and the category list for a day of cards
+    // every 60 seconds and throw all of it away.
     let cards_from = started_at.max(now - SUPPORT_LOOKBACK);
-    for card in db.list_journal_activities(cards_from, now).await? {
+    for card in db.list_journal_activity_spans(cards_from, now).await? {
         if !supports(&card, intention.id) {
             continue;
         }
@@ -752,7 +757,7 @@ async fn support_set(
     Ok(set)
 }
 
-fn supports(card: &JournalActivity, intention_id: i64) -> bool {
+fn supports(card: &JournalActivitySpan, intention_id: i64) -> bool {
     card.intention_relation.as_deref() == Some(SUPPORTS_INTENTION)
         && card.intention_id.unwrap_or(intention_id) == intention_id
 }
@@ -1034,7 +1039,10 @@ mod tests {
     ) {
         let draft = JournalActivityDraft {
             activity_key: format!("{title}-{}", start.timestamp()),
-            day: "2026-09-16".to_string(),
+            // The same day key the worker writes. A fixed literal would be a
+            // lie the moment a test uses `Utc::now()`, and the day column is
+            // what bounds `list_journal_activity_spans`.
+            day: crate::journal::time::day_of(start).to_string(),
             start_at: start,
             end_at: end,
             active_minutes: (end - start).num_minutes() as f64,

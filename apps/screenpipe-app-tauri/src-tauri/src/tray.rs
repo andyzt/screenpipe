@@ -12,13 +12,16 @@ use crate::health::{
 use crate::process_exit;
 use crate::recording::{local_api_context_from_app, RecordingState};
 use crate::store::{OnboardingStore, SettingsStore};
+use crate::ui_language::{ui_language_from_settings, UiLanguage};
 use crate::updates::{is_enterprise_build, is_source_build};
 use crate::window::ShowRewindWindow;
 use anyhow::Result;
 use once_cell::sync::Lazy;
+use screenpipe_core::strings::truncate_string;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use tauri::async_runtime::JoinHandle;
 use tauri::tray::{TrayIcon, TrayIconBuilder};
 use tauri::Emitter;
@@ -55,6 +58,10 @@ struct TrayMenuData {
     disable_timeline: bool,
     /// Both audio and vision are disabled in settings — nothing can record.
     all_capture_disabled: bool,
+    /// The language the localized tray items are built in, from
+    /// `settings.uiLanguage`. Read here with the rest of the settings so the
+    /// main-thread menu construction stays I/O-free.
+    ui_language: UiLanguage,
 }
 
 /// Gather all data needed by `create_dynamic_menu` on the current (non-main)
@@ -150,6 +157,7 @@ fn prefetch_tray_menu_data(app: &AppHandle) -> TrayMenuData {
         app_ui_hidden,
         disable_timeline,
         all_capture_disabled,
+        ui_language: ui_language_from_settings(&settings),
     }
 }
 
@@ -869,6 +877,7 @@ fn snapshot_menu_state(data: &TrayMenuData, effective_status: RecordingStatus) -
         subscription_plan: data.subscription_plan.clone(),
         hd: hd_menu_state(&hd),
         all_capture_disabled: data.all_capture_disabled,
+        ui_language: data.ui_language,
     }
 }
 
@@ -1017,6 +1026,10 @@ struct MenuState {
     hd: HdMenuState,
     /// Both audio and vision disabled in settings.
     all_capture_disabled: bool,
+    /// Interface language of the localized items: switching it in Settings has
+    /// to rebuild the native menu, or the tray keeps the old wording until
+    /// something else changes.
+    ui_language: UiLanguage,
 }
 
 pub fn setup_tray(app: &AppHandle, update_item: Option<&tauri::menu::MenuItem<Wry>>) -> Result<()> {
@@ -1232,19 +1245,82 @@ fn chat_or_search_item_visible(app_ui_hidden: bool, hidden_by_policy: bool, acco
     !app_ui_hidden && !hidden_by_policy && !accountless
 }
 
-/// Build the `page` string for `ShowRewindWindow::Home` that lands on the
-/// daily journal. Mirrors `meeting_page_with_id` in
-/// `commands/native_actions.rs`: `show.rs` formats this into
-/// `/home?section={page}`, so `focus_intent` produces
-/// `/home?section=journal&intent=1`, which the frontend reads on mount to
-/// focus the intention input. The frontend owns interpreting `intent`; this
-/// side only needs to get the query string onto the URL.
-fn journal_page(focus_intent: bool) -> String {
-    if focus_intent {
-        "journal&intent=1".to_string()
-    } else {
-        "journal".to_string()
+/// The tray strings this build ships in both interface languages.
+///
+/// Only the journal surface is here: the rest of the tray is still English in
+/// both languages, and translating it piecemeal would read worse than leaving
+/// it consistent. A two-entry table beats an i18n framework for four strings,
+/// and the tests below keep both columns filled.
+struct TrayStrings {
+    journal: &'static str,
+    set_intention: &'static str,
+    /// Tooltip separator + lead-in; the intention title follows it.
+    working_on: &'static str,
+}
+
+fn tray_strings(language: UiLanguage) -> TrayStrings {
+    match language {
+        UiLanguage::En => TrayStrings {
+            journal: "Journal",
+            set_intention: "Set intention…",
+            working_on: " · working on: ",
+        },
+        UiLanguage::Ru => TrayStrings {
+            journal: "Журнал",
+            set_intention: "Задать намерение…",
+            working_on: " · в работе: ",
+        },
     }
+}
+
+/// How `/focus/status`'s `relation` reads in the tooltip.
+///
+/// The engine's set is closed (`screenpipe-engine/src/journal/schema.rs`):
+/// `supports_intention`, `other_work`, `break`, `possible_distraction`,
+/// `unknown`. `unknown` is filtered out before this is called. A value from a
+/// newer engine than this app falls back to the underscore-free form in
+/// English and is dropped in Russian, where an English word in parentheses
+/// would read as a bug.
+fn relation_label(relation: &str, language: UiLanguage) -> Option<String> {
+    let translated = match (language, relation) {
+        (UiLanguage::Ru, "supports_intention") => Some("по намерению"),
+        (UiLanguage::Ru, "other_work") => Some("другая работа"),
+        (UiLanguage::Ru, "break") => Some("перерыв"),
+        (UiLanguage::Ru, "possible_distraction") => Some("возможно, отвлечение"),
+        (UiLanguage::Ru, "unknown") => Some("неясно"),
+        (UiLanguage::En, _) => None,
+        (UiLanguage::Ru, _) => return None,
+    };
+    Some(
+        translated
+            .map(str::to_string)
+            .unwrap_or_else(|| relation.replace('_', " ")),
+    )
+}
+
+/// The journal section, and the extra query parameters that go with it.
+///
+/// `focus_intent` adds `intent=1`, which the frontend reads on mount to focus
+/// the intention input. Keeping section and parameters apart is the point:
+/// composing the query tail by hand is what let a value carry its own `&`.
+fn journal_page_parts(
+    focus_intent: bool,
+) -> (&'static str, &'static [(&'static str, &'static str)]) {
+    if focus_intent {
+        ("journal", &[("intent", "1")])
+    } else {
+        ("journal", &[])
+    }
+}
+
+/// Build the `page` string for `ShowRewindWindow::Home` that lands on the
+/// daily journal. `show.rs` formats this into `/home?section={page}`, so
+/// `focus_intent` produces `/home?section=journal&intent=1`. The query is
+/// assembled by `window::home_page_query`, which percent-encodes each
+/// component, so no caller can smuggle a second parameter through the section.
+fn journal_page(focus_intent: bool) -> String {
+    let (section, params) = journal_page_parts(focus_intent);
+    crate::window::home_page_query(section, params)
 }
 
 fn create_dynamic_menu(
@@ -1254,6 +1330,7 @@ fn create_dynamic_menu(
     data: &TrayMenuData,
 ) -> Result<tauri::menu::Menu<Wry>> {
     let mut menu_builder = MenuBuilder::new(app);
+    let strings = tray_strings(data.ui_language);
 
     // During setup or summary-first activation, expose only the safe return
     // path, Settings, version, and Quit. Product entry points stay unavailable.
@@ -1292,8 +1369,8 @@ fn create_dynamic_menu(
     if !data.app_ui_hidden {
         menu_builder = menu_builder
             .item(&MenuItemBuilder::with_id("open_app", "Open screenpipe").build(app)?)
-            .item(&MenuItemBuilder::with_id("show_journal", "Journal").build(app)?)
-            .item(&MenuItemBuilder::with_id("set_intention", "Set intention…").build(app)?)
+            .item(&MenuItemBuilder::with_id("show_journal", strings.journal).build(app)?)
+            .item(&MenuItemBuilder::with_id("set_intention", strings.set_intention).build(app)?)
             .item(&PredefinedMenuItem::separator(app)?);
     }
 
@@ -2213,21 +2290,86 @@ struct FocusStatusPayload {
     relation: String,
 }
 
+/// Longest intention title the tooltip shows. A tray tooltip is one line next
+/// to the menu bar; an intention typed as a paragraph would otherwise run off
+/// the screen (and, on Windows, be truncated by the shell without an ellipsis).
+const MAX_TOOLTIP_INTENTION_CHARS: usize = 60;
+
 /// Suffix appended to the tray tooltip naming the active intention, e.g.
 /// " · working on: fix the flaky test (possible distraction)". Empty when
 /// there is no active intention. The relation is shown only when it is not
 /// `unknown` — before the detector's first tick, or with no evidence yet,
 /// there is nothing meaningful to report about how the last stretch compared
 /// to the intention.
-fn intention_tooltip_suffix(title: Option<&str>, relation: &str) -> String {
+fn intention_tooltip_suffix(title: Option<&str>, relation: &str, language: UiLanguage) -> String {
     let Some(title) = title.filter(|t| !t.is_empty()) else {
         return String::new();
     };
-    let mut suffix = format!(" · working on: {}", title);
+    let mut suffix = format!(
+        "{}{}",
+        tray_strings(language).working_on,
+        truncate_string(title, MAX_TOOLTIP_INTENTION_CHARS)
+    );
     if !relation.is_empty() && relation != "unknown" {
-        suffix.push_str(&format!(" ({})", relation.replace('_', " ")));
+        if let Some(label) = relation_label(relation, language) {
+            suffix.push_str(&format!(" ({})", label));
+        }
     }
     suffix
+}
+
+/// Hard ceiling on every request the 5 s tray updater makes.
+///
+/// The default `reqwest::Client` has no timeout at all: a local engine that
+/// accepts the connection and then stalls (a wedged DB write, a paused
+/// process) would park the tick forever, and with it the tooltip and the
+/// queued menu refresh. Two seconds is far longer than a loopback call to a
+/// healthy engine and well under the tick interval, so a stalled request is
+/// dropped before the next tick starts.
+const TRAY_HTTP_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// The updater's shared HTTP client. Falls back to the default client only if
+/// the builder itself fails (TLS backend initialization), which is not worth
+/// losing the tray over.
+fn tray_http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(TRAY_HTTP_TIMEOUT)
+        .build()
+        .unwrap_or_else(|e| {
+            warn!("tray: falling back to an untimed HTTP client: {}", e);
+            reqwest::Client::new()
+        })
+}
+
+/// How long the tray reuses a resolved local API context. The updater ticks
+/// every 5 s; the port and key change only when the engine restarts, and the
+/// resolution falls back to a settings-store read (decrypt + deserialize)
+/// whenever the engine is not up — which is exactly when it would run on
+/// every tick. A stale context costs at most one minute of a missing tooltip
+/// suffix, which is best-effort anyway.
+const API_CONTEXT_CACHE_TTL: Duration = Duration::from_secs(60);
+
+static CACHED_API_CONTEXT: Lazy<Mutex<Option<(Instant, crate::recording::LocalApiContext)>>> =
+    Lazy::new(|| Mutex::new(None));
+
+/// True when a context resolved at `resolved_at` may still be reused at `now`.
+fn api_context_cache_is_fresh(resolved_at: Instant, now: Instant) -> bool {
+    now.duration_since(resolved_at) < API_CONTEXT_CACHE_TTL
+}
+
+/// [`crate::recording::local_api_context_from_app`], resolved at most once per
+/// [`API_CONTEXT_CACHE_TTL`].
+fn cached_local_api_context(app: &AppHandle) -> crate::recording::LocalApiContext {
+    let now = Instant::now();
+    let mut cache = CACHED_API_CONTEXT.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((resolved_at, api)) = cache.as_ref() {
+        if api_context_cache_is_fresh(*resolved_at, now) {
+            return api.clone();
+        }
+    }
+    let api = local_api_context_from_app(app);
+    *cache = Some((now, api.clone()));
+    api
 }
 
 /// `GET /focus/status` from the engine, turned into a tooltip suffix. Tolerant
@@ -2238,6 +2380,7 @@ fn intention_tooltip_suffix(title: Option<&str>, relation: &str) -> String {
 async fn fetch_intention_tooltip_suffix(
     client: &reqwest::Client,
     api: &crate::recording::LocalApiContext,
+    language: UiLanguage,
 ) -> String {
     let request = api.apply_auth(client.get(api.url("/focus/status")));
     let Ok(response) = request.send().await else {
@@ -2252,6 +2395,7 @@ async fn fetch_intention_tooltip_suffix(
     intention_tooltip_suffix(
         payload.intention.as_ref().map(|i| i.title.as_str()),
         &payload.relation,
+        language,
     )
 }
 
@@ -2309,12 +2453,13 @@ async fn update_menu_if_needed(
     // this tick reads engine state: local API context + bearer key, tolerant
     // of 404/connection errors from an older engine build that predates
     // `/focus/status`. Reuses the caller's client instead of allocating one
-    // per tick.
-    let api = crate::recording::local_api_context_from_app(app);
+    // per tick, and the cached API context instead of re-reading the settings
+    // store every five seconds.
+    let api = cached_local_api_context(app);
     let tooltip = format!(
         "{}{}",
         tooltip,
-        fetch_intention_tooltip_suffix(client, &api).await
+        fetch_intention_tooltip_suffix(client, &api, data.ui_language).await
     );
     let app_for_tooltip = app.clone();
     let _ = app.run_on_main_thread(move || {
@@ -2405,7 +2550,7 @@ pub(crate) async fn refresh_tray_menu_now(app: &AppHandle) -> Result<()> {
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .clone();
-    let client = reqwest::Client::new();
+    let client = tray_http_client();
     update_menu_if_needed(app, update_item.as_ref(), &client).await
 }
 
@@ -2426,7 +2571,7 @@ pub fn setup_tray_menu_updater(app: AppHandle, update_item: Option<&tauri::menu:
         // One client for the whole updater lifetime — every tick reuses it
         // (including the `/focus/status` tooltip fetch) instead of paying a
         // fresh connector-pool allocation every 5 seconds.
-        let client = reqwest::Client::new();
+        let client = tray_http_client();
         loop {
             interval.tick().await;
             if QUIT_REQUESTED.load(Ordering::SeqCst) {
@@ -2735,7 +2880,10 @@ mod tests {
     }
 
     /// This build ships without accounts, so the tray must actually hide
-    /// Chat/Search — not just be capable of it.
+    /// Chat/Search — not just be capable of it. Enterprise builds are not
+    /// accountless (`startup_auth::ACCOUNTLESS_BUILD`), so this is about the
+    /// consumer binary only.
+    #[cfg(not(feature = "enterprise-build"))]
     #[test]
     fn this_build_is_accountless_so_chat_and_search_are_hidden_in_practice() {
         assert!(crate::startup_auth::ACCOUNTLESS_BUILD);
@@ -2773,41 +2921,170 @@ mod tests {
         // show.rs formats `page` into `/home?section={page}`, so this must
         // produce `/home?section=journal&intent=1`.
         assert_eq!(journal_page(true), "journal&intent=1");
+        // The `&` comes from the query builder, not from the section value.
+        assert_eq!(
+            journal_page_parts(true),
+            ("journal", &[("intent", "1")][..])
+        );
+        assert_eq!(journal_page_parts(false).1, &[][..]);
     }
 
     // --- Tooltip: active intention line ---
 
     #[test]
     fn tooltip_omits_intention_line_when_none_active() {
-        assert_eq!(intention_tooltip_suffix(None, "unknown"), "");
-        assert_eq!(intention_tooltip_suffix(Some(""), "unknown"), "");
+        assert_eq!(
+            intention_tooltip_suffix(None, "unknown", UiLanguage::En),
+            ""
+        );
+        assert_eq!(
+            intention_tooltip_suffix(Some(""), "unknown", UiLanguage::En),
+            ""
+        );
+        assert_eq!(
+            intention_tooltip_suffix(None, "unknown", UiLanguage::Ru),
+            ""
+        );
     }
 
     #[test]
     fn tooltip_shows_intention_without_relation_when_unknown() {
         assert_eq!(
-            intention_tooltip_suffix(Some("fix the flaky test"), "unknown"),
+            intention_tooltip_suffix(Some("fix the flaky test"), "unknown", UiLanguage::En),
             " · working on: fix the flaky test"
+        );
+        assert_eq!(
+            intention_tooltip_suffix(Some("починить тест"), "unknown", UiLanguage::Ru),
+            " · в работе: починить тест"
         );
     }
 
     #[test]
     fn tooltip_formats_relation_with_spaces_instead_of_underscores() {
         assert_eq!(
-            intention_tooltip_suffix(Some("fix the flaky test"), "supports_intention"),
+            intention_tooltip_suffix(
+                Some("fix the flaky test"),
+                "supports_intention",
+                UiLanguage::En
+            ),
             " · working on: fix the flaky test (supports intention)"
         );
         assert_eq!(
-            intention_tooltip_suffix(Some("fix the flaky test"), "possible_distraction"),
+            intention_tooltip_suffix(
+                Some("fix the flaky test"),
+                "possible_distraction",
+                UiLanguage::En
+            ),
             " · working on: fix the flaky test (possible distraction)"
         );
         assert_eq!(
-            intention_tooltip_suffix(Some("fix the flaky test"), "other_work"),
+            intention_tooltip_suffix(Some("fix the flaky test"), "other_work", UiLanguage::En),
             " · working on: fix the flaky test (other work)"
         );
         assert_eq!(
-            intention_tooltip_suffix(Some("fix the flaky test"), "break"),
+            intention_tooltip_suffix(Some("fix the flaky test"), "break", UiLanguage::En),
             " · working on: fix the flaky test (break)"
         );
+    }
+
+    // --- Localization ---
+
+    /// Every relation the engine can send has a Russian name, so a Russian
+    /// tooltip never falls back to an English word in parentheses.
+    #[test]
+    fn every_engine_relation_has_a_russian_label() {
+        // Mirrors `screenpipe-engine/src/journal/schema.rs`.
+        let expected = [
+            ("supports_intention", "по намерению"),
+            ("other_work", "другая работа"),
+            ("break", "перерыв"),
+            ("possible_distraction", "возможно, отвлечение"),
+            ("unknown", "неясно"),
+        ];
+        for (relation, russian) in expected {
+            assert_eq!(
+                relation_label(relation, UiLanguage::Ru).as_deref(),
+                Some(russian)
+            );
+            assert_eq!(
+                relation_label(relation, UiLanguage::En).as_deref(),
+                Some(relation.replace('_', " ").as_str())
+            );
+        }
+        // A relation from a newer engine: English reads it literally, Russian
+        // drops it rather than printing English.
+        assert_eq!(
+            relation_label("deep_work", UiLanguage::En).as_deref(),
+            Some("deep work")
+        );
+        assert_eq!(relation_label("deep_work", UiLanguage::Ru), None);
+    }
+
+    #[test]
+    fn russian_tooltip_and_menu_items_are_translated() {
+        assert_eq!(
+            intention_tooltip_suffix(
+                Some("починить тест"),
+                "possible_distraction",
+                UiLanguage::Ru
+            ),
+            " · в работе: починить тест (возможно, отвлечение)"
+        );
+        let ru = tray_strings(UiLanguage::Ru);
+        assert_eq!(ru.journal, "Журнал");
+        assert_eq!(ru.set_intention, "Задать намерение…");
+        let en = tray_strings(UiLanguage::En);
+        assert_eq!(en.journal, "Journal");
+        assert_eq!(en.set_intention, "Set intention…");
+    }
+
+    /// A tray tooltip is one line: a pasted paragraph must not become one.
+    #[test]
+    fn tooltip_caps_a_long_intention_title() {
+        let title = "a".repeat(200);
+        let suffix = intention_tooltip_suffix(Some(&title), "break", UiLanguage::En);
+        assert!(suffix.contains(&"a".repeat(MAX_TOOLTIP_INTENTION_CHARS)));
+        assert!(!suffix.contains(&"a".repeat(MAX_TOOLTIP_INTENTION_CHARS + 1)));
+        assert!(suffix.contains('…'));
+        // Multi-byte titles are cut on character boundaries, not bytes.
+        let cyrillic = "я".repeat(200);
+        let suffix = intention_tooltip_suffix(Some(&cyrillic), "unknown", UiLanguage::Ru);
+        assert!(suffix.ends_with(&format!("{}…", "я".repeat(MAX_TOOLTIP_INTENTION_CHARS))));
+    }
+
+    /// Switching the interface language has to rebuild the native menu; the
+    /// state key is what decides that.
+    #[test]
+    fn changing_the_ui_language_rebuilds_the_menu() {
+        let russian = MenuState::default();
+        assert_eq!(russian.ui_language, UiLanguage::Ru);
+        let english = MenuState {
+            ui_language: UiLanguage::En,
+            ..MenuState::default()
+        };
+        assert!(menu_state_needs_update(&russian, &english));
+        assert!(!menu_state_needs_update(&russian, &russian.clone()));
+    }
+
+    #[test]
+    fn the_api_context_cache_expires_within_a_minute() {
+        let now = Instant::now();
+        assert!(api_context_cache_is_fresh(now, now));
+        assert!(api_context_cache_is_fresh(
+            now,
+            now + API_CONTEXT_CACHE_TTL - Duration::from_millis(1)
+        ));
+        assert!(!api_context_cache_is_fresh(
+            now,
+            now + API_CONTEXT_CACHE_TTL
+        ));
+        assert_eq!(API_CONTEXT_CACHE_TTL, Duration::from_secs(60));
+    }
+
+    /// The 5 s updater must never park on a stalled local request.
+    #[test]
+    fn the_tray_http_client_has_a_timeout_under_the_tick_interval() {
+        assert_eq!(TRAY_HTTP_TIMEOUT, Duration::from_secs(2));
+        assert!(TRAY_HTTP_TIMEOUT < Duration::from_secs(5));
     }
 }
