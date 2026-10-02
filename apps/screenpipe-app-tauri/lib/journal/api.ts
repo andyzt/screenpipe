@@ -15,6 +15,7 @@
  * parsing prose.
  */
 
+import { trackTraction } from "@/lib/analytics/traction";
 import { localFetch } from "@/lib/api";
 import type {
   ActivityCard,
@@ -44,8 +45,22 @@ export class JournalApiError extends Error {
 }
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await localFetch(path, init);
+  // Only explicit writes are observed. Polling, settings reads and hydration do not count.
+  const operation = path === "/journal/recap/generate" ? "recap"
+    : path === "/journal/regenerate" ? "regenerate"
+    : path.endsWith("/feedback") ? "feedback"
+    : path === "/journal/reviews" ? "review"
+    : path.startsWith("/focus/intentions") ? "intention"
+    : path === "/focus/state/override" ? "focus" : null;
+  const write = init?.method === "POST" || init?.method === "PUT";
+  let response: Response;
+  try { response = await localFetch(path, init); }
+  catch (error) {
+    if (write && operation) trackTraction("operation_failed", { operation, reason: "network" });
+    throw error;
+  }
   if (!response.ok) {
+    if (write && operation) trackTraction("operation_failed", { operation, reason: response.status === 429 ? "rate_limit" : response.status === 503 ? "provider_unavailable" : response.status === 401 || response.status === 403 ? "auth" : "unknown" });
     // The contract promises `{ error }`; a proxy or a crash can still hand back
     // HTML, so fall back to the status rather than surfacing a parse failure.
     let message = `request failed (${response.status})`;
@@ -59,7 +74,31 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
     }
     throw new JournalApiError(message, response.status);
   }
-  return (await response.json()) as T;
+  const result = await response.json();
+  if (write && operation) {
+    try {
+    if (result?.status === "failed") trackTraction("operation_failed", { operation, reason: "unknown" });
+    else {
+      const input = typeof init?.body === "string" ? JSON.parse(init.body) : {};
+      const name = operation === "recap" ? "recap_requested" : operation === "regenerate" ? "regenerate_requested"
+        : operation === "feedback" ? "card_feedback" : operation === "review" ? "review_saved"
+        : operation === "focus" ? "focus_override"
+        : path.endsWith("/end") ? "intention_ended"
+        : init?.method === "POST" ? "intention_started" : null;
+      // A rating belongs to feedback and review writes only, a relation to the
+      // focus override; other events carry neither, and an edit is not a start.
+      if (name) {
+        trackTraction(name, {
+          operation,
+          outcome: "success",
+          ...(operation === "feedback" || operation === "review" ? { rating: input.rating ?? "cleared" } : {}),
+          ...(operation === "focus" ? { relation: input.relation } : {}),
+        });
+      }
+    }
+    } catch { /* Analytics must not change the product response. */ }
+  }
+  return result as T;
 }
 
 export function fetchJournalDay(

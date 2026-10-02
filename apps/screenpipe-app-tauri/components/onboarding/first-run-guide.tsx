@@ -10,6 +10,7 @@ import { Zap, ArrowRight, Play } from "lucide-react";
 import { emit } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useChatStore } from "@/lib/stores/chat-store";
+import { useT } from "@/lib/i18n";
 import posthog from "posthog-js";
 
 // One-time guided first run, shown on the Home window right after onboarding.
@@ -30,9 +31,18 @@ interface FirstRunGuideProps {
   onEnsureChatVisible?: () => void;
 }
 
+// The seeded prompt is deliberately not localized: it is the tour's own
+// artifact, addressed to the model rather than read as UI copy, and
+// `dismiss` compares the composer's value against this exact set to tell the
+// untouched prefill apart from words the user typed. A per-locale prompt
+// would need the same set to carry every variant and the chat-side pipe
+// creation path to be proven against each; the literal lint covers JSX only,
+// so these constants are outside its scope by construction.
 const PROMPT = "create a scheduled task that tracks what i do every hour";
 const LEGACY_PROMPT = "create a pipe that tracks what i do every hour";
 const GUIDE_PROMPTS = new Set([PROMPT, LEGACY_PROMPT]);
+/** Splits `firstRunGuide.run.body` around its `{play}` slot for the inline icon. */
+const PLAY_SLOT = "\u0000";
 const SKIP_BUTTON_CLASS =
   "mt-3 w-full border border-foreground/40 py-2 font-mono text-[11px] uppercase tracking-widest text-foreground transition-colors hover:bg-foreground hover:text-background focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-2";
 
@@ -95,9 +105,14 @@ export default function FirstRunGuide({
   onGoToAutomations,
   onEnsureChatVisible,
 }: FirstRunGuideProps) {
+  const t = useT();
   const [phase, setPhase] = useState<Phase>("invite");
   const phaseRef = useRef<Phase>("invite");
   phaseRef.current = phase;
+  const stepOf = (step: number) => t("onboarding.stepOf", { step, total: 3 });
+  const [runBodyBefore, runBodyAfter] = t("firstRunGuide.run.body", {
+    play: PLAY_SLOT,
+  }).split(PLAY_SLOT);
   // Use wall-clock time as baseline, not store state — the store hydrates
   // sessions from disk asynchronously, so reading maxUserMessageAt() at mount
   // often returns 0. When the hydrated sessions arrive a moment later their
@@ -473,29 +488,28 @@ export default function FirstRunGuide({
             <div className="flex items-center gap-2 mb-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-foreground" />
               <span className="font-mono text-[10px] tracking-wider lowercase text-muted-foreground/70">
-                you&apos;re all set
+                {t("firstRunGuide.invite.kicker")}
               </span>
             </div>
             <p className="font-sans text-sm text-foreground/90 leading-snug">
-              want to see how screenpipe works? one prompt, one automation,
-              about 30 seconds.
+              {t("firstRunGuide.invite.body")}
             </p>
             <button
               onClick={acceptInvite}
               data-testid="firstrun-accept"
               className="mt-4 w-full flex items-center justify-center gap-1.5 border border-foreground bg-foreground py-2.5 font-mono text-xs uppercase tracking-widest text-background hover:bg-background hover:text-foreground transition-colors"
             >
-              show me · 30 sec
+              {t("firstRunGuide.invite.accept")}
             </button>
             <button
               onClick={() => dismiss("declined")}
               data-testid="firstrun-decline"
               className={SKIP_BUTTON_CLASS}
             >
-              i&apos;ll explore
+              {t("firstRunGuide.invite.decline")}
             </button>
             <p className="mt-2 text-center font-mono text-[9px] lowercase tracking-wider text-muted-foreground/60">
-              rerun anytime from help
+              {t("firstRunGuide.invite.rerun")}
             </p>
           </motion.div>
         </div>
@@ -509,14 +523,14 @@ export default function FirstRunGuide({
           className="fixed top-4 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 border border-foreground/30 bg-background px-3 py-1.5 shadow-lg"
         >
           <span className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
-            2 of 3 · building your automation
+            {t("firstRunGuide.streaming.pill", { step: 2, total: 3 })}
           </span>
           <button
             onClick={skip}
-            aria-label="skip intro"
+            aria-label={t("firstRunGuide.skip")}
             className="font-mono text-[10px] uppercase tracking-widest text-foreground transition-opacity hover:opacity-60"
           >
-            skip ✕
+            {t("firstRunGuide.skipShort")}
           </button>
         </div>
       )}
@@ -538,31 +552,30 @@ export default function FirstRunGuide({
                 <div className="flex items-center gap-2 mb-1.5">
                   <span className="w-1.5 h-1.5 rounded-full bg-foreground" />
                   <span className="font-mono text-[10px] tracking-wider lowercase text-muted-foreground/70">
-                    let&apos;s try one thing
+                    {t("firstRunGuide.ask.kicker")}
                   </span>
                   <span className="ml-auto font-mono text-[10px] tracking-wider text-muted-foreground/70">
-                    1 of 3
+                    {stepOf(1)}
                   </span>
                 </div>
                 <p className="font-sans text-sm text-foreground/90 leading-snug">
-                  i filled the prompt below. send it to create your first
-                  automation.
+                  {t("firstRunGuide.ask.body")}
                 </p>
                 <button
                   type="button"
                   onClick={submitPrefilledPrompt}
                   className="mt-4 flex w-full items-center justify-center border border-foreground bg-foreground py-2.5 font-mono text-xs uppercase tracking-widest text-background transition-colors hover:bg-background hover:text-foreground"
                 >
-                  send prompt ↵
+                  {t("firstRunGuide.ask.send")}
                 </button>
                 <button
                   onClick={skip}
                   className={SKIP_BUTTON_CLASS}
                 >
-                  skip intro
+                  {t("firstRunGuide.skip")}
                 </button>
                 <p className="mt-2 text-center font-mono text-[9px] lowercase tracking-wider text-muted-foreground/60">
-                  esc to exit anytime
+                  {t("firstRunGuide.escHint")}
                 </p>
               </div>
               {/* Speech-bubble tail pointing down at the composer */}
@@ -595,30 +608,30 @@ export default function FirstRunGuide({
                 <Zap className="w-4 h-4 text-foreground mt-0.5 shrink-0" strokeWidth={2} />
                 <div>
                   <p className="font-mono text-xs font-semibold lowercase text-foreground">
-                    your automation is being set up
+                    {t("firstRunGuide.automate.title")}
                   </p>
                   <p className="font-mono text-[11px] text-muted-foreground mt-0.5 leading-snug">
-                    head over to scheduled to see it running and explore more automations
+                    {t("firstRunGuide.automate.body")}
                   </p>
                 </div>
                 <span className="ml-auto shrink-0 font-mono text-[10px] tracking-wider text-muted-foreground/70">
-                  2 of 3
+                  {stepOf(2)}
                 </span>
               </div>
               <button
                 onClick={goToPipes}
                 className="w-full flex items-center justify-center gap-1.5 border border-foreground bg-foreground py-2.5 font-mono text-xs uppercase tracking-widest text-background hover:bg-background hover:text-foreground transition-colors"
               >
-                go to scheduled <ArrowRight className="w-3 h-3" strokeWidth={2} />
+                {t("firstRunGuide.automate.go")} <ArrowRight className="w-3 h-3" strokeWidth={2} />
               </button>
               <button
                 onClick={skip}
                 className={SKIP_BUTTON_CLASS}
               >
-                skip intro
+                {t("firstRunGuide.skip")}
               </button>
               <p className="mt-2 text-center font-mono text-[9px] lowercase tracking-wider text-muted-foreground/60">
-                esc to exit anytime
+                {t("firstRunGuide.escHint")}
               </p>
             </motion.div>
           )}
@@ -681,32 +694,32 @@ export default function FirstRunGuide({
           <div className="flex items-start gap-2.5 mb-3">
             <div>
               <p className="font-mono text-xs font-semibold lowercase text-foreground">
-                one last thing — run your scheduled task
+                {t("firstRunGuide.run.title")}
               </p>
               <p className="font-mono text-[11px] text-muted-foreground mt-0.5 leading-snug">
-                hit the{" "}
-                <Play className="inline w-3 h-3 -mt-0.5" strokeWidth={2} />{" "}
-                button on your scheduled task to start it
+                {runBodyBefore}
+                <Play className="inline w-3 h-3 -mt-0.5" strokeWidth={2} />
+                {runBodyAfter}
               </p>
             </div>
             <span className="ml-auto shrink-0 font-mono text-[10px] tracking-wider text-muted-foreground/70">
-              3 of 3
+              {stepOf(3)}
             </span>
           </div>
           <button
             onClick={finishGuide}
             className="w-full flex items-center justify-center gap-1.5 border border-foreground bg-foreground py-2.5 font-mono text-xs uppercase tracking-widest text-background hover:bg-background hover:text-foreground transition-colors"
           >
-            got it <ArrowRight className="w-3 h-3" strokeWidth={2} />
+            {t("firstRunGuide.run.done")} <ArrowRight className="w-3 h-3" strokeWidth={2} />
           </button>
           <button
             onClick={skip}
             className={SKIP_BUTTON_CLASS}
           >
-            skip intro
+            {t("firstRunGuide.skip")}
           </button>
           <p className="mt-2 text-center font-mono text-[9px] lowercase tracking-wider text-muted-foreground/60">
-            esc to exit anytime
+            {t("firstRunGuide.escHint")}
           </p>
         </motion.div>
         );

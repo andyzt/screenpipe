@@ -27,6 +27,9 @@ vi.mock("@/lib/hooks/use-settings", () => ({
   useSettings: () => ({ settings: {}, updateSettings: vi.fn() }),
 }));
 vi.mock("@tauri-apps/api/event", () => ({ emit: vi.fn() }));
+vi.mock("@/lib/hooks/use-health-check", () => ({
+  useHealthCheck: () => ({ health: { frame_status: "ok" }, isServerDown: false }),
+}));
 vi.mock("@/lib/hooks/use-timeline-store", () => ({
   useTimelineStore: (selector: (state: unknown) => unknown) =>
     selector({ setPendingNavigation: vi.fn() }),
@@ -138,6 +141,13 @@ afterEach(() => {
 });
 
 describe("JournalView", () => {
+  it("ignores canvas shortcuts while a modal dialog owns keyboard input", async () => {
+    render(<JournalView />);
+    await waitFor(() => expect(fetchJournalDay).toHaveBeenCalledTimes(1));
+    const dialog=document.createElement("div");dialog.setAttribute("role","dialog");dialog.setAttribute("data-state","open");document.body.appendChild(dialog);
+    try { fireEvent.keyDown(window,{key:"ArrowLeft"});expect(fetchJournalDay).toHaveBeenCalledTimes(1); }
+    finally { dialog.remove(); }
+  });
   it("passes the tray's set-intention request down to the intention bar", async () => {
     const onIntentionFocusHandled = vi.fn();
     render(
@@ -178,6 +188,18 @@ describe("JournalView", () => {
       shiftJournalDay(journalDayToday(), -1),
     );
     expect(screen.getByTestId("journal-next-day")).not.toBeDisabled();
+  });
+
+  it("Yesterday jumps to the previous journal day from an older selected date", async () => {
+    render(<JournalView />);
+    await waitFor(() => expect(fetchJournalDay).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByTestId("journal-prev-day"));
+    await waitFor(() => expect(fetchJournalDay).toHaveBeenCalledTimes(2));
+    fireEvent.click(screen.getByTestId("journal-prev-day"));
+    await waitFor(() => expect(fetchJournalDay).toHaveBeenCalledTimes(3));
+    fireEvent.click(screen.getByRole("button", { name: "Yesterday", exact: true }));
+    await waitFor(() => expect(fetchJournalDay).toHaveBeenCalledTimes(4));
+    expect(fetchJournalDay.mock.calls[3][0]).toBe(shiftJournalDay(journalDayToday(), -1));
   });
 
   it("renders the canvas beside the inspector instead of a card list", async () => {
@@ -618,5 +640,14 @@ describe("JournalView → regenerate", () => {
         variant: "destructive",
       }),
     );
+  });
+});
+
+describe("JournalView accessibility", () => {
+  it("has no serious axe violations once the day is on screen", async () => {
+    const { seriousAxeViolations } = await import("@/lib/test/axe");
+    render(<JournalView />);
+    await screen.findByTestId("journal-canvas");
+    expect(await seriousAxeViolations(document.body)).toEqual([]);
   });
 });

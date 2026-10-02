@@ -12,7 +12,7 @@
  * figure is an estimate and must be labelled as one wherever it is rendered.
  */
 
-/** Why a day may have no cards. `ok` is the only status that implies capture. */
+/** Historical availability within a journal day. Never use this as live recording status. */
 export type JournalDataStatus =
   | "ok"
   | "empty_but_recording"

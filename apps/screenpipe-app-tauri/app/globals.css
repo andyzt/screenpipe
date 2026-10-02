@@ -109,7 +109,7 @@
     /* Text colors - B&W hierarchy */
     --text-primary: 0 0% 4%;
     --text-secondary: 0 0% 40%; /* #666666 */
-    --text-tertiary: 0 0% 60%; /* #999999 */
+    --text-tertiary: 0 0% 44%; /* 4.52:1 on the bone canvas */
     --text-disabled: 0 0% 70%;
 
     /* Brand colors - All black for B&W aesthetic */
@@ -244,7 +244,7 @@
     /* Text colors */
     --text-primary: 0 0% 96%;
     --text-secondary: 0 0% 64%;
-    --text-tertiary: 0 0% 40%; /* #666666 */
+    --text-tertiary: 0 0% 55%; /* 5.91:1 on the ink canvas */
     --text-disabled: 0 0% 30%;
 
     /* Brand colors */

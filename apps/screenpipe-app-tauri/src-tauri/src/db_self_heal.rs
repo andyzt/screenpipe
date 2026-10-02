@@ -117,8 +117,11 @@ fn archive_path_for(database_path: &Path, detected_at_unix_ms: u64) -> PathBuf {
 ///
 /// Returns `Ok(())` when the marker was resolved and the database is safe to
 /// open; `Err(reason)` when the caller must keep the fail-closed path.
-pub async fn try_resolve_quarantine(database_path: &Path) -> Result<(), SelfHealSkip> {
-    try_resolve_quarantine_with(database_path, |path| {
+pub async fn try_resolve_quarantine(
+    database_path: &Path,
+    required_free_bytes: u64,
+) -> Result<(), SelfHealSkip> {
+    try_resolve_quarantine_with(database_path, required_free_bytes, |path| {
         screenpipe_engine::disk_pressure::available_space_for_path(path)
     })
     .await
@@ -126,6 +129,7 @@ pub async fn try_resolve_quarantine(database_path: &Path) -> Result<(), SelfHeal
 
 async fn try_resolve_quarantine_with<F>(
     database_path: &Path,
+    required_free_bytes: u64,
     available_space_for_path: F,
 ) -> Result<(), SelfHealSkip>
 where
@@ -170,12 +174,12 @@ where
     if prerequisite == screenpipe_db::SqliteQuarantineSelfHealPrerequisite::RecoveredDiskSpace {
         let available_bytes = available_space_for_path(database_path);
         if !available_bytes.is_some_and(|available| {
-            available >= screenpipe_events::LOW_DISK_RECOVERY_THRESHOLD_BYTES
+            available >= required_free_bytes
         }) {
             warn!(
                 sqlite_extended_code = code,
                 ?available_bytes,
-                required_bytes = screenpipe_events::LOW_DISK_RECOVERY_THRESHOLD_BYTES,
+                required_bytes = required_free_bytes,
                 database = %database_path.display(),
                 "db self-heal: disk-full prerequisite has not cleared — staying fail-closed"
             );
@@ -184,7 +188,7 @@ where
         info!(
             sqlite_extended_code = code,
             available_bytes = available_bytes.unwrap_or_default(),
-            required_bytes = screenpipe_events::LOW_DISK_RECOVERY_THRESHOLD_BYTES,
+            required_bytes = required_free_bytes,
             database = %database_path.display(),
             "db self-heal: disk-full prerequisite cleared"
         );
@@ -258,7 +262,16 @@ pub async fn try_self_heal_at_launch(
     database_path: PathBuf,
     notify_user: bool,
 ) -> LaunchSelfHealOutcome {
-    if let Err(reason) = try_resolve_quarantine(&database_path).await {
+    // Recovery follows the user's disk reserve (Settings > Disk & retention),
+    // not the engine's fixed 20 GiB probe; an unreadable store keeps the default.
+    let reserve_gib = crate::store::SettingsStore::get(&app)
+        .ok()
+        .flatten()
+        .map(|settings| settings.low_disk_threshold_gb)
+        .unwrap_or(20);
+    let required_free_bytes =
+        crate::disk_pressure_notifications::recovery_threshold_bytes(reserve_gib);
+    if let Err(reason) = try_resolve_quarantine(&database_path, required_free_bytes).await {
         if let Some(outcome) = launch_outcome_after_skip(reason) {
             return outcome;
         }
@@ -398,7 +411,7 @@ mod tests {
                 .expect("persist quarantine");
 
             assert_eq!(
-                try_resolve_quarantine(&db).await,
+                try_resolve_quarantine(&db, screenpipe_events::LOW_DISK_RECOVERY_THRESHOLD_BYTES).await,
                 Err(SelfHealSkip::NotSelfHealable { code: expected })
             );
             assert!(screenpipe_db::sqlite_quarantine_exists(&db));
@@ -417,7 +430,7 @@ mod tests {
         screenpipe_db::persist_sqlite_quarantine(&db, Some(13), "database or disk is full")
             .expect("persist quarantine");
 
-        try_resolve_quarantine_with(&db, |_| {
+        try_resolve_quarantine_with(&db, screenpipe_events::LOW_DISK_RECOVERY_THRESHOLD_BYTES, |_| {
             Some(screenpipe_events::LOW_DISK_RECOVERY_THRESHOLD_BYTES)
         })
         .await
@@ -438,7 +451,7 @@ mod tests {
             None,
         ] {
             assert_eq!(
-                try_resolve_quarantine_with(&db, |_| available_bytes).await,
+                try_resolve_quarantine_with(&db, screenpipe_events::LOW_DISK_RECOVERY_THRESHOLD_BYTES, |_| available_bytes).await,
                 Err(SelfHealSkip::DiskSpaceNotRecovered { available_bytes })
             );
             assert!(screenpipe_db::sqlite_quarantine_exists(&db));
@@ -454,7 +467,7 @@ mod tests {
             .expect("persist quarantine");
 
         assert_eq!(
-            try_resolve_quarantine_with(&db, |_| {
+            try_resolve_quarantine_with(&db, screenpipe_events::LOW_DISK_RECOVERY_THRESHOLD_BYTES, |_| {
                 Some(screenpipe_events::LOW_DISK_RECOVERY_THRESHOLD_BYTES)
             })
             .await,

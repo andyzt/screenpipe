@@ -10,6 +10,12 @@ import posthog from "posthog-js";
 import { Clock, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { commands } from "@/lib/utils/tauri";
+import { useT } from "@/lib/i18n";
+import { useHealthCheck } from "@/lib/hooks/use-health-check";
+import {
+  journalCaptureState,
+  type JournalCaptureState,
+} from "@/lib/journal/capture-state";
 import {
   formatCountdown,
   type FirstRunCapturedApp,
@@ -62,21 +68,21 @@ export function FirstRunReadyPanel({
   onPickAgent: (target: AgentHandoffTarget) => void;
   onDismiss: () => void;
 }) {
+  const t = useT();
   return (
     <div>
       <div className="p-5">
         <div className="flex items-center gap-2">
           <span className="h-2 w-2 bg-signal" aria-hidden="true" />
           <span className="font-mono text-[9px] uppercase tracking-[0.2em] text-signal">
-            first result · ready
+            {t("firstRun.ready.kicker")}
           </span>
         </div>
         <h2 className="mt-3 font-mono text-base font-semibold lowercase text-foreground">
-          screenpipe learned enough to help
+          {t("firstRun.ready.title")}
         </h2>
         <p className="mt-2 max-w-xl text-[11px] leading-relaxed text-muted-foreground">
-          an evidence-backed summary of the apps and activity captured since
-          setup is waiting in a new chat.
+          {t("firstRun.ready.body")}
         </p>
         <div className="mt-4 flex flex-wrap items-center gap-2">
           <Button
@@ -85,7 +91,7 @@ export function FirstRunReadyPanel({
             data-testid="first-run-open-summary"
             onClick={onOpenSummary}
           >
-            open the summary
+            {t("firstRun.ready.open")}
           </Button>
           <AgentHandoffPicker targets={handoffTargets} onPick={onPickAgent} />
         </div>
@@ -102,7 +108,7 @@ export function FirstRunReadyPanel({
 
       <div className="flex items-center justify-between gap-4 border-t border-border px-4 py-3">
         <p className="text-[10px] leading-relaxed text-muted-foreground">
-          this summary stays available in chat history.
+          {t("firstRun.ready.footnote")}
         </p>
         <Button
           size="sm"
@@ -110,7 +116,137 @@ export function FirstRunReadyPanel({
           className="h-7 shrink-0 px-2 text-[9px]"
           onClick={onDismiss}
         >
-          this is ready
+          {t("firstRun.dismissReady")}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Live capture state for the first-run surfaces.
+ *
+ * An empty learning window used to end on "screenpipe is ready … will keep
+ * recording in the background" no matter what the recorder was doing. When the
+ * low-disk guard had already stopped capture, that promise was false and the
+ * user had no next step. Day history is never evidence of present capture, so
+ * this reads the same live health stream the journal uses.
+ */
+const INTENTIONAL_SCREEN_OFF = new Set([
+  "disabled_by_setting",
+  "screenshots_disabled_by_config",
+  "screenshots_disabled_by_power_profile",
+]);
+
+function useFirstRunCaptureState(): {
+  captureState: JournalCaptureState;
+  instruction: string | null;
+} {
+  const { health, isServerDown } = useHealthCheck();
+  const rawState = journalCaptureState(health, isServerDown);
+  // Screen capture turned off on purpose while audio keeps recording (an
+  // audio-only setup) is not a stopped recorder.
+  const intentionalScreenOff =
+    typeof health?.vision_reason === "string" &&
+    INTENTIONAL_SCREEN_OFF.has(health.vision_reason) &&
+    health.audio_status === "ok";
+  const captureState: JournalCaptureState =
+    rawState === "paused" && intentionalScreenOff ? "recording" : rawState;
+  const instruction =
+    typeof health?.verbose_instructions === "string" &&
+    health.verbose_instructions.trim().length > 0
+      ? health.verbose_instructions.trim()
+      : null;
+  return { captureState, instruction };
+}
+
+export function captureStopped(state: JournalCaptureState): boolean {
+  return state === "paused" || state === "unavailable";
+}
+
+function openSettingsSection(section: "storage" | "recording") {
+  window.dispatchEvent(
+    new CustomEvent("open-settings", { detail: { section } }),
+  );
+}
+
+export function FirstRunCaptureStoppedPanel({
+  captureState,
+  instruction,
+  onDismiss,
+}: {
+  captureState: JournalCaptureState;
+  instruction: string | null;
+  onDismiss: () => void;
+}) {
+  const t = useT();
+  const unavailable = captureState === "unavailable";
+  return (
+    <div
+      data-testid="first-run-capture-stopped"
+      data-capture-state={captureState}
+    >
+      <div className="p-5">
+        <div className="flex items-center gap-2">
+          <span className="h-2 w-2 bg-destructive" aria-hidden="true" />
+          <span className="font-mono text-[9px] uppercase tracking-[0.2em] text-destructive">
+            {unavailable
+              ? t("firstRun.stopped.kickerUnavailable")
+              : t("firstRun.stopped.kickerStopped")}
+          </span>
+        </div>
+        <h2 className="mt-3 font-mono text-base font-semibold lowercase text-foreground">
+          {unavailable
+            ? t("firstRun.stopped.titleUnavailable")
+            : t("firstRun.stopped.titleStopped")}
+        </h2>
+        <p className="mt-2 max-w-xl text-[11px] leading-relaxed text-muted-foreground">
+          {unavailable
+            ? t("firstRun.stopped.bodyUnavailable")
+            : t("firstRun.stopped.bodyStopped")}
+        </p>
+        {instruction && (
+          <p
+            className="mt-2 max-w-xl text-[11px] leading-relaxed text-foreground"
+            data-testid="first-run-capture-instruction"
+            role="status"
+          >
+            {instruction}
+          </p>
+        )}
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          <Button
+            size="sm"
+            className="h-8 border-foreground bg-foreground px-3 text-[10px] text-background hover:bg-background hover:text-foreground"
+            data-testid="first-run-review-storage"
+            onClick={() => openSettingsSection("storage")}
+          >
+            {t("firstRun.reviewStorage")}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-8 px-3 text-[10px]"
+            data-testid="first-run-recording-settings"
+            onClick={() => openSettingsSection("recording")}
+          >
+            {t("firstRun.stopped.recordingSettings")}
+          </Button>
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between gap-4 border-t border-border px-4 py-3">
+        <p className="text-[10px] leading-relaxed text-muted-foreground">
+          {t("firstRun.stopped.footnote")}
+        </p>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-7 shrink-0 px-2 text-[9px]"
+          data-testid="first-run-capture-stopped-dismiss"
+          onClick={onDismiss}
+        >
+          {t("firstRun.stopped.dismiss")}
         </Button>
       </div>
     </div>
@@ -122,28 +258,27 @@ export function FirstRunSetupReadyPanel({
 }: {
   onDismiss: () => void;
 }) {
+  const t = useT();
   return (
     <div data-testid="first-run-setup-ready">
       <div className="p-5">
         <div className="flex items-center gap-2">
           <span className="h-2 w-2 bg-signal" aria-hidden="true" />
           <span className="font-mono text-[9px] uppercase tracking-[0.2em] text-signal">
-            setup · ready
+            {t("firstRun.setupReady.kicker")}
           </span>
         </div>
         <h2 className="mt-3 font-mono text-base font-semibold lowercase text-foreground">
-          screenpipe is ready
+          {t("firstRun.setupReady.title")}
         </h2>
         <p className="mt-2 max-w-xl text-[11px] leading-relaxed text-muted-foreground">
-          there was not enough activity in this short setup window to write a
-          useful first summary. Screenpipe will keep recording in the
-          background.
+          {t("firstRun.setupReady.body")}
         </p>
       </div>
 
       <div className="flex items-center justify-between gap-4 border-t border-border px-4 py-3">
         <p className="text-[10px] leading-relaxed text-muted-foreground">
-          ask about anything you see, say, or hear from now on.
+          {t("firstRun.setupReady.footnote")}
         </p>
         <Button
           size="sm"
@@ -152,7 +287,7 @@ export function FirstRunSetupReadyPanel({
           data-testid="first-run-setup-complete"
           onClick={onDismiss}
         >
-          this is ready
+          {t("firstRun.dismissReady")}
         </Button>
       </div>
     </div>
@@ -169,6 +304,7 @@ export function FirstRunLearningBanner(
   props: { fallback?: React.ReactNode } = {},
 ) {
   const { fallback } = props;
+  const t = useT();
   const { learning, handoff } = useFirstRunLearningWindow();
   const {
     phase,
@@ -180,6 +316,7 @@ export function FirstRunLearningBanner(
     dismiss,
   } = learning;
   const { targets: handoffTargets, hint: handoffHint, askAgent } = handoff;
+  const { captureState, instruction } = useFirstRunCaptureState();
 
   React.useEffect(() => {
     if (phase === "ready") markReadyShown();
@@ -225,7 +362,7 @@ export function FirstRunLearningBanner(
           <div className="flex items-center gap-3">
             <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />
             <p className="text-xs font-medium text-foreground">
-              Learning about your work
+              {t("firstRun.learning.title")}
             </p>
             <span className="ml-auto flex shrink-0 items-center gap-1.5 text-muted-foreground">
               <Clock className="h-3 w-3" />
@@ -238,13 +375,12 @@ export function FirstRunLearningBanner(
             </span>
           </div>
           <p className="text-[11px] leading-relaxed text-muted-foreground">
-            Keep working normally. As soon as there is enough to describe, a
-            summary of what Screenpipe picked up shows up in a new chat.
+            {t("firstRun.learning.body")}
           </p>
           {capturedApps.length > 0 && (
             <div className="flex items-center gap-2 pt-0.5">
               <span className="shrink-0 text-[11px] text-muted-foreground">
-                Reading from
+                {t("firstRun.readingFrom")}
               </span>
               <span className="flex items-center gap-1">
                 {capturedApps.map((app) => (
@@ -261,19 +397,18 @@ export function FirstRunLearningBanner(
           <div className="flex items-center gap-3">
             <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />
             <p className="text-xs font-medium text-foreground">
-              Writing your summary
+              {t("firstRun.writing.title")}
             </p>
           </div>
           {/* No countdown. The clock measured evidence collection; the selected
               agent now owns this visible writing state until it finishes. */}
           <p className="text-[11px] leading-relaxed text-muted-foreground">
-            Screenpipe saw enough. Your selected AI is putting the summary
-            together now — this can take a minute or two.
+            {t("firstRun.writing.body")}
           </p>
           {capturedApps.length > 0 && (
             <div className="flex items-center gap-2 pt-0.5">
               <span className="shrink-0 text-[11px] text-muted-foreground">
-                Reading from
+                {t("firstRun.readingFrom")}
               </span>
               <span className="flex items-center gap-1">
                 {capturedApps.map((app) => (
@@ -295,16 +430,26 @@ export function FirstRunLearningBanner(
         />
       )}
 
-      {phase === "empty" && (
-        <FirstRunSetupReadyPanel onDismiss={() => dismiss()} />
-      )}
+      {phase === "empty" &&
+        (captureStopped(captureState) ? (
+          <FirstRunCaptureStoppedPanel
+            captureState={captureState}
+            instruction={instruction}
+            onDismiss={() => dismiss()}
+          />
+        ) : (
+          <FirstRunSetupReadyPanel onDismiss={() => dismiss()} />
+        ))}
     </section>
   );
 }
 
 export function TrialActivationSummaryExperience() {
+  const t = useT();
   const { learning } = useFirstRunLearningWindow();
   const { phase, remainingMs, chatId, markSummaryOpened } = learning;
+  const { captureState, instruction } = useFirstRunCaptureState();
+  const emptyBecauseStopped = phase === "empty" && captureStopped(captureState);
 
   const openSummary = async () => {
     if (!chatId || phase !== "ready") return;
@@ -342,6 +487,7 @@ export function TrialActivationSummaryExperience() {
       className="flex h-full w-full items-center justify-center bg-background px-8"
       data-testid="trial-activation-summary-experience"
       data-phase={phase}
+      data-capture-state={captureState}
     >
       <section className="w-full max-w-2xl border border-border bg-background p-10 text-center">
         <div className="mx-auto flex h-20 w-20 items-center justify-center border border-border">
@@ -358,24 +504,49 @@ export function TrialActivationSummaryExperience() {
         </div>
         <h1 className="mt-7 text-2xl font-semibold lowercase">
           {phase === "ready"
-            ? "your first summary is ready"
-            : phase === "empty"
-              ? "we need another try"
+            ? t("firstRun.trial.title.ready")
+            : emptyBecauseStopped
+              ? t("firstRun.trial.title.stopped")
+              : phase === "empty"
+              ? t("firstRun.trial.title.empty")
               : phase === "writing"
-                ? "writing your first summary"
-                : "building your first summary"}
+                ? t("firstRun.trial.title.writing")
+                : t("firstRun.trial.title.learning")}
         </h1>
         <p className="mx-auto mt-3 max-w-lg text-sm leading-relaxed text-muted-foreground">
-          {phase === "empty"
-            ? "Screenpipe did not capture enough valid activity to show you a useful result. Keep working normally, then retry."
+          {emptyBecauseStopped
+            ? t("firstRun.trial.body.stopped")
+            : phase === "empty"
+            ? t("firstRun.trial.body.empty")
             : phase === "ready"
-              ? "Open the result to see what Screenpipe understood from your work."
-              : "Keep working normally while Screenpipe records only what it needs to build this result."}
+              ? t("firstRun.trial.body.ready")
+              : t("firstRun.trial.body.learning")}
         </p>
+        {emptyBecauseStopped && instruction && (
+          <p
+            className="mx-auto mt-3 max-w-lg text-sm leading-relaxed text-foreground"
+            data-testid="trial-activation-capture-instruction"
+            role="status"
+          >
+            {instruction}
+          </p>
+        )}
         {phase === "empty" ? (
-          <Button className="mt-8 h-12 px-8 text-sm" onClick={() => void retry()}>
-            retry summary
-          </Button>
+          <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
+            {emptyBecauseStopped && (
+              <Button
+                variant="outline"
+                className="h-12 px-8 text-sm"
+                data-testid="trial-activation-review-storage"
+                onClick={() => openSettingsSection("storage")}
+              >
+                {t("firstRun.reviewStorage")}
+              </Button>
+            )}
+            <Button className="h-12 px-8 text-sm" onClick={() => void retry()}>
+              {t("firstRun.trial.retry")}
+            </Button>
+          </div>
         ) : (
           <Button
             className="mt-8 h-12 min-w-56 px-8 text-sm"
@@ -383,7 +554,7 @@ export function TrialActivationSummaryExperience() {
             onClick={() => void openSummary()}
             data-testid="trial-activation-view-summary"
           >
-            view summary
+            {t("firstRun.trial.view")}
           </Button>
         )}
       </section>
@@ -398,6 +569,7 @@ export function TrialActivationUnlockPrompt({
   onStartTrial: () => void;
   inline?: boolean;
 }) {
+  const t = useT();
   const [freeBusy, setFreeBusy] = React.useState(false);
   const [freeError, setFreeError] = React.useState<string | null>(null);
 
@@ -420,7 +592,9 @@ export function TrialActivationUnlockPrompt({
     } catch (error) {
       setFreeBusy(false);
       setFreeError(
-        error instanceof Error ? error.message : "could not continue with Free",
+        error instanceof Error
+          ? error.message
+          : t("firstRun.unlock.freeFailed"),
       );
     }
   };
@@ -442,7 +616,7 @@ export function TrialActivationUnlockPrompt({
             data-testid="trial-activation-start-trial"
             onClick={onStartTrial}
           >
-            start your 7-day Business trial
+            {t("firstRun.unlock.startTrial")}
           </Button>
           <Button
             variant="outline"
@@ -451,7 +625,9 @@ export function TrialActivationUnlockPrompt({
             disabled={freeBusy}
             onClick={() => void continueWithFree()}
           >
-            {freeBusy ? "continuing with Free" : "continue with Free — no card"}
+            {freeBusy
+              ? t("firstRun.unlock.continuingFree")
+              : t("firstRun.unlock.continueFree")}
           </Button>
         </div>
         {freeError && (

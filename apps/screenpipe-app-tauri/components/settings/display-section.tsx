@@ -87,9 +87,19 @@ export function LanguageSelect({ compact = false }: { compact?: boolean }) {
   return (
     <Select
       value={value}
-      onValueChange={(next) =>
-        void updateSettings({ uiLanguage: next as LocaleSetting })
-      }
+      onValueChange={async (next) => {
+        await updateSettings({ uiLanguage: next as LocaleSetting });
+        // The native floating panel draws its own strings and reads the
+        // language when it is shown; re-show it so it switches now. Rust
+        // keeps it hidden if the user turned it off or snoozed it.
+        if (settings?.showShortcutOverlay ?? true) {
+          try {
+            await commands.showShortcutReminder(settings?.showScreenpipeShortcut ?? "");
+          } catch {
+            // The panel catches up on its next show.
+          }
+        }
+      }}
     >
       <SelectTrigger
         aria-label={t("settings.appearance.language")}

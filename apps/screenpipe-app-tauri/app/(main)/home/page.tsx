@@ -1238,23 +1238,26 @@ function HomeContent() {
   // one that gets an undo. None of the products with this feature offer one —
   // it is cheap here because the previous layout is right there.
   const hideSidebarNavItem = (id: SidebarNavId) => {
-    const label = SIDEBAR_SECTION_DEFS[id].label;
+    // The rail's own localized name when there is one; the English def otherwise.
+    const railKey = `rail.${id}`;
+    const railLabel = t(railKey);
+    const label = railLabel !== railKey ? railLabel : SIDEBAR_SECTION_DEFS[id].label;
     const previous = sidebarLayout;
     persistSidebarLayout(
       setSidebarNavItemHidden(sidebarLayout, availableSidebarIds, id, true),
     );
     toast({
-      title: `${label} hidden`,
+      title: t("sidebar.hidden.title", { label }),
       description:
         id === "meetings"
-          ? "still one click away from the icon in the top bar."
-          : "use sidebar options in the top bar to bring it back.",
+          ? t("sidebar.hidden.meetingsHint")
+          : t("sidebar.hidden.hint"),
       action: (
         <ToastAction
-          altText={`Show ${label} in the sidebar again`}
+          altText={t("sidebar.hidden.undoAlt", { label })}
           onClick={() => persistSidebarLayout(previous)}
         >
-          Undo
+          {t("sidebar.hidden.undo")}
         </ToastAction>
       ),
     });

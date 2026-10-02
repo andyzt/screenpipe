@@ -59,7 +59,7 @@ describe("NowStrip", () => {
     expect(screen.getByText(/auth\.rs — screenpipe/)).toBeInTheDocument();
   });
 
-  it("reports stalled capture instead of guessing a relation", async () => {
+  it("reports insufficient evidence without claiming that recording stopped", async () => {
     fetchFocusStatus.mockResolvedValue(
       makeFocusStatus({
         evidence_ok: false,
@@ -70,7 +70,7 @@ describe("NowStrip", () => {
     render(<NowStrip />);
     await waitFor(() =>
       expect(screen.getByTestId("journal-now-relation")).toHaveTextContent(
-        "unknown, capture stalled",
+        "Not enough recent context",
       ),
     );
     expect(screen.queryByTestId("journal-now-divergence")).toBeNull();

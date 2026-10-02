@@ -63,6 +63,20 @@ describe("IntentionBar", () => {
     expect(screen.getByText(/Fix the flaky test/)).toBeInTheDocument();
   });
 
+  it("re-reads the intention when another surface bumps the refresh token", async () => {
+    fetchActiveIntention.mockResolvedValueOnce(null);
+    const { rerender } = render(<IntentionBar refreshToken={0} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("journal-intention-title")).toBeInTheDocument(),
+    );
+    fetchActiveIntention.mockResolvedValueOnce(makeIntention({ title: "Set elsewhere" }));
+    rerender(<IntentionBar refreshToken={1} />);
+    await waitFor(() =>
+      expect(screen.getByText(/Set elsewhere/)).toBeInTheDocument(),
+    );
+    expect(fetchActiveIntention).toHaveBeenCalledTimes(2);
+  });
+
   it("refuses to submit an empty title", async () => {
     fetchActiveIntention.mockResolvedValue(null);
     render(<IntentionBar />);

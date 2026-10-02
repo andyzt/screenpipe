@@ -43,7 +43,7 @@ pub use cancellable_query::{
     is_sqlite_interrupt, CancellableReadConnection, SqliteInterruptReason, SEARCH_QUERY_TIMEOUT,
     SQLITE_PROGRESS_CHECK_OPS,
 };
-pub use db::JournalReviewSpan;
+pub use db::{JournalReviewSpan, WorkLogEntry};
 pub use db::{
     evenly_spaced_indices, find_matching_a11y_positions, parse_all_text_positions,
     review_label_for_span, ActivityActionDraft, ActivityActionRecord, ActivityEvidenceDraft,

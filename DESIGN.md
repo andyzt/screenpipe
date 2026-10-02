@@ -305,3 +305,65 @@ When creating new UI components:
 | UI components | `apps/screenpipe-app-tauri/components/ui/*.tsx` |
 
 ---
+
+## Journal surfaces (fork contract)
+
+This fork ships one theme: `:root[data-theme="journal"]`, stamped before first
+paint (`app/layout.tsx`, `lib/journal-shell.ts`). Where this section and the
+upstream sections above disagree, **this section wins** for journal,
+onboarding, first-run and settings work. The table records what the theme
+renders; the rules below it are targets, and existing code that misses them is
+debt to fix when touched, not a pattern to copy. Whether
+the fork adopts it permanently or returns to the upstream brand is a product
+owner decision recorded in `stats/QUALITY_DESIGN_RESEARCH.md`, plan item 2;
+until then do not add a third look.
+
+| Upstream section says | The journal theme renders | Source |
+|---|---|---|
+| Space Grotesk / Crimson Text / IBM Plex Mono | Inter for UI (next/font on `<body>`; the theme resets `.font-sans` and `.font-mono` to inherit); JetBrains Mono only for `pre`, `code` and `.font-mono-code` | `app/layout.tsx`, `app/journal-theme.css` |
+| Bone, ink, trace, phosphor accent | shadcn zinc neutrals; phosphor collapses to ink, so the UI has no second hue | `app/journal-theme.css` |
+| UPPERCASE buttons, lowercase titles | The theme cancels the uppercase/lowercase button and title recipes; copy casing still varies (many English strings are lowercase) | `app/journal-theme.css` override block |
+| Chart colours | Category colour only in chips and 4 px card borders; engine-published hex first, shadcn chart ramp as fallback | `components/journal/*` |
+
+Target rules under either contract:
+
+- Text contrast at least 4.5:1: `--text-tertiary` is 46% in the journal theme
+  (on white cards; use secondary on the muted surface), 44% in the base light
+  theme and 55% in dark (ratios in the token comments). No lighter grey for text.
+- No text below 12 px outside the day-canvas hour gutter.
+- Motion: honour `prefers-reduced-motion` through the one app-wide rule in
+  `app/globals.css`, which shortens durations but leaves iteration counts so
+  spinners and live dots never freeze on a frame.
+- Every string a user reads goes through `t()`; `lib/i18n/literal-lint.test.ts`
+  fails on bare English in `components/journal`, `components/first-run` and
+  `components/onboarding`.
+- Component tests of the day, week and dashboard surfaces run axe-core
+  (`lib/test/axe.ts`); serious or critical violations fail the test.
+- Measured, model-written and provisional text look different and say so in
+  words; never by colour alone.
+
+## Glossary (fork)
+
+One word per state, the same in the journal, first run, Home, tray and
+notifications. Russian is the reference for register; English follows it.
+
+| Concept | English | Russian | Where it is used |
+|---|---|---|---|
+| Capture producing frames now | Recording | Идёт запись | `canvas.capture.recording` |
+| Capture off by the user or a schedule | Recording paused | Запись приостановлена | `canvas.capture.paused` |
+| Capture stopped by the low-disk guard or the engine | Recording stopped | Запись остановлена | `firstRun.stopped.*` |
+| Engine not answering | Recording unavailable | Запись недоступна | `canvas.capture.unavailable` |
+| Card still inside the 45-minute rewrite horizon | Draft (provisional) | Черновик | `inspector.provisional`, `resume.provisional` |
+| Card past the rewrite horizon | Final | Итоговая | card `state` |
+| Time the ledger measured as active | Active minutes, an estimate | Активно (оценка) | `overview.activeEst`, `formatEstimate` |
+| Text a model wrote from screen text | Model-written | Написано моделью | `resume.modelCaveat`, `workLog.sourceHint.*` |
+| Work not tied to the current intention | Other work | Другая работа | `relation.other_work` |
+| Not enough evidence to judge | Unknown | Неизвестно | `relation.unknown` |
+| A detour the classifier inferred | Possible distraction | Возможно, отвлечение | `relation.possible_distraction` |
+| A span with no recording | No recording | Нет записи | gap copy |
+
+Prefer **Other work**, **Unknown** and **Possible** over **Distraction** for
+anything the product inferred. **Distraction** stays a required, renameable
+category (overview, heatmap, review ratings) because the person chose it; it is
+never a verdict the product reaches on its own until distraction precision is
+measured at 0.9 or better on real labelled days (plan quality bar).

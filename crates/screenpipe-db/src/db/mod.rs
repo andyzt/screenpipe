@@ -465,6 +465,8 @@ mod journal;
 mod journal_dashboard;
 mod journal_recap;
 mod journal_review;
+mod work_log;
+pub use work_log::WorkLogEntry;
 mod maintenance;
 mod meetings;
 mod memories;

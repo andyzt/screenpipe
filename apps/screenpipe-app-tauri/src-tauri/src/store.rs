@@ -1488,6 +1488,10 @@ pub struct SettingsStore {
     #[serde(rename = "stopRecordingOnLowDisk", default = "default_true")]
     pub stop_recording_on_low_disk: bool,
 
+    /// Free-space reserve in GiB; clamped to 1..=20 when applied.
+    #[serde(rename = "lowDiskThresholdGb", default = "default_low_disk_threshold_gb")]
+    pub low_disk_threshold_gb: u64,
+
     /// When true, apply macOS vibrancy effect to the sidebar for a translucent look.
     #[serde(rename = "translucentSidebar", default)]
     pub translucent_sidebar: bool,
@@ -1848,6 +1852,10 @@ impl Default for EmbeddedLLM {
     }
 }
 
+fn default_low_disk_threshold_gb() -> u64 {
+    20
+}
+
 impl Default for SettingsStore {
     fn default() -> Self {
         // Default ignored windows for all OS
@@ -1981,6 +1989,11 @@ Rules:
                 monitor_ids: vec!["default".to_string()],
                 audio_devices: vec!["default".to_string()],
                 use_pii_removal: true,
+                // Off for this fork: the PostHog and Sentry projects wired into
+                // the app are upstream's (docs/UPSTREAM_SYNC.md, Telemetry). A new
+                // install reports nowhere until the user opts in. The CLI sets its
+                // own value explicitly and is unaffected.
+                analytics_enabled: false,
                 analytics_id: uuid::Uuid::new_v4().to_string(),
                 ignored_windows,
                 ..screenpipe_config::RecordingSettings::default()
@@ -2055,6 +2068,7 @@ Rules:
             chat_always_on_top: true,
             show_restart_notifications: false,
             stop_recording_on_low_disk: true,
+            low_disk_threshold_gb: default_low_disk_threshold_gb(),
             #[cfg(target_os = "macos")]
             translucent_sidebar: true,
             #[cfg(not(target_os = "macos"))]
@@ -3152,6 +3166,13 @@ mod fatal_alert_tests {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_new_app_install_is_not_opted_into_analytics() {
+        // The PostHog and Sentry projects wired into the app are upstream's;
+        // first launch writes this default to store.bin before the webview loads.
+        assert!(!SettingsStore::default().recording.analytics_enabled);
+    }
+
     use super::*;
     use serde_json::json;
 
@@ -3336,6 +3357,12 @@ mod tests {
         }))
         .unwrap();
         assert!(missing.stop_recording_on_low_disk);
+        assert_eq!(missing.low_disk_threshold_gb, 20);
+        let custom: SettingsStore = serde_json::from_value(json!({
+            "aiPresets": [], "lowDiskThresholdGb": 5
+        })).unwrap();
+        assert_eq!(custom.low_disk_threshold_gb, 5);
+        assert_eq!(serde_json::to_value(&custom).unwrap()["lowDiskThresholdGb"], 5);
 
         let opted_out: SettingsStore = serde_json::from_value(json!({
             "aiPresets": [],

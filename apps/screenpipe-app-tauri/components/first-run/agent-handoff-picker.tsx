@@ -10,6 +10,7 @@ import { CursorLogo } from "@/components/settings/tool-logos";
 import type { AgentHandoffTarget } from "@/lib/first-run/agent-handoff";
 import type { ConnectAllToolId } from "@/lib/ai-tools-mcp";
 import { cn } from "@/lib/utils";
+import { useT } from "@/lib/i18n";
 
 /**
  * Real product marks, the same assets the Settings tools card uses. A logo is
@@ -74,10 +75,13 @@ export function AgentHandoffPicker({
   targets: readonly AgentHandoffTarget[];
   onPick: (target: AgentHandoffTarget) => void;
 }) {
+  const t = useT();
   if (targets.length === 0) return null;
 
   const verb = (target: AgentHandoffTarget) =>
-    target.deeplink ? `Ask ${target.label}` : `Copy for ${target.label}`;
+    target.deeplink
+      ? t("firstRun.handoff.askAgent", { agent: target.label })
+      : t("firstRun.handoff.copyFor", { agent: target.label });
 
   if (targets.length === 1) {
     const only = targets[0];
@@ -100,7 +104,9 @@ export function AgentHandoffPicker({
       className="group inline-flex h-7 items-center gap-1.5"
       data-testid="first-run-ask-agent-picker"
     >
-      <span className="shrink-0 text-[11px] text-muted-foreground">Ask</span>
+      <span className="shrink-0 text-[11px] text-muted-foreground">
+        {t("firstRun.handoff.ask")}
+      </span>
       <span className="flex items-center">
         {targets.map((target, index) => (
           <button

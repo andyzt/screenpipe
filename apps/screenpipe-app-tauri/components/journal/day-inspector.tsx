@@ -17,6 +17,7 @@
  * is explaining.
  */
 
+import { trackTraction } from "@/lib/analytics/traction";
 import React from "react";
 import {
   Copy,
@@ -322,7 +323,8 @@ function CardDetail({
             {formatEstimate(card.active_minutes, locale)}
           </CardDescription>
         </div>
-        <div className="ml-auto flex shrink-0 items-center gap-1">
+        <div className="ml-auto flex shrink-0 flex-wrap items-center gap-1">
+          <Button size="sm" variant="outline" onClick={() => window.dispatchEvent(new CustomEvent("journal-add-work-note", { detail: { id: card.id, start_at: card.start_at } }))}>{t("resume.addNote")}</Button>
           {rateable ? (
             <>
               <FeedbackButton
@@ -625,6 +627,7 @@ function RecapPanel({
     if (!recap) return;
     try {
       await navigator.clipboard.writeText(recap.markdown);
+      trackTraction("recap_copied");
       toast({ description: t("inspector.recap.copied") });
     } catch (reason) {
       toast({

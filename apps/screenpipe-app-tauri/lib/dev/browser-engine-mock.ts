@@ -18,7 +18,11 @@ export type BrowserDevScenario =
   | "journal-no-preset"
   // A day that already has a written recap, so the recap panel can be
   // screenshotted without waiting out a generation.
-  | "journal-recap-ready";
+  | "journal-recap-ready"
+  // The engine answers but capture is stopped (what the low-disk guard leaves
+  // behind). Everything else behaves like `ready`, so the first-run and
+  // journal "recording stopped" surfaces can be screenshotted directly.
+  | "capture-stopped";
 
 type MockCloudAgentProvider = "codex" | "claude" | "cursor";
 
@@ -131,6 +135,23 @@ function parseJsonBody(init: RequestInit | undefined): Record<string, unknown> {
 
 export function createMockHealth(scenario: BrowserDevScenario = "ready") {
   const now = new Date().toISOString();
+  if (scenario === "capture-stopped") {
+    return {
+      status: "degraded",
+      status_code: 500,
+      last_frame_timestamp: null,
+      last_audio_timestamp: now,
+      last_ui_timestamp: null,
+      frame_status: "not_started",
+      vision_reason: "not_started",
+      audio_status: "ok",
+      ui_status: "not_started",
+      message: "recording stopped — disk almost full",
+      verbose_instructions:
+        "Recording stopped because free disk space fell below the 20 GiB reserve. Free up space or lower the reserve in Settings → Disk & retention, then resume recording.",
+      monitors: ["Browser dev display (1440x900)"],
+    };
+  }
   return {
     status: "healthy",
     status_code: 200,
@@ -1976,6 +1997,8 @@ function mockJournalStatus(scenario: BrowserDevScenario) {
 }
 
 /** Journal and focus routes. Returns null when the path is not one of ours. */
+const mockWorkNotes = new Map<string, Record<string, unknown>>();
+
 function mockJournalApiResponse(
   url: URL,
   init: RequestInit | undefined,
@@ -1983,6 +2006,22 @@ function mockJournalApiResponse(
 ): Response | null {
   const method = (init?.method ?? "GET").toUpperCase();
 
+  if (url.pathname === "/journal/work-log") {
+    const from=url.searchParams.get("from")||"", to=url.searchParams.get("to")||"";
+    const entries=Array.from(mockWorkNotes.values()).filter(n=>String(n.date)>=from&&String(n.date)<=to);
+    return Response.json({entries:entries.slice(0,1000),truncated:entries.length>1000,from,to});
+  }
+  const workNoteMatch=url.pathname.match(/^\/journal\/work-log\/([a-f0-9-]+)$/);
+  if(workNoteMatch) {
+    const id=workNoteMatch[1];
+    if(method==="DELETE"){if(mockWorkNotes.get(id)?.revision!==Number(url.searchParams.get("revision")))return Response.json({error:"Conflict"},{status:409});mockWorkNotes.delete(id);return Response.json({deleted:true})}
+    if(method==="PUT"){
+      const body=parseJsonBody(init);
+      if((mockWorkNotes.get(id)?.revision??null)!==body.expected_revision)return Response.json({error:"Conflict"},{status:409});
+      const entry={...body,id,revision:Number(mockWorkNotes.get(id)?.revision??0)+1,approved:body.approve===true,updated_at:new Date().toISOString(),source_activity_key:null,source_start_at:null,source_end_at:null};
+      mockWorkNotes.set(id,entry);return Response.json({entry});
+    }
+  }
   if (url.pathname === "/journal/day") {
     return Response.json(mockJournalDay(url, scenario));
   }

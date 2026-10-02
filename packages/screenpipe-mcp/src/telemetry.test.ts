@@ -10,10 +10,22 @@ import {
   isMcpTelemetryDisabled,
   sanitizeSentryEvent,
   scrubSensitiveValue,
+  sentryDsn,
   throttleAllows,
 } from "./telemetry";
 
 describe("MCP telemetry privacy", () => {
+  it("ships no default Sentry DSN; only an explicit env var enables sending", () => {
+    // docs/UPSTREAM_SYNC.md: the fork must not report to upstream's Sentry project.
+    expect(sentryDsn({})).toBe("");
+    expect(sentryDsn({ SCREENPIPE_MCP_SENTRY_DSN: "https://k@o1.ingest.sentry.io/1" })).toBe(
+      "https://k@o1.ingest.sentry.io/1",
+    );
+    expect(sentryDsn({ SENTRY_DSN: "https://k@o1.ingest.sentry.io/2" })).toBe(
+      "https://k@o1.ingest.sentry.io/2",
+    );
+  });
+
   it("honors screenpipe telemetry opt-out env vars", () => {
     expect(isMcpTelemetryDisabled({ SCREENPIPE_MCP_SENTRY_DISABLED: "1" })).toBe(true);
     expect(isMcpTelemetryDisabled({ SCREENPIPE_TELEMETRY_DISABLED: "true" })).toBe(true);

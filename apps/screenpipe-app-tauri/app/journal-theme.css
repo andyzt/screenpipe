@@ -79,7 +79,11 @@
 
   --text-primary: 0 0% 3.9%;
   --text-secondary: 0 0% 45.1%;
-  --text-tertiary: 0 0% 63.9%;
+  /* 46% keeps 4.59:1 on the white card and stays a step lighter than the
+     45.1% secondary, so the hierarchy holds; 63.9% measured 2.5:1 (WCAG AA
+     fails). Tertiary text belongs on white surfaces; on the 96% muted surface
+     use secondary. */
+  --text-tertiary: 0 0% 46%;
   --text-disabled: 0 0% 72%;
 
   /* shadcn's chart ramp. The journal uses it for category colours whenever the
@@ -185,7 +189,9 @@
 
   --text-primary: 0 0% 98%;
   --text-secondary: 0 0% 63.9%;
-  --text-tertiary: 0 0% 45.1%;
+  /* 55% keeps 4.5:1 on the 3.9% canvas (5.91:1) and on the 14.9%
+     muted surface (4.52:1). */
+  --text-tertiary: 0 0% 55%;
   --text-disabled: 0 0% 32%;
 
   --chart-1: 220 70% 50%;

@@ -9,8 +9,11 @@ import * as Sentry from "@sentry/node";
 import { PKG_VERSION } from "./version";
 
 const MCP_VERSION = PKG_VERSION;
-const DEFAULT_MCP_SENTRY_DSN =
-  "https://123656092b01a72b0417355ebbfb471f@o4505591122886656.ingest.us.sentry.io/4510761360949248";
+// This fork ships no default DSN. Upstream's value pointed at their Sentry
+// project, which is not ours; with an empty default `initMcpTelemetry` returns
+// false and every capture call is a no-op unless SCREENPIPE_MCP_SENTRY_DSN or
+// SENTRY_DSN is set explicitly. See docs/UPSTREAM_SYNC.md (Telemetry).
+const DEFAULT_MCP_SENTRY_DSN = "";
 
 const DISABLE_ENV_VARS = [
   "SCREENPIPE_DISABLE_TELEMETRY",
@@ -48,7 +51,7 @@ export function isMcpTelemetryDisabled(env: NodeJS.ProcessEnv = process.env): bo
   return DISABLE_ENV_VARS.some((key) => envFlagEnabled(env[key]));
 }
 
-function sentryDsn(env: NodeJS.ProcessEnv = process.env): string {
+export function sentryDsn(env: NodeJS.ProcessEnv = process.env): string {
   return env.SCREENPIPE_MCP_SENTRY_DSN || env.SENTRY_DSN || DEFAULT_MCP_SENTRY_DSN;
 }
 

@@ -517,6 +517,41 @@ private func testClampWithoutDisplaysIsIdentity() {
     expect(clamped == origin, "clamp with no displays should be identity, got \(clamped)")
 }
 
+/// The panel speaks the app's language: Russian by default (this build's first
+/// language), English only when Rust sends `uiLanguage: "en"`.
+private func testDisclosureLanguage() {
+    let metrics = OverlayMetrics()
+    let saved = gOverlayLanguage
+    defer { gOverlayLanguage = saved }
+
+    gOverlayLanguage = "ru"
+    let ruTimeline = disclosureContent(
+        for: "timeline", overlayShortcut: "⌃⌘S", chatShortcut: "⌃⌘L",
+        searchShortcut: "⌃⌘K", metrics: metrics
+    )
+    expect(ruTimeline?.0 == "таймлайн", "ru timeline label, got \(String(describing: ruTimeline))")
+    expect(ruTimeline?.1 == "⌃⌘S", "ru timeline keeps the shortcut")
+    let ruAudio = disclosureContent(
+        for: "audio", overlayShortcut: "", chatShortcut: "", searchShortcut: "", metrics: metrics
+    )
+    expect(ruAudio?.0 == "микрофон" && ruAudio?.1 == "не пишет", "ru idle mic, got \(String(describing: ruAudio))")
+    expect(overlayText("restart", "перезапуск") == "перезапуск", "ru button copy")
+
+    gOverlayLanguage = "en"
+    let enSearch = disclosureContent(
+        for: "search", overlayShortcut: "", chatShortcut: "", searchShortcut: "⌃⌘K", metrics: metrics
+    )
+    expect(enSearch?.0 == "search" && enSearch?.1 == "⌃⌘K", "en search label, got \(String(describing: enSearch))")
+    expect(overlayText("restart", "перезапуск") == "restart", "en button copy")
+
+    // "system" and no choice follow macOS, like the webview's navigator.language.
+    expect(resolveOverlayLanguage("system", preferred: ["en-GB", "ru-RU"]) == "en", "system → en")
+    expect(resolveOverlayLanguage("", preferred: ["ru-RU"]) == "ru", "unset → ru")
+    expect(resolveOverlayLanguage("system", preferred: ["de-DE"]) == "ru", "unsupported → ru")
+    expect(resolveOverlayLanguage("en-US", preferred: ["ru-RU"]) == "en", "explicit en wins")
+    expect(resolveOverlayLanguage(" RU ", preferred: ["en-US"]) == "ru", "explicit ru wins")
+}
+
 @main
 struct ShortcutReminderTests {
     static func main() {
@@ -537,6 +572,7 @@ struct ShortcutReminderTests {
         testClampPicksNearestDisplay()
         testClampSurvivesTinyDisplay()
         testClampWithoutDisplaysIsIdentity()
+        testDisclosureLanguage()
 
         if failures.isEmpty {
             print("shortcut overlay geometry: \(checks) checks passed")

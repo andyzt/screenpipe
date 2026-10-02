@@ -127,9 +127,9 @@ final class OverlayMetrics: ObservableObject {
     /// same `healthSubsystem` from the same payload.
     var healthHeadline: String {
         switch healthSubsystem {
-        case "audio": return "audio needs help"
-        case "screen": return "screen capture needs help"
-        default: return "recording needs help"
+        case "audio": return overlayText("audio needs help", "проблема со звуком")
+        case "screen": return overlayText("screen capture needs help", "проблема с записью экрана")
+        default: return overlayText("recording needs help", "проблема с записью")
         }
     }
 
@@ -235,7 +235,9 @@ struct MeetingOverlayTranscriptItem: Identifiable, Equatable {
         if let speakerName = speakerName, !speakerName.trimmingCharacters(in: .whitespaces).isEmpty {
             return speakerName
         }
-        return deviceType == "input" ? "me" : "speaker"
+        return deviceType == "input"
+            ? overlayText("me", "я")
+            : overlayText("speaker", "собеседник")
     }
 }
 
@@ -824,12 +826,16 @@ func disclosureContent(
     metrics: OverlayMetrics
 ) -> (String, String?)? {
     switch control {
-    case "brand": return ("screenpipe", "right-click")
-    case "timeline": return ("timeline", overlayShortcut)
-    case "chat": return ("ask chat", chatShortcut)
-    case "search": return ("search", searchShortcut)
-    case "audio": return ("mic capture", metrics.audioActive ? "live" : "idle")
-    case "settings": return ("settings", nil)
+    case "brand": return ("screenpipe", overlayText("right-click", "правый клик — меню"))
+    case "timeline": return (overlayText("timeline", "таймлайн"), overlayShortcut)
+    case "chat": return (overlayText("ask chat", "чат с AI"), chatShortcut)
+    case "search": return (overlayText("search", "поиск"), searchShortcut)
+    case "audio":
+        return (
+            overlayText("mic capture", "микрофон"),
+            metrics.audioActive ? overlayText("live", "пишет") : overlayText("idle", "не пишет")
+        )
+    case "settings": return (overlayText("settings", "настройки"), nil)
     default: return nil
     }
 }
@@ -981,7 +987,7 @@ struct ShortcutReminderView: View {
                     // its mouse routing; observed as a dead-click pill).
                     // Collapsed names the failing subsystem (#6126); expanded
                     // stays generic because the action row owns that width.
-                    Text(isExpanded ? "needs help" : metrics.healthHeadline)
+                    Text(isExpanded ? overlayText("needs help", "сбой") : metrics.healthHeadline)
                         .font(Brand.swiftUIMonoFont(size: 8 * scale, weight: .regular))
                         .foregroundColor(.white.opacity(0.85))
                         .padding(.trailing, isExpanded ? s(8) : s(2))
@@ -1007,7 +1013,7 @@ struct ShortcutReminderView: View {
                         Image(systemName: "power")
                             .font(.system(size: 6 * scale, weight: .bold))
                             .foregroundColor(.white.opacity(0.95))
-                        Text("quit & reopen")
+                        Text(overlayText("quit & reopen", "переоткрыть"))
                             .font(Brand.swiftUIMonoFont(size: 8 * scale, weight: .bold))
                             .foregroundColor(.white.opacity(0.95))
                     }
@@ -1024,7 +1030,7 @@ struct ShortcutReminderView: View {
                             Image(systemName: "arrow.clockwise")
                                 .font(.system(size: 6 * scale, weight: .bold))
                                 .foregroundColor(.white.opacity(0.95))
-                            Text("restart")
+                            Text(overlayText("restart", "перезапуск"))
                                 .font(Brand.swiftUIMonoFont(size: 8 * scale, weight: .bold))
                                 .foregroundColor(.white.opacity(0.95))
                         }
@@ -1065,13 +1071,13 @@ struct ShortcutReminderView: View {
     private var fixingView: some View {
         healthProgressView(
             label: metrics.healthDetail.isEmpty
-                ? "fixing recording..."
-                : "fixing — \(metrics.healthDetail)..."
+                ? overlayText("fixing recording...", "чиним запись…")
+                : overlayText("fixing — \(metrics.healthDetail)...", "чиним — \(metrics.healthDetail)…")
         )
     }
 
     private var recoveringView: some View {
-        healthProgressView(label: "checking recovery...")
+        healthProgressView(label: overlayText("checking recovery...", "проверяем запись…"))
     }
 
     private func healthProgressView(label: String) -> some View {
@@ -1104,7 +1110,7 @@ struct ShortcutReminderView: View {
                 .foregroundColor(.green)
                 .padding(.leading, s(8))
 
-            Text("recording again")
+            Text(overlayText("recording again", "запись снова идёт"))
                 .font(Brand.swiftUIMonoFont(size: 8 * scale, weight: .regular))
                 .foregroundColor(.white.opacity(0.85))
                 .padding(.trailing, s(8))
@@ -1150,8 +1156,8 @@ struct ShortcutReminderView: View {
                     .fill(Color.red)
                     .frame(width: c(5), height: c(5))
                     .offset(x: c(2), y: c(-2))
-                    .help("meeting live — hover for transcript")
-                    .accessibilityLabel("meeting live")
+                    .help(overlayText("meeting live — hover for transcript", "идёт встреча — наведите, чтобы увидеть расшифровку"))
+                    .accessibilityLabel(overlayText("meeting live", "идёт встреча"))
             }
         }
     }
@@ -1232,7 +1238,7 @@ struct MeetingTranscriptPreview: View {
                 Circle()
                     .fill(Color.red)
                     .frame(width: s(7), height: s(7))
-                Text("meeting live")
+                Text(overlayText("meeting live", "идёт встреча"))
                     .font(Brand.swiftUIMonoFont(size: 9 * scale, weight: .semibold))
                     .foregroundColor(.white.opacity(0.92))
                     .lineLimit(1)
@@ -1265,17 +1271,27 @@ struct MeetingTranscriptPreview: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(metrics.meetingPinned ? "unpin transcript" : "pin transcript")
+                .accessibilityLabel(
+                    metrics.meetingPinned
+                        ? overlayText("unpin transcript", "открепить расшифровку")
+                        : overlayText("pin transcript", "закрепить расшифровку")
+                )
                 .help(
                     metrics.meetingPinned
-                        ? "unpin — the card hides again when the pointer leaves"
-                        : "pin — keep this card open after the pointer leaves"
+                        ? overlayText(
+                            "unpin — the card hides again when the pointer leaves",
+                            "открепить — карточка снова скроется, когда уберёте курсор"
+                        )
+                        : overlayText(
+                            "pin — keep this card open after the pointer leaves",
+                            "закрепить — карточка останется открытой"
+                        )
                 )
                 Button(action: onOpenNote) {
                     HStack(spacing: s(4)) {
                         Image(systemName: "doc.text")
                             .font(.system(size: 8 * scale, weight: .medium))
-                        Text("note")
+                        Text(overlayText("note", "заметка"))
                             .font(Brand.swiftUIMonoFont(size: 8 * scale, weight: .semibold))
                             .lineLimit(1)
                             .fixedSize()
@@ -1288,7 +1304,7 @@ struct MeetingTranscriptPreview: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help("open meeting note")
+                .help(overlayText("open meeting note", "открыть заметку встречи"))
                 Button(action: onStop) {
                     HStack(spacing: s(4)) {
                         if metrics.meetingStopping {
@@ -1299,7 +1315,7 @@ struct MeetingTranscriptPreview: View {
                             Image(systemName: "stop.fill")
                                 .font(.system(size: 7 * scale, weight: .medium))
                         }
-                        Text(metrics.meetingStopping ? "stopping" : "stop")
+                        Text(metrics.meetingStopping ? overlayText("stopping", "останавливаем") : overlayText("stop", "стоп"))
                             .font(Brand.swiftUIMonoFont(size: 8 * scale, weight: .semibold))
                             .lineLimit(1)
                             .fixedSize()
@@ -1313,7 +1329,7 @@ struct MeetingTranscriptPreview: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(metrics.meetingStopping)
-                .help("stop this meeting")
+                .help(overlayText("stop this meeting", "остановить эту встречу"))
             }
             .padding(.horizontal, s(10))
             .frame(height: s(34))
@@ -1336,7 +1352,7 @@ struct MeetingTranscriptPreview: View {
                         ProgressView()
                             .scaleEffect(0.45 * scale)
                             .frame(width: s(10), height: s(10))
-                        Text("listening for speech…")
+                        Text(overlayText("listening for speech…", "слушаем речь…"))
                             .font(Brand.swiftUIMonoFont(size: 8 * scale))
                             .foregroundColor(.white.opacity(0.48))
                     }
@@ -1419,7 +1435,7 @@ private struct DockAppIconButton: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("screenpipe — right-click for options")
+        .help(overlayText("screenpipe — right-click for options", "screenpipe — правый клик: меню"))
     }
 }
 
@@ -1501,7 +1517,7 @@ private struct OverlayNotificationView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("dismiss notification")
+            .accessibilityLabel(overlayText("dismiss notification", "закрыть уведомление"))
         }
         .padding(.horizontal, s(10))
         .frame(
@@ -1539,6 +1555,35 @@ struct CollapsedAppIconButton: View {
 // MARK: - Overlay scale
 
 private var gOverlayScale: CGFloat = 1.0
+
+/// Language of every string this panel draws. Rust sends `uiLanguage` in the
+/// show payload, resolved from `settings.uiLanguage` exactly as the tray does
+/// (`src/ui_language.rs`), so the panel matches the rest of the app. Russian is
+/// this build's first language and the value until the first payload arrives.
+var gOverlayLanguage = "ru"
+
+/// The stored `uiLanguage` choice resolved to a language the panel speaks,
+/// with the webview's rule: "en"/"ru" (any region) as chosen; "system" or no
+/// choice follows macOS preferred languages; anything else is Russian, this
+/// build's first language.
+func resolveOverlayLanguage(_ stored: String, preferred: [String] = Locale.preferredLanguages) -> String {
+    func primary(_ tag: String) -> String {
+        String(tag.lowercased().split(whereSeparator: { $0 == "-" || $0 == "_" }).first ?? "")
+    }
+    let choice = stored.trimmingCharacters(in: .whitespaces).lowercased()
+    switch primary(choice) {
+    case "en": return "en"
+    case "ru": return "ru"
+    case "", "system":
+        return primary(preferred.first ?? "") == "en" ? "en" : "ru"
+    default: return "ru"
+    }
+}
+
+/// The Russian or English copy of one overlay string, for the current language.
+func overlayText(_ en: String, _ ru: String) -> String {
+    gOverlayLanguage == "en" ? en : ru
+}
 
 private func setOverlayScale(_ size: String?) {
     switch size {
@@ -1653,7 +1698,7 @@ class ShortcutReminderController: NSObject, NSWindowDelegate {
     private var healthToolTip: String? {
         guard metrics.healthState == "failure" else { return nil }
         return metrics.healthDetail.isEmpty
-            ? "recording stopped unexpectedly"
+            ? overlayText("recording stopped unexpectedly", "запись неожиданно остановилась")
             : metrics.healthDetail
     }
 
@@ -2129,6 +2174,7 @@ class ShortcutReminderController: NSObject, NSWindowDelegate {
         if let s = dict["overlay"] { overlayShortcut = prettifyShortcut(s) }
         if let s = dict["chat"] { chatShortcut = prettifyShortcut(s) }
         if let s = dict["search"] { searchShortcut = prettifyShortcut(s) }
+        if let s = dict["uiLanguage"] { gOverlayLanguage = resolveOverlayLanguage(s) }
         if let s = dict["shortcutOverlaySize"] { setOverlayScale(s) }
         if let s = dict["shortcutOverlayAnchor"], let anchor = OverlayAnchor.fromStored(s) {
             overlayAnchor = anchor
@@ -3185,7 +3231,7 @@ class ShortcutReminderController: NSObject, NSWindowDelegate {
         menu.autoenablesItems = false
 
         let snooze = NSMenuItem(
-            title: "Hide for 1 hour",
+            title: overlayText("Hide for 1 hour", "Скрыть на час"),
             action: #selector(hideShortcutReminderForHour),
             keyEquivalent: ""
         )
@@ -3195,7 +3241,7 @@ class ShortcutReminderController: NSObject, NSWindowDelegate {
         menu.addItem(.separator())
 
         let settings = NSMenuItem(
-            title: "Settings…",
+            title: overlayText("Settings…", "Настройки…"),
             action: #selector(openShortcutReminderSettings),
             keyEquivalent: ""
         )

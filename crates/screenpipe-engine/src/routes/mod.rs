@@ -24,6 +24,7 @@ pub mod journal;
 pub mod journal_dashboard;
 pub mod journal_recap;
 pub mod journal_review;
+pub mod work_log;
 pub mod live_views;
 pub mod meeting_summary_status;
 pub mod meetings;

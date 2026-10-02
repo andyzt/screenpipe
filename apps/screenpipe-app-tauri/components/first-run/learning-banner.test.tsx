@@ -58,6 +58,19 @@ vi.mock("@/lib/utils/tauri", () => ({
   },
 }));
 
+const health = vi.hoisted(() => ({
+  value: {
+    health: { frame_status: "ok" } as {
+      frame_status: string;
+      verbose_instructions?: string | null;
+    } | null,
+    isServerDown: false,
+  },
+}));
+vi.mock("@/lib/hooks/use-health-check", () => ({
+  useHealthCheck: () => health.value,
+}));
+
 vi.mock("@/lib/hooks/use-settings", () => ({
   useSettings: () => ({
     isSettingsLoaded: true,
@@ -106,6 +119,8 @@ beforeEach(() => {
     });
   }
   window.localStorage.clear();
+  // Default: the recorder is healthy. Stopped-capture assertions opt in.
+  health.value = { health: { frame_status: "ok" }, isServerDown: false };
   // Default: no connected agent. Every handoff assertion opts in explicitly so
   // the fallback path is what the other tests exercise.
   mocks.handoff = {
@@ -160,6 +175,35 @@ describe("trial activation summary experience", () => {
     fireEvent.click(screen.getByRole("button", { name: "retry summary" }));
     await waitFor(() => expect(mocks.completeOnboarding).toHaveBeenCalled());
     expect(screen.queryByTestId("trial-activation-paywall")).not.toBeInTheDocument();
+  });
+
+  it("names stopped capture instead of asking for another try", () => {
+    health.value = {
+      health: {
+        frame_status: "not_started",
+        verbose_instructions: "Recording stopped: free up disk space.",
+      },
+      isServerDown: false,
+    };
+    mocks.view = view({ activationState: "summary", phase: "empty" });
+    render(<TrialActivationSummaryExperience />);
+
+    expect(screen.getByText("screenpipe is not recording")).toBeInTheDocument();
+    expect(screen.queryByText("we need another try")).not.toBeInTheDocument();
+    expect(
+      screen.getByTestId("trial-activation-capture-instruction"),
+    ).toHaveTextContent("Recording stopped: free up disk space.");
+
+    const listener = vi.fn();
+    window.addEventListener("open-settings", listener);
+    fireEvent.click(screen.getByTestId("trial-activation-review-storage"));
+    window.removeEventListener("open-settings", listener);
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect((listener.mock.calls[0][0] as CustomEvent).detail).toEqual({
+      section: "storage",
+    });
+    // Retry stays available once the user has fixed the cause.
+    expect(screen.getByRole("button", { name: "retry summary" })).toBeInTheDocument();
   });
 
   it("shows checkout only after the locked-summary trial CTA is clicked", () => {
@@ -355,6 +399,95 @@ describe("first-run learning banner", () => {
     mocks.view = view({ phase: "empty", showProgress: true, dismiss });
     render(<FirstRunLearningBanner />);
     fireEvent.click(screen.getByRole("button", { name: "this is ready" }));
+    expect(dismiss).toHaveBeenCalled();
+  });
+
+  it("never promises ready while capture is stopped", () => {
+    const dismiss = vi.fn();
+    for (const [frameStatus, expectedState] of [
+      ["disabled", "paused"],
+      ["not_started", "paused"],
+      ["stale", "unavailable"],
+    ] as const) {
+      health.value = {
+        health: {
+          frame_status: frameStatus,
+          verbose_instructions: "Recording stopped: free up disk space.",
+        },
+        isServerDown: false,
+      };
+      mocks.view = view({
+        phase: "empty",
+        emptyReason: "not_recording",
+        showProgress: true,
+        dismiss,
+      });
+      const rendered = render(<FirstRunLearningBanner />);
+      expect(screen.queryByText("screenpipe is ready")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("first-run-setup-ready")).not.toBeInTheDocument();
+      expect(screen.getByTestId("first-run-capture-stopped")).toHaveAttribute(
+        "data-capture-state",
+        expectedState,
+      );
+      expect(
+        screen.getByTestId("first-run-capture-instruction"),
+      ).toHaveTextContent("Recording stopped: free up disk space.");
+      rendered.unmount();
+    }
+
+    // The engine being down is the same promise-free surface.
+    health.value = { health: null, isServerDown: true };
+    mocks.view = view({ phase: "empty", showProgress: true, dismiss });
+    const rendered = render(<FirstRunLearningBanner />);
+    expect(screen.getByTestId("first-run-capture-stopped")).toHaveAttribute(
+      "data-capture-state",
+      "unavailable",
+    );
+    expect(screen.queryByTestId("first-run-capture-instruction")).not.toBeInTheDocument();
+    rendered.unmount();
+
+    // Health still loading is not evidence of a stop: keep the ready panel.
+    health.value = { health: null, isServerDown: false };
+    mocks.view = view({ phase: "empty", showProgress: true, dismiss });
+    render(<FirstRunLearningBanner />);
+    expect(screen.getByText("screenpipe is ready")).toBeInTheDocument();
+  });
+
+  it("does not call an audio-only setup stopped", () => {
+    health.value = {
+      health: { frame_status: "disabled", vision_reason: "disabled_by_setting", audio_status: "ok" } as never,
+      isServerDown: false,
+    };
+    mocks.view = view({ phase: "empty", showProgress: true });
+    render(<FirstRunLearningBanner />);
+    expect(screen.queryByTestId("first-run-capture-stopped")).not.toBeInTheDocument();
+    expect(screen.getByTestId("first-run-setup-ready")).toBeInTheDocument();
+  });
+
+  it("routes a stopped-capture empty result to storage or recording settings", () => {
+    health.value = {
+      health: { frame_status: "not_started" },
+      isServerDown: false,
+    };
+    const dismiss = vi.fn();
+    mocks.view = view({ phase: "empty", showProgress: true, dismiss });
+    render(<FirstRunLearningBanner />);
+
+    const listener = vi.fn();
+    window.addEventListener("open-settings", listener);
+    fireEvent.click(screen.getByTestId("first-run-review-storage"));
+    fireEvent.click(screen.getByTestId("first-run-recording-settings"));
+    window.removeEventListener("open-settings", listener);
+    expect(listener).toHaveBeenCalledTimes(2);
+    expect((listener.mock.calls[0][0] as CustomEvent).detail).toEqual({
+      section: "storage",
+    });
+    expect((listener.mock.calls[1][0] as CustomEvent).detail).toEqual({
+      section: "recording",
+    });
+
+    expect(screen.queryByRole("button", { name: "this is ready" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("first-run-capture-stopped-dismiss"));
     expect(dismiss).toHaveBeenCalled();
   });
 

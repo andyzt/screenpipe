@@ -31,10 +31,13 @@ export function IntentionBar({
   focusRequest = false,
   /** Called once the request is spent, so the caller can drop the query param. */
   onFocusRequestHandled,
+  /** Bumped when another surface started or ended an intention; re-reads it. */
+  refreshToken = 0,
 }: {
   onIntentionChange?: (intention: Intention | null) => void;
   focusRequest?: boolean;
   onFocusRequestHandled?: () => void;
+  refreshToken?: number;
 }) {
   const t = useT();
   const locale = useLocale();
@@ -63,7 +66,7 @@ export function IntentionBar({
         setLoaded(true);
       });
     return () => controller.abort();
-  }, []);
+  }, [refreshToken]);
 
   // Wait for the fetch: whether there is an intention decides whether there is
   // a form to focus at all. An intention already running means the user is

@@ -21,6 +21,7 @@
  *  - the now line is `--primary`, drawn once.
  */
 
+import type { JournalCaptureState } from "@/lib/journal/capture-state";
 import React, { useCallback, useEffect, useMemo, useRef } from "react";
 
 import { Badge } from "@/components/ui/badge";
@@ -333,6 +334,7 @@ export function DayCanvas({
   selectedId,
   onSelect,
   generating,
+  captureState = "checking",
 }: {
   day: JournalDay;
   /** Epoch ms while the shown day is today, otherwise null. */
@@ -340,6 +342,7 @@ export function DayCanvas({
   selectedId: number | null;
   onSelect: (id: number | null) => void;
   generating: boolean;
+  captureState?: JournalCaptureState;
 }) {
   const t = useT();
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -381,8 +384,8 @@ export function DayCanvas({
     () => computeProjection({ lastEndMs, nowMs, range }),
     [lastEndMs, nowMs, range],
   );
-  const recordingOk =
-    day.data_status === "ok" || day.data_status === "empty_but_recording";
+  const recordingOk = captureState === "recording";
+  const captureLabel = t(`canvas.capture.${captureState}`);
 
   // First paint of a date lands where the reader's attention is: on now for
   // today, on the first card for any other day. Ref-guarded so a 30s poll
@@ -475,9 +478,7 @@ export function DayCanvas({
             <div
               data-testid="journal-canvas-projection"
               title={
-                recordingOk
-                  ? t("canvas.recordingTitle")
-                  : t("canvas.stalledTitle")
+                captureLabel
               }
               className={cn(
                 "absolute left-2 right-2 rounded-lg border bg-muted/50",
@@ -492,7 +493,7 @@ export function DayCanvas({
                   stretch the top of the block is scrolled out of view, and the
                   live edge is where the reader is looking. */}
               <span className="absolute bottom-1.5 left-3 text-xs text-muted-foreground">
-                {recordingOk ? t("canvas.recording") : t("canvas.stalled")}
+                {captureLabel}
               </span>
             </div>
           ) : null}

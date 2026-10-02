@@ -688,9 +688,11 @@ async fn main() {
     };
     // CI / automation (GitHub Actions, etc.) always wins over the settings
     // opt-in so the desktop-app e2e suite never reaches Sentry/PostHog.
+    // No stored choice yet (first launch, before init_store writes defaults)
+    // means "not opted in": the app's SettingsStore default is off.
     let telemetry_disabled = store_bool("analyticsEnabled")
         .map(|enabled| !enabled)
-        .unwrap_or(false)
+        .unwrap_or(true)
         || screenpipe_engine::analytics::telemetry_disabled_by_env();
     // The webview gets this same decision through the
     // `is_telemetry_disabled_by_env` command (see commands.rs); it cannot read
