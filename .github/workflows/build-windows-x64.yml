@@ -1,0 +1,155 @@
+# screenpipe — AI that knows everything you've seen, said, or heard
+# https://screenpipe.com
+
+# Unsigned x64 Windows desktop build for testing. Mirrors the Windows steps of
+# release-app.yml but uses the development Tauri config (no Authenticode
+# signing, no updater artifacts) and needs no repository secrets. Produces a
+# downloadable NSIS installer as a workflow artifact. Never publishes.
+
+name: Build Windows x64 (unsigned)
+
+on:
+  workflow_dispatch:
+  # workflow_dispatch only works once this file is on the default branch;
+  # pushing to a windows-build/* branch runs it before that.
+  push:
+    branches: ['windows-build/**']
+
+concurrency:
+  group: build-windows-x64-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 180
+    env:
+      TARGET: x86_64-pc-windows-msvc
+    steps:
+      - name: Enable Git long paths
+        shell: pwsh
+        run: git config --global core.longpaths true
+
+      - uses: actions/checkout@v4
+
+      - name: Shorten target dir to avoid MAX_PATH
+        shell: pwsh
+        run: |
+          # Same junction as release-app.yml: deep CMake paths overflow 260 chars.
+          $targetDir = "apps\screenpipe-app-tauri\src-tauri\target"
+          $shortDir = "C:\t"
+          New-Item -ItemType Directory -Force -Path $shortDir | Out-Null
+          if (Test-Path $targetDir) { Remove-Item -Recurse -Force $targetDir }
+          cmd /c mklink /J $targetDir $shortDir
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Rust
+        shell: pwsh
+        run: |
+          Invoke-WebRequest https://static.rust-lang.org/rustup/dist/x86_64-pc-windows-gnu/rustup-init.exe -OutFile rustup-init.exe
+          .\rustup-init.exe -y
+          echo "$env:USERPROFILE\.cargo\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: build-windows-x64-v1
+          workspaces: apps/screenpipe-app-tauri/src-tauri
+          cache-on-failure: true
+
+      - name: Install frontend dependencies
+        working-directory: apps/screenpipe-app-tauri
+        run: bun install
+
+      - name: Set up MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+
+      # Keep in sync with "Download ONNX Runtime" in release-app.yml.
+      - name: Download ONNX Runtime (DirectML)
+        shell: pwsh
+        run: |
+          $version = '1.24.2'
+          $dmlVersion = '1.15.4'
+          $extractDir = "apps/screenpipe-app-tauri/src-tauri/onnxruntime-win-x64-$version"
+          if (Test-Path $extractDir) { Remove-Item $extractDir -Recurse -Force }
+          Invoke-WebRequest -Uri "https://www.nuget.org/api/v2/package/Microsoft.ML.OnnxRuntime.DirectML/$version" -OutFile ort-dml.zip
+          Invoke-WebRequest -Uri "https://www.nuget.org/api/v2/package/Microsoft.AI.DirectML/$dmlVersion" -OutFile directml.zip
+          7z x ort-dml.zip -oort-dml -y
+          7z x directml.zip -odirectml -y
+          New-Item -ItemType Directory -Force -Path "$extractDir/lib" | Out-Null
+          Copy-Item "ort-dml/runtimes/win-x64/native/onnxruntime.dll" "$extractDir/lib/"
+          Copy-Item "ort-dml/runtimes/win-x64/native/onnxruntime.lib" "$extractDir/lib/"
+          Copy-Item "directml/bin/x64-win/DirectML.dll" "$extractDir/lib/"
+          $libDir = (Resolve-Path "$extractDir/lib").Path
+          "ORT_STRATEGY=system"        | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "ORT_LIB_LOCATION=$libDir"   | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "ORT_PREFER_DYNAMIC_LINK=1"  | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "$libDir"                    | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
+      - name: Run pre_build.js
+        working-directory: apps/screenpipe-app-tauri
+        env:
+          SCREENPIPE_RELEASE_TARGET: ${{ env.TARGET }}
+        run: bun ./scripts/pre_build.js
+
+      - name: Build
+        working-directory: apps/screenpipe-app-tauri
+        shell: pwsh
+        env:
+          CI: true
+          # Same CPU-compatibility flags as release-app.yml "Build (Windows)":
+          # baseline SSE2 for C deps, AVX2 only in runtime-gated ggml.
+          CARGO_PROFILE_RELEASE_LTO: "false"
+          CARGO_PROFILE_RELEASE_OPT_LEVEL: "2"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+          CARGO_PROFILE_RELEASE_PANIC: abort
+          RUSTFLAGS: ""
+          CFLAGS: ""
+          CXXFLAGS: ""
+          GGML_NATIVE: "OFF"
+          GGML_SSE42: "ON"
+          GGML_AVX: "ON"
+          GGML_AVX2: "ON"
+          GGML_BMI2: "ON"
+          GGML_AVX512: "OFF"
+          GGML_AVX512_VBMI: "OFF"
+          GGML_AVX512_VNNI: "OFF"
+          GGML_AVX512_BF16: "OFF"
+          CMAKE_ARGS: "-DGGML_NATIVE=OFF -DGGML_AVX512=OFF -DGGML_AVX512_VBMI=OFF -DGGML_AVX512_VNNI=OFF -DGGML_AVX512_BF16=OFF"
+          OPENBLAS_PATH: ${{ github.workspace }}/apps/screenpipe-app-tauri/src-tauri/openblas
+        run: bunx tauri build --verbose --target ${{ env.TARGET }} --features directml,redact-onnx-directml
+
+      - name: App launch sanity probe
+        shell: pwsh
+        timeout-minutes: 5
+        run: |
+          $targetDir = "apps/screenpipe-app-tauri/src-tauri/target/${{ env.TARGET }}/release"
+          $exe = Get-ChildItem $targetDir -Filter "screenpipe*.exe" |
+            Where-Object { $_.Name -in @('screenpipe-app.exe', 'screenpipe.exe', 'screenpipe - Development.exe') } |
+            Select-Object -First 1
+          if (-not $exe) { throw "app exe not found in $targetDir" }
+          $p = Start-Process -FilePath $exe.FullName -ArgumentList '--cpu-smoke' -NoNewWindow -PassThru
+          if (-not $p.WaitForExit(240000)) {
+            taskkill /PID $($p.Id) /T /F | Out-Null
+            throw "app exe hung on --cpu-smoke"
+          }
+          if ($p.ExitCode -ne 0) { throw "app exe failed --cpu-smoke (exit $($p.ExitCode))" }
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenpipe-windows-x64-unsigned-${{ github.sha }}
+          path: apps/screenpipe-app-tauri/src-tauri/target/${{ env.TARGET }}/release/bundle/nsis/*.exe
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
