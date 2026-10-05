@@ -2,9 +2,14 @@
 
 <!-- doc-covers: crates/screenpipe-engine/src/activity_ledger.rs, crates/screenpipe-db/src/db/activity_ledger.rs, crates/screenpipe-engine/src/routes/activity_summary.rs, packages/screenpipe-mcp/src/index.ts, apps/screenpipe-app-tauri/app/(main)/home/page.tsx -->
 <!-- doc-verified: 44214602a -->
-> **Current.** Written against 44214602a (2026-09-16). Source: `roadmap.txt`,
-> `docs/screen-knowledge-base-brief.md`, the Dayflow repository at
-> `/Users/aroevlampiev/Python/Dayflow` (MIT), and a code survey of this repo.
+> **Historical.** Written against 44214602a (2026-09-16) and not maintained
+> since. The status paragraph below describes the tree on that day; its
+> failing 80 % category gate and its "not done" list are stale. The live
+> contract is `docs/JOURNAL_API_CONTRACT.md`; the current plan is
+> `stats/QUALITY_DESIGN_RESEARCH.md` (section 4). Read this file for the
+> original intent and the roadmap-to-code mapping only; the code wins. Source:
+> `roadmap.txt`, `docs/screen-knowledge-base-brief.md`, the Dayflow repository
+> at `/Users/aroevlampiev/Python/Dayflow` (MIT), and a code survey of this repo.
 
 ## Status (2026-09-16)
 

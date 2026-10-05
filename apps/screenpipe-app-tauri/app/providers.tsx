@@ -103,11 +103,14 @@ export const Providers = forwardRef<
       // Webview events carried no app version at all, so no webview funnel
       // could be split by the release that changed it. See the module comment.
       void registerAppVersionProperty(posthog, getVersion);
-      // sync opt-in/out with cached preference on every boot
-      if (cachedEnabled === false) {
-        posthog.opt_out_capturing();
-      } else {
+      // Sync opt-in/out with the cached preference on every boot. This fork
+      // reports only after an explicit opt-in: no cached value (a fresh install,
+      // before settings load) stays opted out, because the key and host above
+      // are upstream's project (docs/UPSTREAM_SYNC.md, Telemetry).
+      if (cachedEnabled === true) {
         posthog.opt_in_capturing();
+      } else {
+        posthog.opt_out_capturing();
       }
       // The cached preference above is the only SYNCHRONOUS signal available.
       // An automated environment (CI, SCREENPIPE_DISABLE_TELEMETRY) is known

@@ -8,8 +8,8 @@
 //! `DELETE /files/{id}`) for endpoints that implement it.
 //!
 //! Chat through the Pi sidecar goes over the OpenAI-compatible
-//! `/chat/completions` endpoint with inline base64 images. The default team
-//! gateway has no Files API, so direct vision calls also inline images there;
+//! `/chat/completions` endpoint with inline base64 images. The default VseLLM
+//! endpoint has no Files API, so direct vision calls also inline images there;
 //! against api.deepseek.com they use the Files API instead.
 //!
 //! Docs: https://api-docs.deepseek.com/guides/files_api/ and
@@ -24,14 +24,15 @@ use tracing::warn;
 
 use crate::store::{AIProviderType, SettingsStore};
 
-/// Team gateway (OpenAI-compatible). It serves DeepSeek models under
+/// VseLLM endpoint (OpenAI-compatible), separate from the MultiTool gateway.
+/// It serves DeepSeek models under
 /// OpenRouter-style prefixed ids and does NOT implement DeepSeek's Files API
 /// (`POST /files` is 404 there) — images go inline as base64 `image_url`
 /// parts. Point a preset at https://api.deepseek.com to use the Files API.
 pub const DEEPSEEK_API_URL: &str = "https://api.vsellm.ru/v1";
-/// Text model. Nothing in this build sends images to the model (journal,
-/// recap and focus classification all work from compiled text), so the
-/// vision-exp model only cost reasoning time.
+/// Default model for compiled-text journal, recap and focus requests.
+/// Region OCR uses a separate multimodal request path below; selecting this
+/// default does not make journal requests include images.
 pub const DEEPSEEK_DEFAULT_MODEL: &str = "deepseek/deepseek-v4.1-flash";
 const DEEPSEEK_API_KEY_ENV: &str = "DEEPSEEK_API_KEY";
 /// Compile-time credential (set SCREENPIPE_DEEPSEEK_API_KEY when building —

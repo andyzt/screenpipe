@@ -25,6 +25,23 @@ function reducedMotionBlocks(): postcss.AtRule[] {
   return blocks;
 }
 
+/** Every block whose selector list covers everything. There should be one. */
+function universalBlocks(): postcss.AtRule[] {
+  return reducedMotionBlocks().filter((block) => {
+    let universal = false;
+    block.walkRules((rule) => {
+      if (
+        rule.selectors.some((selector) =>
+          ["*", "*::before", "*::after"].includes(selector.trim()),
+        )
+      ) {
+        universal = true;
+      }
+    });
+    return universal;
+  });
+}
+
 /** The block whose selector list covers everything, if one exists. */
 function universalBlock(): postcss.AtRule | undefined {
   return reducedMotionBlocks().find((block) => {
@@ -75,8 +92,13 @@ describe("reduced motion", () => {
   it("leaves iteration count alone so liveness indicators do not freeze", () => {
     // A recording/loading indicator that stops on a frame reads as "stuck".
     // Capping iterations to 1 would do exactly that, so the net must not.
-    const declarations = declarationsIn(universalBlock()!);
-    expect(declarations.has("animation-iteration-count")).toBe(false);
+    // Every universal block, not just the first: a second app-wide rule that
+    // caps iterations would freeze spinners just the same.
+    const blocks = universalBlocks();
+    expect(blocks.length).toBe(1);
+    for (const block of blocks) {
+      expect(declarationsIn(block).has("animation-iteration-count")).toBe(false);
+    }
   });
 
   it("keeps the per-component rules that supply meaningful static fallbacks", () => {

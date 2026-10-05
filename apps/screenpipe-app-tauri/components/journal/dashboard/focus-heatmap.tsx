@@ -149,6 +149,9 @@ export function FocusHeatmap({
                       data-hour={hour}
                       data-step={step === null ? "none" : step}
                       title={title}
+                      // A coloured cell is a picture of a measurement; a generic
+                      // span may not carry aria-label (axe aria-prohibited-attr).
+                      role="img"
                       aria-label={title}
                       className={cn(
                         "relative block h-[14px] rounded-[3px]",

@@ -420,3 +420,12 @@ describe("WeekDashboard", () => {
     );
   });
 });
+
+describe("WeekDashboard accessibility", () => {
+  it("has no serious axe violations once the dashboard is on screen", async () => {
+    const { seriousAxeViolations } = await import("@/lib/test/axe");
+    renderDashboard();
+    await screen.findByTestId("journal-dashboard-view");
+    expect(await seriousAxeViolations(document.body)).toEqual([]);
+  });
+});

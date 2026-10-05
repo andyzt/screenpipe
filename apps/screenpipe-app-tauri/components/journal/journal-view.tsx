@@ -27,6 +27,9 @@
  * someone can send, and fall back to local state when it does not.
  */
 
+import { useHealthCheck } from "@/lib/hooks/use-health-check";
+import { journalCaptureState } from "@/lib/journal/capture-state";
+import { trackTraction, observeTractionView } from "@/lib/analytics/traction";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
 
@@ -36,6 +39,8 @@ import { cn } from "@/lib/utils";
 import { useLocale, useT } from "@/lib/i18n";
 import { DayCanvas } from "./day-canvas";
 import { DayInspector } from "./day-inspector";
+import { WorkLogDialog } from "./work-log-dialog";
+import { ResumePanel } from "./resume-panel";
 import { IntentionBar } from "./intention-bar";
 import { SegmentedToggle, WeekView, type JournalViewMode } from "./week-view";
 import { WeekDashboard } from "./week-dashboard";
@@ -147,8 +152,13 @@ export function JournalView({
   const [localWeek, setLocalWeek] = useState<string>(
     () => weekStart ?? mondayOf(journalDayToday()),
   );
+  const { health, isServerDown } = useHealthCheck();
+  const captureState = journalCaptureState(health, isServerDown);
   const activeView = view ?? localView;
   const activeWeek = weekStart ?? localWeek;
+  useEffect(() => {
+    return observeTractionView(activeView === "day" ? "journal_opened" : activeView === "week" ? "week_opened" : "dashboard_opened", { view: activeView });
+  }, [activeView]);
   const setView = onViewChange ?? setLocalView;
   const setWeek = onWeekStartChange ?? setLocalWeek;
   const [day, setDay] = useState<JournalDay | null>(null);
@@ -336,6 +346,7 @@ export function JournalView({
 
   const handleKeyDown = useCallback(
     (event: KeyboardEvent) => {
+      if (event.defaultPrevented || document.querySelector('[role="dialog"][data-state="open"]')) return;
       // The week has its own navigation; the day's arrow keys would move a
       // date the reader cannot see.
       if (activeView !== "day") return;
@@ -436,6 +447,11 @@ export function JournalView({
           />
         </div>
 
+        <Button size="sm" variant="outline" data-testid="journal-yesterday"
+          onClick={() => goToDate(shiftJournalDay(journalDayToday(), -1))}>
+          {t("journal.yesterday")}
+        </Button>
+
         <Button
           size="sm"
           variant="outline"
@@ -461,6 +477,11 @@ export function JournalView({
           {t("journal.header.regenerate")}
         </Button>
 
+        <ResumePanel
+          onOpenDay={(nextDate, cardId) => { setView("day"); openDay(nextDate, cardId); }}
+          onIntentionCreated={() => setIntentionToken((token) => token + 1)}
+        />
+        <WorkLogDialog />
         <SegmentedToggle
           label={t("journal.viewLabel")}
           testId="journal-view-toggle"
@@ -479,6 +500,7 @@ export function JournalView({
         {today ? (
           <div className="w-full min-w-0 min-[900px]:ml-auto min-[900px]:w-auto min-[900px]:max-w-[540px] min-[900px]:flex-1">
             <IntentionBar
+              refreshToken={intentionToken}
               onIntentionChange={() => setIntentionToken((token) => token + 1)}
               focusRequest={focusIntentionRequest}
               onFocusRequestHandled={onIntentionFocusHandled}
@@ -541,8 +563,9 @@ export function JournalView({
             day={day}
             nowMs={today ? nowMs : null}
             selectedId={selectedId}
-            onSelect={setSelectedId}
+            onSelect={(id) => { setSelectedId(id); if (id !== null) trackTraction("card_opened"); }}
             generating={generating}
+            captureState={captureState}
           />
           <DayInspector
             day={day}

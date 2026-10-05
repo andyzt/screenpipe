@@ -234,3 +234,12 @@ describe("WeekView", () => {
     expect(screen.getByTestId("journal-apps-empty")).toBeInTheDocument();
   });
 });
+
+describe("WeekView accessibility", () => {
+  it("has no serious axe violations once the week is on screen", async () => {
+    const { seriousAxeViolations } = await import("@/lib/test/axe");
+    renderWeek();
+    await screen.findByTestId("journal-week-grid");
+    expect(await seriousAxeViolations(document.body)).toEqual([]);
+  });
+});

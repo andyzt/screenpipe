@@ -15,6 +15,8 @@ import {
 } from "@/components/settings/settings-write-queue";
 import React, { createContext, useContext, useEffect, useRef, useState } from "react";
 import posthog from "posthog-js";
+import { isPrimaryWindow } from "@/lib/utils/is-primary-window";
+import { configureTraction, type TractionConfig } from "@/lib/analytics/traction";
 import { cacheAnalyticsId, cacheAnalyticsEnabled } from "@/lib/analytics-id";
 import { captureSettingsChange } from "@/lib/analytics/settings-change";
 import { resolveTelemetryDisabledByEnv, shouldIdentifyInPostHog } from "@/lib/telemetry-env";
@@ -317,8 +319,13 @@ export type Settings = SettingsStore & {
 	activitiesAiPresetId?: string;
 	/** Next native Activity generation run as an ISO timestamp. */
 	activitiesNextRunAt?: string;
+	/** Opt-in pilot analytics (off by default); rides the Rust `extra` map. */
+	tractionAnalytics?: TractionConfig;
+	/** Free-space reserve in GiB (1–20) for the low-disk guard. A typed Rust
+	 *  field (`SettingsStore.low_disk_threshold_gb`, serde default 20). */
+	lowDiskThresholdGb?: number;
 	/** Run the background daily-journal writer. Default true.
-	 *  Frontend-only today: these eight keys ride the Rust `extra` map
+	 *  Frontend-only today: the journal keys below ride the Rust `extra` map
 	 *  (`SettingsStore.extra`) so a Rust save round-trips them untouched.
 	 *  Contract: `docs/JOURNAL_API_CONTRACT.md` § Settings. */
 	journalEnabled?: boolean;
@@ -894,7 +901,12 @@ let DEFAULT_SETTINGS: Settings = {
 			ignoredMeetingApps: [],
 			teamFilters: { ignoredWindows: [], includedWindows: [], ignoredUrls: [] },
 
-			analyticsEnabled: true,
+			// Off for this fork. The PostHog key and host (app/providers.tsx,
+			// src-tauri/src/main.rs, src-tauri/src/analytics.rs) belong to
+			// upstream's project, so a new install must not report there unless
+			// the user turns it on. Existing installs keep their stored value.
+			// See docs/UPSTREAM_SYNC.md (Telemetry).
+			analyticsEnabled: false,
 			remoteLogCollectionEnabled: false,
 			remoteLogCollectionUserId: null,
 			audioChunkDuration: 30,
@@ -973,6 +985,7 @@ let DEFAULT_SETTINGS: Settings = {
 			shortcutOverlaySnoozedUntil: null,
 			sidebarNavLayout: { ...DEFAULT_SIDEBAR_NAV_LAYOUT },
 			journalEnabled: true,
+			lowDiskThresholdGb: 20,
 			journalWorkProfile: { role: "", projects: [], notes: "" },
 			journalRemoteFavicons: false,
 			focusNudgesEnabled: false,
@@ -1768,6 +1781,14 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 	const [settings, setSettings] = useState<Settings>(createDefaultSettingsObject());
 	const [isSettingsLoaded, setIsSettingsLoaded] = useState(false);
 	const [loadingError, setLoadingError] = useState<string | null>(null);
+
+	useEffect(() => {
+		// One sender per install: every webview mounts this provider and they all
+		// share one localStorage outbox, so only the primary window (where the
+		// journal lives) owns it. Others would resend and overwrite its queue.
+		if (!isSettingsLoaded || !isPrimaryWindow()) return;
+		configureTraction(settings.tractionAnalytics ?? { enabled: false, endpoint: "", token: "", actor: "" });
+	}, [isSettingsLoaded, settings.tractionAnalytics]);
 
 	// Load settings on mount
 	useEffect(() => {

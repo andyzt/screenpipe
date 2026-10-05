@@ -1,0 +1,14 @@
+<!doctype html>
+<!-- screenpipe — AI that knows everything you've seen, said, or heard -->
+<!-- https://screenpipe.com -->
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Screenpipe · product metrics</title>
+<script>try{if((localStorage.getItem('theme')|| (matchMedia('(prefers-color-scheme: light)').matches?'light':'dark'))==='dark')document.documentElement.classList.add('dark')}catch{}</script>
+<link rel="stylesheet" href="vendor/fonts.css"><link rel="stylesheet" href="vendor/multitool.css"><link rel="stylesheet" href="dashboard.css"><script src="vendor/chart.umd.min.js" defer></script><script src="dashboard.js" defer></script></head>
+<body><main>
+<header><div><h1>Screenpipe · product metrics</h1><p class="meta"><span id="connection">Connecting…</span><span id="freshness"></span></p></div><div class="controls"><button id="theme" aria-label="Toggle light / dark">◐</button><div id="periods" role="group" aria-label="Period"></div><button id="refresh">Refresh</button></div></header>
+<nav id="tabs" aria-label="Metric sections"></nav><p id="range"></p><p id="error" role="alert" hidden></p>
+<div id="coverage" class="notice">This module measures consenting installations. Background recording does not count as active use.</div>
+<section id="content" aria-live="polite"></section>
+<footer>Europe/Moscow calendar dates · Today is partial · Anonymous installations, not people · No screen or journal contents are collected.</footer>
+</main></body></html>

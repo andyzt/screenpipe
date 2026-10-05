@@ -28,6 +28,7 @@ const BROWSER_DEV_SCENARIOS: readonly BrowserDevScenario[] = [
   "journal-generating",
   "journal-no-preset",
   "journal-recap-ready",
+  "capture-stopped",
 ];
 
 function parseScenario(value: string | undefined): BrowserDevScenario {

@@ -24,6 +24,7 @@
  * fields inside an effect.
  */
 
+import { trackTraction } from "@/lib/analytics/traction";
 import React, { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { emit } from "@tauri-apps/api/event";
@@ -74,6 +75,7 @@ export function EvidenceList({
       const frame = frameId ? String(frameId) : undefined;
       setPendingNavigation({ timestamp: occurredAt, frameId: frame });
       router.push("/home?section=timeline");
+      trackTraction("evidence_opened", { surface: "timeline" });
       // The timeline may already be mounted (section swap, not a fresh mount),
       // in which case the store read on mount never happens — same
       // belt-and-suspenders the replay strip uses.

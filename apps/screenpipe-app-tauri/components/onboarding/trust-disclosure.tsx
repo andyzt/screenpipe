@@ -7,13 +7,15 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { commands } from "@/lib/utils/tauri";
+import { useT } from "@/lib/i18n";
 import posthog from "posthog-js";
 
 /**
  * Where recordings live and how to stop them, as one quiet line.
  *
- * Shared so the two slides that make this promise cannot drift apart; the
- * locality line already drifted once between login and permissions.
+ * English constants kept for the retired login slide (login-gate.tsx, not
+ * mounted in this build). The permissions slide renders the same promise
+ * through onboarding.trust.* so the Russian UI never shows it in English.
  */
 export const PAUSE_DETAIL = "pause recording anytime from the screenpipe icon";
 export const LOCALITY_DETAIL = "your recordings are stored on this computer";
@@ -50,6 +52,7 @@ export default function TrustDisclosure({
   const [dataDir, setDataDir] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [revealFailed, setRevealFailed] = useState(false);
+  const t = useT();
 
   useEffect(() => {
     let cancelled = false;
@@ -107,7 +110,7 @@ export default function TrustDisclosure({
         data-testid="onboarding-trust-summary"
         className="w-full flex items-center justify-center gap-1.5 font-mono text-[10px] text-muted-foreground hover:text-foreground transition-colors"
       >
-        <span>stored on this computer · pause anytime</span>
+        <span>{t("onboarding.trust.summary")}</span>
         {open ? (
           <ChevronUp className="w-2.5 h-2.5" aria-hidden="true" />
         ) : (
@@ -133,23 +136,23 @@ export default function TrustDisclosure({
                 type="button"
                 onClick={reveal}
                 data-testid="onboarding-data-dir-open"
-                aria-label={`open ${dataDir}`}
+                aria-label={t("onboarding.trust.openAria", { path: dataDir })}
                 className="shrink-0 border border-border px-2 py-0.5 font-mono text-[10px] text-muted-foreground hover:border-foreground hover:text-foreground transition-colors"
               >
-                open
+                {t("onboarding.trust.open")}
               </button>
             </div>
           )}
           {revealFailed && (
             <p className="font-mono text-[10px] text-muted-foreground text-left">
-              couldn&apos;t open the folder. the path is above.
+              {t("onboarding.trust.revealFailed")}
             </p>
           )}
           <p
             data-testid="onboarding-pause-detail"
             className="font-mono text-[10px] text-muted-foreground text-left"
           >
-            {PAUSE_DETAIL}
+            {t("onboarding.trust.pause")}
           </p>
         </div>
       )}

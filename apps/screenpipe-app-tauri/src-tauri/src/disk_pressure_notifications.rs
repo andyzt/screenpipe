@@ -144,7 +144,7 @@ impl DiskPressureNotificationState {
     }
 
     pub(crate) async fn recover(&self, event: &DiskSpaceRecoveredEvent) -> Result<bool, String> {
-        if event.available_bytes < screenpipe_events::LOW_DISK_RECOVERY_THRESHOLD_BYTES {
+        if event.available_bytes < event.recovery_threshold_bytes {
             return Ok(false);
         }
 
@@ -231,8 +231,21 @@ pub fn start(app: AppHandle) {
     });
 }
 
-pub(crate) async fn handle(app: &AppHandle, event: DiskSpaceLowEvent) -> DiskPressureOutcome {
-    if !guard_enabled(app) {
+pub(crate) async fn handle(app: &AppHandle, mut event: DiskSpaceLowEvent) -> DiskPressureOutcome {
+    // The engine probes at the maximum supported reserve (20 GiB). Resolve the
+    // user's lower reserve on every event so saving settings applies while running.
+    let settings = SettingsStore::get(app).ok().flatten().unwrap_or_default();
+    event.threshold_bytes = configured_threshold_bytes(settings.low_disk_threshold_gb);
+    if event.available_bytes > event.threshold_bytes {
+        let recovered = DiskSpaceRecoveredEvent {
+            available_bytes: event.available_bytes,
+            recovery_threshold_bytes: event.threshold_bytes + 5 * 1024 * 1024 * 1024,
+            data_dir: event.data_dir.clone(),
+        };
+        let _ = app.state::<DiskPressureNotificationState>().recover(&recovered).await;
+        return DiskPressureOutcome::GuardDisabled;
+    }
+    if !settings.stop_recording_on_low_disk {
         debug!(
             available_bytes = event.available_bytes,
             "low-disk recording guard is disabled; leaving capture running"
@@ -332,11 +345,15 @@ fn low_disk_body(
     )
 }
 
-fn guard_enabled(app: &AppHandle) -> bool {
-    SettingsStore::get(app)
-        .ok()
-        .flatten()
-        .is_some_and(|settings| settings.stop_recording_on_low_disk)
+fn configured_threshold_bytes(gib: u64) -> u64 {
+    gib.clamp(1, 20) * 1024 * 1024 * 1024
+}
+
+/// Free space at which a disk-full incident counts as recovered for the user's
+/// reserve: the reserve plus the same 5 GiB hysteresis the guard uses, so a
+/// user who lowered the reserve is not held to the 25 GiB engine default.
+pub(crate) fn recovery_threshold_bytes(reserve_gib: u64) -> u64 {
+    configured_threshold_bytes(reserve_gib) + 5 * 1024 * 1024 * 1024
 }
 
 fn readable_gib(bytes: u64) -> String {
@@ -345,7 +362,25 @@ fn readable_gib(bytes: u64) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn recovery_follows_the_user_reserve_plus_hysteresis() {
+        let gib = 1024 * 1024 * 1024;
+        assert_eq!(super::recovery_threshold_bytes(20), 25 * gib);
+        assert_eq!(super::recovery_threshold_bytes(5), 10 * gib);
+        // Clamped like the reserve itself: never below 1 + 5 GiB.
+        assert_eq!(super::recovery_threshold_bytes(0), 6 * gib);
+        assert_eq!(super::recovery_threshold_bytes(99), 25 * gib);
+    }
+
     use super::*;
+
+    #[test]
+    fn configurable_reserve_is_bounded_and_defaults_match_engine() {
+        assert_eq!(configured_threshold_bytes(20), screenpipe_events::LOW_DISK_THRESHOLD_BYTES);
+        assert_eq!(configured_threshold_bytes(5), 5 * 1024 * 1024 * 1024);
+        assert_eq!(configured_threshold_bytes(0), 1024 * 1024 * 1024);
+        assert_eq!(configured_threshold_bytes(u64::MAX), screenpipe_events::LOW_DISK_THRESHOLD_BYTES);
+    }
 
     #[test]
     fn low_disk_copy_is_human_readable() {

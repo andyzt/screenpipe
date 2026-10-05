@@ -39,6 +39,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { TractionSettings } from "./traction-settings";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { useSettings } from "@/lib/hooks/use-settings";
@@ -746,6 +747,7 @@ export function JournalSettings() {
 
   return (
     <div className="space-y-5" data-testid="section-settings-journal">
+      <TractionSettings />
       <p className="text-sm text-muted-foreground">
         {t("settings.journal.intro")}
       </p>

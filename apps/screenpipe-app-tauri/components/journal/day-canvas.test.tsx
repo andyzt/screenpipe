@@ -47,6 +47,7 @@ function renderCanvas(props: Partial<React.ComponentProps<typeof DayCanvas>> = {
       selectedId={props.selectedId ?? null}
       onSelect={props.onSelect ?? vi.fn()}
       generating={props.generating ?? false}
+      captureState={props.captureState}
     />,
   );
 }
@@ -186,18 +187,19 @@ describe("DayCanvas", () => {
   });
 
   it("projects the unwritten tail as recording, or as a stall when capture is off", () => {
-    const { unmount } = renderCanvas({ nowMs: at(11).getTime() });
+    const { unmount } = renderCanvas({ nowMs: at(11).getTime(), captureState: "recording" });
     const projection = screen.getByTestId("journal-canvas-projection");
-    expect(projection).toHaveTextContent("recording…");
+    expect(projection).toHaveTextContent("Recording…");
     expect(projection.style.height).toBe(`${60 * MINUTE_PX}px`);
     unmount();
 
     renderCanvas({
       nowMs: at(11).getTime(),
-      day: day({ data_status: "not_recording" }),
+      day: day({ data_status: "ok" }), // Old cards must not override a live pause.
+      captureState: "paused",
     });
     expect(screen.getByTestId("journal-canvas-projection")).toHaveTextContent(
-      "capture stalled",
+      "Recording paused",
     );
   });
 

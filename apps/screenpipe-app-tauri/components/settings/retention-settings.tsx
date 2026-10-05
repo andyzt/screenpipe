@@ -14,6 +14,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/components/ui/use-toast";
@@ -125,9 +126,9 @@ export function RetentionSettings({
   const [deletingRecent, setDeletingRecent] = useState(false);
   const [pendingCompact, setPendingCompact] = useState(false);
   const [compacting, setCompacting] = useState(false);
-  const [lowDiskThreshold, setLowDiskThreshold] = useState<string | null>(null);
-  const lowDiskThresholdLabel =
-    lowDiskThreshold ?? t("settings.retention.lowDisk.fallback");
+  // The reserve the guard actually uses: the user's setting (Rust and the
+  // settings default both supply 20), not the engine's compile-time probe.
+  const lowDiskThresholdLabel = `${settings.lowDiskThresholdGb ?? 20} ${t("settings.retention.lowDisk.unitShort")}`;
 
   const enabled = settings.localRetentionEnabled ?? false;
   const retentionDays = settings.localRetentionDays ?? 14;
@@ -159,23 +160,6 @@ export function RetentionSettings({
     fetchStatus();
   }, [fetchStatus]);
   useInterval(fetchStatus, 10000);
-
-  useEffect(() => {
-    let cancelled = false;
-    void commands
-      .getLowDiskGuardConfig()
-      .then((config) => {
-        if (!cancelled) {
-          setLowDiskThreshold(formatBytes(config.thresholdBytes, locale));
-        }
-      })
-      .catch(() => {
-        // The fallback stays accurate without inventing a second threshold.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [locale]);
 
   // Pull a fresh disk-preview whenever a confirmation opens or retentionDays
   // changes while pending. Cheap query, no debounce needed at human pace.
@@ -427,8 +411,10 @@ export function RetentionSettings({
           </div>
         </div>
 
-        {/* Card 2 — opt-in guard against SQLite/capture writes filling the disk */}
-        <div className="rounded border border-border p-3">
+        {/* Card 2 — opt-in guard against SQLite/capture writes filling the disk,
+            with the reserve it triggers at. One card: the number the copy quotes
+            is the number the person edits. */}
+        <div className="rounded border border-border p-3 space-y-3">
           <div className="flex items-center justify-between gap-4">
             <div className="flex items-start gap-2">
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
@@ -456,6 +442,42 @@ export function RetentionSettings({
               }
             />
           </div>
+          <div className="flex flex-wrap items-center gap-3 pl-6">
+            <label htmlFor="low-disk-reserve" className="text-sm">
+              {t("settings.retention.lowDisk.reserveLabel")}
+            </label>
+            <Input
+              id="low-disk-reserve"
+              data-testid="low-disk-reserve"
+              className="h-8 w-24"
+              type="number"
+              min={1}
+              max={20}
+              step={1}
+              disabled={!(settings.stopRecordingOnLowDisk ?? true)}
+              defaultValue={settings.lowDiskThresholdGb ?? 20}
+              key={settings.lowDiskThresholdGb ?? 20}
+              onBlur={async (event) => {
+                const value = Number(event.currentTarget.value);
+                if (!Number.isInteger(value) || value < 1 || value > 20) {
+                  event.currentTarget.value = String(settings.lowDiskThresholdGb ?? 20);
+                  toast({ title: t("settings.retention.lowDisk.reserveInvalid"), variant: "destructive" });
+                  return;
+                }
+                if (value !== (settings.lowDiskThresholdGb ?? 20)) {
+                  try {
+                    await updateSettings({ lowDiskThresholdGb: value });
+                  } catch {
+                    toast({ title: t("settings.retention.lowDisk.reserveSaveFailed"), variant: "destructive" });
+                  }
+                }
+              }}
+            />
+            <span className="text-xs text-muted-foreground">{t("settings.retention.lowDisk.reserveUnit")}</span>
+          </div>
+          <p className="pl-6 text-xs text-muted-foreground">
+            {t("settings.retention.lowDisk.reserveHelp")}
+          </p>
         </div>
 
         {/* Card 3 — ongoing retention policy (distinct from the manual purge above) */}

@@ -1,0 +1,6 @@
+data/
+__pycache__/
+.pytest_cache/
+*.local.json
+# The repository ignores ad-hoc Python scripts; this module's sources are intentional.
+!*.py

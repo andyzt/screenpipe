@@ -4310,6 +4310,10 @@ showRestartNotifications?: boolean;
  */
 stopRecordingOnLowDisk?: boolean;
 /**
+ * Free-space reserve in GiB; clamped to 1..=20 when applied.
+ */
+lowDiskThresholdGb?: number;
+/**
  * When true, apply macOS vibrancy effect to the sidebar for a translucent look.
  */
 translucentSidebar?: boolean;

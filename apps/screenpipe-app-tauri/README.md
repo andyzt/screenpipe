@@ -34,6 +34,7 @@ SCREENPIPE_WEB_SCENARIO=backend-error bun run dev:web
 SCREENPIPE_WEB_SCENARIO=journal-generating bun run dev:web
 SCREENPIPE_WEB_SCENARIO=journal-no-preset bun run dev:web
 SCREENPIPE_WEB_SCENARIO=journal-recap-ready bun run dev:web
+SCREENPIPE_WEB_SCENARIO=capture-stopped bun run dev:web
 ```
 
 The journal landing view (<http://127.0.0.1:1420/home?section=journal>) and
@@ -42,6 +43,12 @@ its settings section (`/settings?section=journal`) are fully mocked: the
 active intention; `journal-generating` shows pending windows; and
 `journal-no-preset` shows the state when no OpenAI-compatible preset is
 configured; `journal-recap-ready` opens a day whose recap is already written.
+`capture-stopped` keeps everything else as `ready` but reports a recorder
+that is not producing frames, which is what the low-disk guard leaves behind;
+use it for the journal's "Recording paused" strip and the first-run
+"recording stopped" card (seed the learning window with `phase: "empty"` and
+`showProgress: true` in `localStorage` under
+`screenpipe.first-run.learning-window.v1`).
 Setting and ending an intention mutates the mock, so the focus strip follows
 it. Card feedback, review ratings and the recap are stateful too: a thumb, a
 Focused / Neutral / Distracted rating or a written recap survives the next

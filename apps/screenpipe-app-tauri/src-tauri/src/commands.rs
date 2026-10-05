@@ -62,6 +62,29 @@ fn log_webview_build_failure(label: &str, url_hint: &str, err: &(impl std::fmt::
 
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
+    #[test]
+    fn shortcut_reminder_payload_carries_the_stored_ui_language() {
+        let mut settings = crate::store::SettingsStore::default();
+        assert_eq!(
+            super::shortcut_reminder_payload(&settings)["uiLanguage"],
+            serde_json::json!("")
+        );
+        settings
+            .extra
+            .insert("uiLanguage".to_string(), serde_json::json!("system"));
+        assert_eq!(
+            super::shortcut_reminder_payload(&settings)["uiLanguage"],
+            serde_json::json!("system")
+        );
+        settings
+            .extra
+            .insert("uiLanguage".to_string(), serde_json::json!(" en "));
+        assert_eq!(
+            super::shortcut_reminder_payload(&settings)["uiLanguage"],
+            serde_json::json!("en")
+        );
+    }
+
     use super::{
         enterprise_license_key_sha256, fallback_local_api_config, is_login_callback_scheme,
         merge_enterprise_file_configs, normalize_enterprise_config_value,
@@ -3133,6 +3156,16 @@ fn shortcut_reminder_label(
     }
 }
 
+fn shortcut_reminder_language(settings: &crate::store::SettingsStore) -> String {
+    settings
+        .extra
+        .get("uiLanguage")
+        .and_then(|value| value.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string()
+}
+
 fn shortcut_reminder_payload(
     settings: &crate::store::SettingsStore,
 ) -> serde_json::Map<String, serde_json::Value> {
@@ -3160,6 +3193,14 @@ fn shortcut_reminder_payload(
             "searchShortcut",
             &settings.disabled_shortcuts,
         )),
+    );
+    // The native panel draws its own strings. Send the stored choice as-is
+    // ("ru", "en", "system" or empty): the panel resolves "system" from macOS
+    // preferred languages, as the webview does from navigator.language, which
+    // the POSIX locale of a Finder-launched app often does not carry.
+    map.insert(
+        "uiLanguage".to_string(),
+        serde_json::Value::String(shortcut_reminder_language(settings)),
     );
     map.insert(
         "shortcutOverlaySize".to_string(),
