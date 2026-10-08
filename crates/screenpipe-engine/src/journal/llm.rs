@@ -895,7 +895,7 @@ mod tests {
         assert_eq!(generator.producer(), "llm-v1");
         assert_eq!(
             generator.prompt_version().as_deref(),
-            Some("journal-cards-v4")
+            Some(super::super::prompt::PROMPT_VERSION)
         );
         assert_eq!(
             generator.model().as_deref(),
@@ -1006,17 +1006,17 @@ mod tests {
             .with_priority(1)
             .mount(&server)
             .await;
-        // The first attempt returns a four-minute opening card: valid JSON,
+        // The first attempt returns a sub-minute opening card: valid JSON,
         // invalid journal.
         Mock::given(method("POST"))
             .respond_with(ResponseTemplate::new(200).set_body_json(answer(json!([
                 card(
                     "2026-09-16T08:00:00Z",
-                    "2026-09-16T08:04:00Z",
+                    "2026-09-16T08:00:30Z",
                     "Opened the repo"
                 ),
                 card(
-                    "2026-09-16T08:04:00Z",
+                    "2026-09-16T08:00:30Z",
                     "2026-09-16T08:30:00Z",
                     "Fixed the retry"
                 )
@@ -1063,6 +1063,42 @@ mod tests {
             generator.drain_attempts().is_empty(),
             "draining is destructive"
         );
+    }
+
+    #[tokio::test]
+    async fn a_real_four_point_two_minute_card_is_saved_without_correction_calls() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(answer(json!([
+                card(
+                    "2026-09-16T08:00:00Z",
+                    "2026-09-16T08:04:12Z",
+                    "Logged in and set up tools"
+                ),
+                card(
+                    "2026-09-16T08:04:12Z",
+                    "2026-09-16T08:30:00Z",
+                    "Fixed the retry"
+                )
+            ]))))
+            .mount(&server)
+            .await;
+        let generator = LlmGenerator::with_client(ChatClient::new(
+            format!("{}/v1/chat/completions", server.uri()),
+            None,
+            "m".to_string(),
+            true,
+        ));
+        let drafts = generator
+            .generate(&compiled_fixture(), &[], &context(None))
+            .await
+            .unwrap();
+        assert_eq!(drafts.len(), 2);
+        assert_eq!((drafts[0].end_at - drafts[0].start_at).num_seconds(), 252);
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
+        let attempts = generator.drain_attempts();
+        assert_eq!(attempts.len(), 1);
+        assert!(attempts[0].ok);
     }
 
     /// The live 21:23–21:39 window, end to end: the model described the work

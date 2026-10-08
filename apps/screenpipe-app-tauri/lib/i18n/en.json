@@ -1854,5 +1854,18 @@
   "workLog.error.empty": "No approved work notes match this period and project.",
   "workLog.loadFailed": "Could not load work notes. Try again.",
   "settings.retention.lowDisk.unitShort": "GiB",
-  "resume.alreadyActive": "This is already your current intention."
+  "resume.alreadyActive": "This is already your current intention.",
+  "workNote.description": "Write your own note for this period. Notes stay local and survive card regeneration.",
+  "workNote.loading": "Loading notes…",
+  "workNote.savedNotes": "Saved work notes",
+  "workNote.edit": "Edit note",
+  "workNote.project": "Project (optional)",
+  "workNote.text": "Work note",
+  "workNote.save": "Save note",
+  "workNote.saving": "Saving…",
+  "workNote.cancel": "Cancel",
+  "workNote.saved": "Note saved.",
+  "workNote.loadFailed": "Could not load notes. Close and reopen to retry.",
+  "workNote.saveFailed": "Could not save the note. Your draft is still here; try again.",
+  "workNote.conflict": "This note changed in another window. Close and reopen before editing again."
 }
