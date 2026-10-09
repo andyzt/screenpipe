@@ -40,6 +40,7 @@ import { Separator } from "@/components/ui/separator";
 import { DayOverview } from "./day-overview";
 import { EvidenceList } from "./evidence-list";
 import { NowStrip } from "./now-strip";
+import { WorkNoteDialog } from "./work-note-dialog";
 import { SegmentedToggle } from "./week-view";
 import {
   categoryConfidenceLabel,
@@ -324,7 +325,7 @@ function CardDetail({
           </CardDescription>
         </div>
         <div className="ml-auto flex shrink-0 flex-wrap items-center gap-1">
-          <Button size="sm" variant="outline" onClick={() => window.dispatchEvent(new CustomEvent("journal-add-work-note", { detail: { id: card.id, start_at: card.start_at } }))}>{t("resume.addNote")}</Button>
+          <WorkNoteDialog card={card} />
           {rateable ? (
             <>
               <FeedbackButton

@@ -11,9 +11,9 @@
 //! - **Coverage.** Dropping a stretch of time is the failure users notice
 //!   first: the afternoon simply disappears. Output must cover the previous
 //!   cards and the supplied observations.
-//! - **Duration.** A wall of four-minute cards is technically accurate and
-//!   useless. Ten minutes is the floor for everything but the trailing card,
-//!   which is still growing; sixty minutes is the ceiling.
+//! - **Duration.** Ten minutes is a grouping preference, not a validity rule:
+//!   genuine short periods must not disappear. One minute is the storage
+//!   floor; sixty minutes is the ceiling.
 //! - **No overlaps.** Two cards claiming the same minute make every total
 //!   wrong.
 //! - **No invented time.** A card outside the evidence, or one bridging a gap
@@ -37,8 +37,11 @@ use super::generator::CardDraft;
 /// the model may move, so a small shift is the feature, not a fault.
 pub const COVERAGE_TOLERANCE: Duration = Duration::minutes(3);
 
-/// Shortest card, except the trailing one.
+/// Preferred grouping size, used when choosing over-long card split points.
 pub const MIN_CARD: Duration = Duration::minutes(10);
+
+/// Storage floor, shared with the worker: shorter spans are rounding fragments.
+pub const MIN_VALID_CARD: Duration = Duration::minutes(1);
 
 /// Longest card. Beyond this the card stops being a memory and becomes a
 /// summary of several.
@@ -139,9 +142,9 @@ impl CardIssue {
                  gap between consecutive cards and close it by extending an adjacent card."
             }
             CardIssue::Duration(_) => {
-                "REMINDER: every card except the last one must be at least 10 minutes long and no \
-                 card may exceed 60 minutes. Merge short activities into longer, more meaningful \
-                 cards that tell a coherent story; the duration rule overrides semantic purity."
+                "Every card must be at least one minute long and no card may exceed 60 minutes. \
+                 Prefer grouping into 10-minute cards, but preserve genuine short periods. \
+                 Never extend a card beyond the evidence or across a source gap."
             }
             CardIssue::Overlap(_) => {
                 "Cards must not overlap. Give the contested minutes to exactly one card."
@@ -338,14 +341,11 @@ fn coverage_detail(
     Some(detail)
 }
 
-/// Port of `validateTimeline`: the trailing card is exempt from the floor
-/// because it is still growing, every card is subject to the ceiling.
+/// Enforce storage geometry, while leaving the preferred grouping size to the prompt.
 fn duration_issues(cards: &[CardDraft], ordered: &[(usize, Span)]) -> Vec<CardIssue> {
-    let last = ordered.len().saturating_sub(1);
     ordered
         .iter()
-        .enumerate()
-        .filter_map(|(position, (index, span))| {
+        .filter_map(|(index, span)| {
             let duration = span.duration();
             let minutes = duration.num_milliseconds() as f64 / 60_000.0;
             if duration <= Duration::zero() {
@@ -365,10 +365,9 @@ fn duration_issues(cards: &[CardDraft], ordered: &[(usize, Span)]) -> Vec<CardIs
                     cards[*index].title
                 )));
             }
-            if position < last && duration < MIN_CARD {
+            if duration < MIN_VALID_CARD {
                 return Some(CardIssue::Duration(format!(
-                    "Card {} '{}' is only {minutes:.1} minutes long; every card except the final \
-                     card must be at least 10 minutes.",
+                    "Card {} '{}' is only {minutes:.1} minutes long; cards must be at least one minute.",
                     index + 1,
                     cards[*index].title
                 )));
@@ -529,7 +528,7 @@ mod tests {
                 expected: vec![],
             },
             Case {
-                name: "a non-final card under ten minutes is rejected",
+                name: "a genuine non-final card under ten minutes is preserved",
                 cards: vec![
                     draft(
                         "2026-09-16T09:00:00Z",
@@ -544,7 +543,7 @@ mod tests {
                 ],
                 previous: vec![],
                 observations: vec![span("2026-09-16T09:00:00Z", "2026-09-16T09:30:00Z")],
-                expected: vec!["DURATION ERROR"],
+                expected: vec![],
             },
             Case {
                 name: "the final card may be short because it is still growing",
@@ -557,7 +556,7 @@ mod tests {
                 expected: vec![],
             },
             Case {
-                name: "two short cards are both reported, not just the first",
+                name: "multiple genuine short cards are preserved",
                 cards: vec![
                     draft(
                         "2026-09-16T09:00:00Z",
@@ -573,7 +572,7 @@ mod tests {
                 ],
                 previous: vec![],
                 observations: vec![span("2026-09-16T09:00:00Z", "2026-09-16T09:30:00Z")],
-                expected: vec!["DURATION ERROR", "DURATION ERROR"],
+                expected: vec![],
             },
             Case {
                 name: "a card longer than an hour is rejected",
@@ -821,11 +820,11 @@ mod tests {
             &[
                 draft(
                     "2026-09-16T09:00:00Z",
-                    "2026-09-16T09:06:30Z",
+                    "2026-09-16T09:00:30Z",
                     "Short first",
                 ),
                 draft(
-                    "2026-09-16T09:06:30Z",
+                    "2026-09-16T09:00:30Z",
                     "2026-09-16T09:30:00Z",
                     "Long second",
                 ),
@@ -834,8 +833,43 @@ mod tests {
         );
         assert!(issues[0]
             .detail()
-            .contains("Card 1 'Short first' is only 6.5 minutes"));
-        assert!(issues[0].reminder().contains("at least 10 minutes"));
+            .contains("Card 1 'Short first' is only 0.5 minutes"));
+        assert!(issues[0].reminder().contains("at least one minute"));
+    }
+
+    #[test]
+    fn a_four_point_two_minute_period_before_another_session_is_valid() {
+        let short = draft(
+            "2026-09-16T09:00:00Z",
+            "2026-09-16T09:04:12Z",
+            "Login and setup",
+        );
+        let long = draft(
+            "2026-09-16T09:04:12Z",
+            "2026-09-16T09:30:00Z",
+            "Development",
+        );
+        let bounds = EvidenceBounds::new(
+            vec![],
+            vec![span("2026-09-16T09:00:00Z", "2026-09-16T09:30:00Z")],
+        );
+        assert!(validate_cards(&[short.clone(), long], &bounds).is_empty());
+
+        // A real source gap must remain a gap, even when the preceding card
+        // cannot reach ten minutes without inventing recorded time.
+        let later = draft(
+            "2026-09-16T10:00:00Z",
+            "2026-09-16T10:30:00Z",
+            "Later session",
+        );
+        let bounds = EvidenceBounds::new(
+            vec![],
+            vec![
+                span("2026-09-16T09:00:00Z", "2026-09-16T09:04:12Z"),
+                span("2026-09-16T10:00:00Z", "2026-09-16T10:30:00Z"),
+            ],
+        );
+        assert!(validate_cards(&[short, later], &bounds).is_empty());
     }
 
     #[test]

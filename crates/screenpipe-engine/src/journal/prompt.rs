@@ -39,7 +39,7 @@ use super::validate::CardIssue;
 
 /// Prompt identity. Stored on cards and windows; a bump makes previously
 /// generated windows eligible for regeneration the next time they are touched.
-pub const PROMPT_VERSION: &str = "journal-cards-v4";
+pub const PROMPT_VERSION: &str = "journal-cards-v6";
 
 /// Guard rail on the *evidence* half of the prompt: the rendered observations
 /// plus the previous cards. The instruction blocks are a fixed ~11k characters
@@ -74,7 +74,7 @@ const CARD_STRUCTURE: &str = r#"## Card Structure
 
 Each card covers one cohesive chunk of activity, roughly 15–60 minutes.
 
-- Minimum 10 minutes per card. If something would be shorter, fold it into the neighbouring card that makes the most sense.
+- Prefer 10 minutes per card. If something would be shorter, fold it into the neighbouring card that makes the most sense when the evidence allows it. This is a grouping preference, not a reason to discard a real short period: preserve short cards at source gaps or distinct activity boundaries. Never invent time to reach 10 minutes. Every card must be at least one minute long.
 - Maximum 60 minutes. If a card runs longer, split it where the focus naturally shifts.
 - No gaps or overlaps between cards. If there's a real gap in the observations, preserve it. Otherwise, cards should meet cleanly.
 
@@ -871,7 +871,8 @@ mod tests {
         // The minimum-card floor lives in the card-structure block and in the
         // correction round; repeating it here made the model fold the long
         // block back into the work card, which is the miss this rule exists for.
-        assert!(prompt.contains("Minimum 10 minutes per card"));
+        assert!(prompt.contains("Prefer 10 minutes per card"));
+        assert!(prompt.contains("Never invent time to reach 10 minutes"));
         assert!(!prompt.contains("<ongoing_segmentation>"));
     }
 
@@ -1214,7 +1215,7 @@ mod tests {
 
     #[test]
     fn the_prompt_version_is_the_one_stored_on_cards() {
-        assert_eq!(PROMPT_VERSION, "journal-cards-v4");
+        assert_eq!(PROMPT_VERSION, "journal-cards-v6");
         assert_eq!(CONNECTED_GAP, Duration::minutes(5));
         assert!(SYSTEM_PROMPT.contains("Return only the requested JSON"));
         assert!(at("2026-09-16T08:00:00Z") < at("2026-09-16T08:15:00Z"));
